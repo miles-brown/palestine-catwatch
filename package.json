@@ -1,0 +1,23 @@
+{
+  "name": "palestine-catwatch-directory",
+  "version": "1.0.0",
+  "description": "Palestine Catwatch Directory - Law enforcement accountability platform",
+  "scripts": {
+    "build": "echo 'No build step required for Flask backend'",
+    "start": "python api/index.py"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/miles-brown/palestine-catwatch.git"
+  },
+  "keywords": [
+    "palestine",
+    "catwatch",
+    "copwatch",
+    "accountability",
+    "flask",
+    "directory"
+  ],
+  "author": "Palestine Catwatch",
+  "license": "MIT"
+}
