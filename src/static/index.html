@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Palestine Catwatch Directory</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header class="header">
+        <div class="container">
+            <div class="animated-logo">
+                <span class="logo-prefix">Palestine</span>
+                <span id="logo-text" class="logo-text catwatch">Catwatch</span>
+                <span class="logo-subtitle">Directory</span>
+            </div>
+            <div class="palestine-flag-ribbon">
+                <div class="flag-stripe black"></div>
+                <div class="flag-stripe white"></div>
+                <div class="flag-stripe green"></div>
+                <div class="flag-triangle red"></div>
+            </div>
+            <nav class="nav">
+                <a href="#" onclick="showHome()" class="nav-link active">Home</a>
+                <a href="#" onclick="showEvents()" class="nav-link">Events</a>
+                <a href="#" onclick="showAddOfficer()" class="nav-link">Add Cat</a>
+                <a href="#" onclick="showAddEvent()" class="nav-link">Add Event</a>
+            </nav>
+        </div>
+    </header>
+
+    <!-- News Ticker -->
+    <div class="news-ticker-container">
+        <div class="news-ticker">
+            <div class="ticker-label">LIVE NEWS:</div>
+            <div class="ticker-content" id="ticker-content">
+                <span class="ticker-item">Loading latest news on Palestine, Gaza, and global protests...</span>
+            </div>
+        </div>
+    </div>
+
+    <main class="main">
+        <div class="container">
+            <!-- Home Page -->
+            <div id="home-page" class="page active">
+                <div class="search-section">
+                    <h2>Search Directory</h2>
+                    <div class="search-grid">
+                        <div class="search-box">
+                            <label for="collar-search">Search by Collar Number</label>
+                            <div class="input-group">
+                                <input type="text" id="collar-search" placeholder="Enter collar/badge number">
+                                <button onclick="searchByCollar()" class="btn btn-primary">Search</button>
+                            </div>
+                        </div>
+                        
+                        <div class="search-box">
+                            <label for="breed-search">Search by Breed (Force)</label>
+                            <div class="input-group">
+                                <input type="text" id="breed-search" placeholder="e.g., Metropolitan Police">
+                                <button onclick="searchByBreed()" class="btn btn-primary">Search</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="filter-section">
+                        <label for="event-filter">Filter by Event</label>
+                        <select id="event-filter" onchange="filterByEvent()">
+                            <option value="">All Events</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div id="search-results" class="results-section">
+                    <div class="results-grid" id="results-grid">
+                        <!-- Search results will be populated here -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Officer Profile Page -->
+            <div id="officer-page" class="page">
+                <div class="profile-container" id="officer-profile">
+                    <!-- Officer profile will be populated here -->
+                </div>
+            </div>
+
+            <!-- Events Page -->
+            <div id="events-page" class="page">
+                <h2>Events Directory</h2>
+                <div class="events-grid" id="events-grid">
+                    <!-- Events will be populated here -->
+                </div>
+            </div>
+
+            <!-- Event Detail Page -->
+            <div id="event-detail-page" class="page">
+                <div class="event-detail-container" id="event-detail">
+                    <!-- Event details will be populated here -->
+                </div>
+            </div>
+
+            <!-- Add Officer Form -->
+            <div id="add-officer-page" class="page">
+                <h2>Add New Cat</h2>
+                <form id="add-officer-form" class="form">
+                    <div class="form-group">
+                        <label for="collar-number">Collar Number *</label>
+                        <input type="text" id="collar-number" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="breed">Breed (Police Force) *</label>
+                        <select id="breed" required>
+                            <option value="">Select Police Force</option>
+                            <!-- England -->
+                            <optgroup label="England">
+                                <option value="Avon and Somerset Police">Avon and Somerset Police</option>
+                                <option value="Bedfordshire Police">Bedfordshire Police</option>
+                                <option value="Cambridgeshire Constabulary">Cambridgeshire Constabulary</option>
+                                <option value="Cheshire Constabulary">Cheshire Constabulary</option>
+                                <option value="City of London Police">City of London Police</option>
+                                <option value="Cleveland Police">Cleveland Police</option>
+                                <option value="Cumbria Constabulary">Cumbria Constabulary</option>
+                                <option value="Derbyshire Constabulary">Derbyshire Constabulary</option>
+                                <option value="Devon and Cornwall Police">Devon and Cornwall Police</option>
+                                <option value="Dorset Police">Dorset Police</option>
+                                <option value="Durham Constabulary">Durham Constabulary</option>
+                                <option value="Essex Police">Essex Police</option>
+                                <option value="Gloucestershire Constabulary">Gloucestershire Constabulary</option>
+                                <option value="Greater Manchester Police">Greater Manchester Police</option>
+                                <option value="Hampshire Constabulary">Hampshire Constabulary</option>
+                                <option value="Hertfordshire Constabulary">Hertfordshire Constabulary</option>
+                                <option value="Humberside Police">Humberside Police</option>
+                                <option value="Kent Police">Kent Police</option>
+                                <option value="Lancashire Constabulary">Lancashire Constabulary</option>
+                                <option value="Leicestershire Police">Leicestershire Police</option>
+                                <option value="Lincolnshire Police">Lincolnshire Police</option>
+                                <option value="Merseyside Police">Merseyside Police</option>
+                                <option value="Metropolitan Police">Metropolitan Police</option>
+                                <option value="Norfolk Constabulary">Norfolk Constabulary</option>
+                                <option value="North Yorkshire Police">North Yorkshire Police</option>
+                                <option value="Northamptonshire Police">Northamptonshire Police</option>
+                                <option value="Northumbria Police">Northumbria Police</option>
+                                <option value="Nottinghamshire Police">Nottinghamshire Police</option>
+                                <option value="South Yorkshire Police">South Yorkshire Police</option>
+                                <option value="Staffordshire Police">Staffordshire Police</option>
+                                <option value="Suffolk Constabulary">Suffolk Constabulary</option>
+                                <option value="Surrey Police">Surrey Police</option>
+                                <option value="Sussex Police">Sussex Police</option>
+                                <option value="Thames Valley Police">Thames Valley Police</option>
+                                <option value="Warwickshire Police">Warwickshire Police</option>
+                                <option value="West Mercia Police">West Mercia Police</option>
+                                <option value="West Midlands Police">West Midlands Police</option>
+                                <option value="West Yorkshire Police">West Yorkshire Police</option>
+                                <option value="Wiltshire Police">Wiltshire Police</option>
+                            </optgroup>
+                            <!-- Wales -->
+                            <optgroup label="Wales">
+                                <option value="Dyfed-Powys Police">Dyfed-Powys Police</option>
+                                <option value="Gwent Police">Gwent Police</option>
+                                <option value="North Wales Police">North Wales Police</option>
+                                <option value="South Wales Police">South Wales Police</option>
+                            </optgroup>
+                            <!-- Scotland -->
+                            <optgroup label="Scotland">
+                                <option value="Police Scotland">Police Scotland</option>
+                            </optgroup>
+                            <!-- Northern Ireland -->
+                            <optgroup label="Northern Ireland">
+                                <option value="Police Service of Northern Ireland">Police Service of Northern Ireland</option>
+                            </optgroup>
+                            <!-- Specialist Forces -->
+                            <optgroup label="Specialist Forces">
+                                <option value="British Transport Police">British Transport Police</option>
+                                <option value="Civil Nuclear Constabulary">Civil Nuclear Constabulary</option>
+                                <option value="Ministry of Defence Police">Ministry of Defence Police</option>
+                                <option value="Royal Military Police">Royal Military Police</option>
+                                <option value="Royal Navy Police">Royal Navy Police</option>
+                                <option value="Royal Air Force Police">Royal Air Force Police</option>
+                            </optgroup>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="photo-url">Photo URL</label>
+                        <input type="url" id="photo-url">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="role">Role</label>
+                        <input type="text" id="role" placeholder="e.g., Liaison Officer, TSG">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="description">Description</label>
+                        <textarea id="description" rows="4"></textarea>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="equipment">Equipment</label>
+                        <textarea id="equipment" rows="3"></textarea>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="events">Events Where Spotted</label>
+                        <div id="events-checkboxes" class="checkbox-group">
+                            <!-- Events will be loaded dynamically -->
+                        </div>
+                        <p class="form-help">Select all events where this officer was documented</p>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary">Add Cat</button>
+                </form>
+            </div>
+
+            <!-- Add Event Form -->
+            <div id="add-event-page" class="page">
+                <h2>Add New Event</h2>
+                <form id="add-event-form" class="form">
+                    <div class="form-group">
+                        <label for="event-name">Event Name *</label>
+                        <input type="text" id="event-name" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="event-date">Date *</label>
+                        <input type="date" id="event-date" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="event-location">Location *</label>
+                        <input type="text" id="event-location" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="event-description">Description</label>
+                        <textarea id="event-description" rows="4"></textarea>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary">Add Event</button>
+                </form>
+            </div>
+        </div>
+    </main>
+
+    <footer class="footer">
+        <div class="container">
+            <p class="disclaimer">
+                This website acts as a public archive of documented, publicly-observable information. 
+                All information is sourced from public events and publicly available materials. 
+                This directory is presented for informational purposes only.
+            </p>
+        </div>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>
+
