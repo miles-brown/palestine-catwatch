@@ -20,7 +20,10 @@ app.add_middleware(
 )
 
 # Mount data directory to serve images
-app.mount("/data", StaticFiles(directory="../data"), name="data")
+# Mount data directory to serve images
+import os
+os.makedirs("data", exist_ok=True)
+app.mount("/data", StaticFiles(directory="data"), name="data")
 
 @app.get("/")
 def read_root():

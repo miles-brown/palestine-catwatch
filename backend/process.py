@@ -8,7 +8,7 @@ import json
 from scipy.spatial.distance import euclidean
 from database import SessionLocal
 
-FRAMES_DIR = "../data/frames"
+FRAMES_DIR = "data/frames"
 os.makedirs(FRAMES_DIR, exist_ok=True)
 
 def process_media(media_id: int):

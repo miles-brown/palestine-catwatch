@@ -7,7 +7,7 @@ from database import SessionLocal, engine
 import models
 
 # Ensure media directory exists
-MEDIA_DIR = "../data/media"
+MEDIA_DIR = "data/media"
 os.makedirs(MEDIA_DIR, exist_ok=True)
 
 def ingest_media(url: str, protest_id: int, media_type: str, db: Session):
