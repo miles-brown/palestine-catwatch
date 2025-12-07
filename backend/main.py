@@ -27,6 +27,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mount Socket.IO
+from sio import sio_app
+app.mount("/socket.io", sio_app)
+
 # Mount data directory to serve images
 # Mount data directory to serve images
 import os
@@ -81,21 +85,41 @@ def get_officer_dossier(officer_id: int, db: Session = Depends(get_db)):
     )
 
 @app.post("/ingest/url")
-def ingest_media_url(request: IngestURLRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def ingest_media_url(request: IngestURLRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """
     Ingest a URL (YouTube, web).
     Triggers background download and analysis.
     """
     from ingest_video import process_video_workflow
+    import asyncio
+    from datetime import datetime
+    from sio import sio_server
     
     # Validation logic here (mock)
     if "2 + 3" in str(request.answers):
-         # Check captcha answer if passed (omitted for speed)
          pass
-
-    background_tasks.add_task(process_video_workflow, request.url, request.answers, request.protest_id)
     
-    return {"status": "processing_started", "message": "Video queued for analysis."}
+    # Create a unique Task ID and room
+    # We will return this ID so the frontend can join the room
+    task_id = f"task_{int(datetime.utcnow().timestamp())}"
+
+    # We need to capture the current event loop to schedule async emits from the sync background thread
+    loop = asyncio.get_running_loop()
+
+    def background_wrapper(url, answers, protest_id, room_id, event_loop):
+        def callback(event, data):
+            # Schedule the emit coroutine on the main event loop
+            # This is thread-safe
+            asyncio.run_coroutine_threadsafe(
+                sio_server.emit(event, data, room=room_id),
+                event_loop
+            )
+        
+        process_video_workflow(url, answers, protest_id, status_callback=callback)
+
+    background_tasks.add_task(background_wrapper, request.url, request.answers, request.protest_id, task_id, loop)
+    
+    return {"status": "processing_started", "message": "Video queued for analysis.", "task_id": task_id}
 
 @app.get("/protests")
 def get_protests(db: Session = Depends(get_db)):
