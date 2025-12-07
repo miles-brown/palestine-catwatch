@@ -109,9 +109,10 @@ const UploadPage = () => {
             }
 
         } catch (error) {
-            console.error(error);
-            setSubmitStatus('error');
-            setMessage('Failed to start ingestion. Check the URL or server logs.');
+            setStatus('error');
+            setMessage(`${error.message || 'Failed'}. (Target: ${API_BASE})`);
+        } finally {
+            setSubmitStatus(null);
         }
     };
 
