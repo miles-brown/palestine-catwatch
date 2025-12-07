@@ -4,7 +4,10 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Terminal, Cpu, Shield, AlertTriangle, Check, X, Server, Activity } from 'lucide-react';
 
-const API_URL = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+let API_URL = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+if (!API_URL.startsWith("http")) {
+    API_URL = `https://${API_URL}`;
+}
 
 export default function LiveAnalysis({ taskId, onComplete }) {
     const [logs, setLogs] = useState([]);

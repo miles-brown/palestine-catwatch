@@ -106,6 +106,7 @@ const UploadPage = () => {
                 throw new Error(errorMsg);
             }
             const data = await response.json();
+            alert(`Debug: ${JSON.stringify(data)}`);
 
             setSubmitStatus('success');
             setMessage(`Ingestion started! ${data.message}`);
