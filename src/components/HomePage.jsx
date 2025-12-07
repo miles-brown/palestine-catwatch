@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import OfficerCard from './OfficerCard';
 import OfficerProfile from './OfficerProfile';
 // import { officers } from '../data/officers'; // Deprecated
-import { Heart, Camera, Megaphone, AlertTriangle, Users, Eye } from 'lucide-react';
+import MapView from './MapView';
+import { Heart, Camera, Megaphone, AlertTriangle, Users, Eye, Map, Grid } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 
 const API_BASE = "http://localhost:8000";
@@ -11,6 +12,7 @@ const HomePage = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedOfficer, setSelectedOfficer] = useState(null);
   const [officers, setOfficers] = useState([]);
+  const [viewMode, setViewMode] = useState('grid'); // 'grid' or 'map'
 
   useEffect(() => {
     const fetchOfficers = async () => {
@@ -39,6 +41,8 @@ const HomePage = () => {
             role: mainAppearance?.role || off.force || 'Officer',
             force: off.force || 'Unknown Force',
             location: 'London',
+            latitude: off.latitude,
+            longitude: off.longitude,
             protestDate: media?.timestamp || new Date().toISOString(),
             photo: photoUrl,
             status: 'Identified',
@@ -157,9 +161,9 @@ const HomePage = () => {
         {/* Search and Filters */}
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mb-8">
           <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="flex gap-4 items-end">
               {/* Text Search */}
-              <div className="col-span-2">
+              <div className="flex-1">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Search Officials</label>
                 <input
                   type="text"
@@ -170,42 +174,67 @@ const HomePage = () => {
                 />
               </div>
 
-              {/* Force Filter (Mock for now, can be populated from DB) */}
+              {/* View Toggle */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Filter by Force</label>
-                <select
-                  className="w-full p-2 border border-gray-300 rounded-md focus:ring-green-500 focus:border-green-500"
-                >
-                  <option value="">All Forces</option>
-                  <option value="Metropolitan Police">Metropolitan Police</option>
-                  <option value="City of London Police">City of London Police</option>
-                  <option value="BTP">British Transport Police</option>
-                </select>
+                <label className="block text-sm font-medium text-gray-700 mb-1">View</label>
+                <div className="flex bg-gray-100 p-1 rounded-md border border-gray-200">
+                  <button
+                    onClick={() => setViewMode('grid')}
+                    className={`p-2 rounded flex items-center gap-2 text-sm font-medium ${viewMode === 'grid' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-900'}`}
+                  >
+                    <Grid className="h-4 w-4" />
+                    Grid
+                  </button>
+                  <button
+                    onClick={() => setViewMode('map')}
+                    className={`p-2 rounded flex items-center gap-2 text-sm font-medium ${viewMode === 'map' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-900'}`}
+                  >
+                    <Map className="h-4 w-4" />
+                    Map
+                  </button>
+                </div>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Grid of officer cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-          {officers
-            .filter(officer => {
-              if (!searchQuery) return true;
-              const query = searchQuery.toLowerCase();
-              return (
-                (officer.badgeNumber && officer.badgeNumber.toLowerCase().includes(query)) ||
-                (officer.notes && officer.notes.toLowerCase().includes(query)) ||
-                (officer.role && officer.role.toLowerCase().includes(query))
-              );
-            })
-            .map((officer) => (
-              <OfficerCard
-                key={officer.id}
-                officer={officer}
-                onClick={handleOfficerClick}
-              />
-            ))}
-        </div>
+        {/* Content Area */}
+        {viewMode === 'map' ? (
+          <div className="mb-16">
+            <MapView
+              officers={officers.filter(o => {
+                if (!searchQuery) return true;
+                const query = searchQuery.toLowerCase();
+                return (
+                  (o.badgeNumber && o.badgeNumber.toLowerCase().includes(query)) ||
+                  (o.notes && o.notes.toLowerCase().includes(query)) ||
+                  (o.role && o.role.toLowerCase().includes(query))
+                );
+              })}
+              onOfficerClick={handleOfficerClick}
+            />
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            {officers
+              .filter(officer => {
+                if (!searchQuery) return true;
+                const query = searchQuery.toLowerCase();
+                return (
+                  (officer.badgeNumber && officer.badgeNumber.toLowerCase().includes(query)) ||
+                  (officer.notes && officer.notes.toLowerCase().includes(query)) ||
+                  (officer.role && officer.role.toLowerCase().includes(query))
+                );
+              })
+              .map((officer) => (
+                <OfficerCard
+                  key={officer.id}
+                  officer={officer}
+                  onClick={handleOfficerClick}
+                />
+              ))}
+          </div>
+        )}
 
         {/* Stats section */}
         <div className="mt-16 grid grid-cols-1 md:grid-cols-3 gap-8 text-center">

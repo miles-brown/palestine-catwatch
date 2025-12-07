@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, Boolean
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, Boolean, Float
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from database import Base
@@ -37,6 +37,8 @@ class Officer(Base):
     force = Column(String, nullable=True) # e.g. Met Police
     visual_id = Column(String, index=True, nullable=True) # Face encoding hash or similar ID
     notes = Column(Text, nullable=True)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
 
     appearances = relationship("OfficerAppearance", back_populates="officer")
 

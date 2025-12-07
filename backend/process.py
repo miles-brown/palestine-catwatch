@@ -13,38 +13,39 @@ os.makedirs(FRAMES_DIR, exist_ok=True)
 
 def process_media(media_id: int):
     db = SessionLocal()
-    media_item = db.query(models.Media).filter(models.Media.id == media_id).first()
-    
-    if not media_item:
-        print(f"Media {media_id} not found.")
-        return
-
-    print(f"Processing media {media_id}: {media_item.url}")
-    
-    media_frames_dir = os.path.join(FRAMES_DIR, str(media_item.id))
-    os.makedirs(media_frames_dir, exist_ok=True)
-    
-    if media_item.type == "video":
-        extract_frames(media_item, media_frames_dir)
-    else:
-        # For images, treat as a single frame
-        target_path = os.path.join(media_frames_dir, "frame_0000.jpg")
-        # Handle if path is relative or absolute
-        # media_item.url might be "../data/media/..."
-        # shutil.copy2 likely works if Cwd is correct
-        try:
-             shutil.copy2(media_item.url, target_path)
-             print(f"Copied image to {target_path}")
-        except Exception as e:
-            print(f"Error copying image: {e}")
+    try:
+        media_item = db.query(models.Media).filter(models.Media.id == media_id).first()
+        
+        if not media_item:
+            print(f"Media {media_id} not found.")
             return
 
-    # Run AI Analysis
-    analyze_frames(media_item, media_frames_dir)
+        print(f"Processing media {media_id}: {media_item.url}")
+        
+        media_frames_dir = os.path.join(FRAMES_DIR, str(media_item.id))
+        os.makedirs(media_frames_dir, exist_ok=True)
+        
+        if media_item.type == "video":
+            extract_frames(media_item, media_frames_dir)
+        else:
+            # For images, treat as a single frame
+            target_path = os.path.join(media_frames_dir, "frame_0000.jpg")
+            try:
+                 shutil.copy2(media_item.url, target_path)
+                 print(f"Copied image to {target_path}")
+            except Exception as e:
+                print(f"Error copying image: {e}")
+                return
 
-    media_item.processed = True
-    db.commit()
-    print(f"Media {media_id} marked as processed.")
+        analyze_frames(media_item.id, media_frames_dir) # Pass ID instead of object
+        
+        # Mark as processed
+        media_item.processed = True
+        db.commit()
+    finally:
+        db.close()
+
+
 
 def extract_frames(media_item, media_frames_dir, interval_seconds=1):
     cap = cv2.VideoCapture(media_item.url)
@@ -76,15 +77,17 @@ def extract_frames(media_item, media_frames_dir, interval_seconds=1):
     cap.release()
     print(f"Extracted {frame_count} frames.")
 
-def analyze_frames(media_item, media_frames_dir):
+def analyze_frames(media_id, media_frames_dir):
     from ai import analyzer
     
     print("Running AI analysis on frames...")
     
     db = SessionLocal()
-    # Re-fetch media item to ensure session attachment if needed, though we passed it.
-    # But best to use ID if unsure.
-    media_item = db.merge(media_item)
+    try:
+        media_item = db.query(models.Media).filter(models.Media.id == media_id).first()
+        if not media_item:
+             print(f"Media {media_id} not found during analysis.")
+             return
 
     frames = sorted([
         os.path.join(media_frames_dir, f) 
@@ -178,7 +181,8 @@ def analyze_frames(media_item, media_frames_dir):
             db.commit()
     db.commit()
     print("AI Analysis complete.")
-
+    finally:
+        db.close()
 if __name__ == "__main__":
     # Test run: Find unprocessed media
     db = SessionLocal()
