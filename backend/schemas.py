@@ -25,13 +25,13 @@ class Media(MediaBase):
     timestamp: datetime
     # protext will be loaded if needed, handle circular refs or separate schemas
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class Protest(ProtestBase):
     id: int
     media: List[Media] = []
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 # Update Media to include Protest
 class MediaWithProtest(Media):
@@ -57,11 +57,11 @@ class OfficerAppearance(OfficerAppearanceBase):
     media_id: int
     media: Optional[Media] = None # Use Media, not MediaWithProtest to avoid deep circular recursion unless needed
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class Officer(OfficerBase):
     id: int
     appearances: List[OfficerAppearance] = []
     class Config:
-        orm_mode = True
+        from_attributes = True
 
