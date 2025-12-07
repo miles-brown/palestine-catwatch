@@ -8,9 +8,17 @@ const API_BASE = "http://localhost:8000";
 const UploadPage = () => {
     const [file, setFile] = useState(null);
     const [mediaType, setMediaType] = useState('image');
-    const [uploading, setUploading] = useState(false);
+    const [selectedProtestId, setSelectedProtestId] = useState('');
+    const [submitStatus, setSubmitStatus] = useState(null); // 'idle' | 'loading'
     const [status, setStatus] = useState(null); // 'success' | 'error'
     const [message, setMessage] = useState('');
+
+    // Dummy protests data for demonstration. In a real app, this would be fetched from an API.
+    const [protests, setProtests] = useState([
+        { id: '1', name: 'Climate Justice Rally', date: '2023-10-26' },
+        { id: '2', name: 'Housing Rights March', date: '2023-11-15' },
+        { id: '3', name: 'Healthcare for All Protest', date: '2023-12-01' },
+    ]);
 
     const handleFileChange = (e) => {
         if (e.target.files && e.target.files[0]) {
@@ -38,13 +46,18 @@ const UploadPage = () => {
         e.preventDefault();
         if (!file) return;
 
-        setUploading(true);
+        if (!selectedProtestId) {
+            alert("Please select a protest first.");
+            return;
+        }
+
+        setSubmitStatus('loading');
         setStatus(null);
 
         const formData = new FormData();
         formData.append('file', file);
         formData.append('type', mediaType);
-        formData.append('protest_id', 1); // Hardcoded for now, or select from list
+        formData.append('protest_id', selectedProtestId);
 
         try {
             const response = await fetch(`${API_BASE}/upload`, {
@@ -58,12 +71,13 @@ const UploadPage = () => {
             setStatus('success');
             setMessage(`Upload successful! ID: ${data.media_id}. Processing started...`);
             setFile(null);
+            setSelectedProtestId(''); // Clear selected protest after successful upload
         } catch (error) {
             console.error(error);
             setStatus('error');
             setMessage('Failed to upload file. Please try again.');
         } finally {
-            setUploading(false);
+            setSubmitStatus(null);
         }
     };
 
@@ -153,13 +167,29 @@ const UploadPage = () => {
                         </div>
                     )}
 
+                    {/* Protest Selection */}
+                    <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Related Protest</label>
+                        <select
+                            required
+                            value={selectedProtestId}
+                            onChange={(e) => setSelectedProtestId(e.target.value)}
+                            className="w-full p-2 border border-gray-300 rounded-md bg-white focus:ring-green-500 focus:border-green-500"
+                        >
+                            <option value="">Select a protest...</option>
+                            {protests.map(p => (
+                                <option key={p.id} value={p.id}>{p.name} ({new Date(p.date).toLocaleDateString()})</option>
+                            ))}
+                        </select>
+                    </div>
+                    <br />
                     {/* Submit Button */}
                     <Button
                         type="submit"
                         className="w-full bg-green-700 hover:bg-green-800 text-white py-6 text-lg"
-                        disabled={!file || uploading}
+                        disabled={!file || !selectedProtestId || submitStatus === 'loading'}
                     >
-                        {uploading ? 'Uploading & Processing...' : 'Submit Evidence'}
+                        {submitStatus === 'loading' ? 'Uploading...' : 'Submit Evidence'}
                     </Button>
                 </form>
             </Card>
@@ -168,3 +198,4 @@ const UploadPage = () => {
 };
 
 export default UploadPage;
+```
