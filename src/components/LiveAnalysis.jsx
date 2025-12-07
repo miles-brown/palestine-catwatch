@@ -2,7 +2,6 @@ import { useEffect, useState, useRef } from 'react';
 import { io } from 'socket.io-client';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Terminal, Cpu, Shield, AlertTriangle, Check, X, Server, Activity } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
