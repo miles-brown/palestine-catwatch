@@ -94,7 +94,10 @@ const UploadPage = () => {
                 }),
             });
 
-            if (!response.ok) throw new Error('Ingest failed');
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({}));
+                throw new Error(errData.detail || 'Ingest failed');
+            }
             const data = await response.json();
 
             setSubmitStatus('success');
