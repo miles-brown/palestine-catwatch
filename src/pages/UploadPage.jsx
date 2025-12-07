@@ -10,22 +10,14 @@ const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 const UploadPage = () => {
     // Shared State
     const [activeTab, setActiveTab] = useState('upload'); // 'upload' | 'link'
-    const [submitStatus, setSubmitStatus] = useState(null); // 'idle' | 'loading'
-    const [status, setStatus] = useState(null); // 'success' | 'error'
+    const [protests, setProtests] = useState([]);
+    const [submitStatus, setSubmitStatus] = useState(null); // 'success' | 'error' | 'loading'
     const [message, setMessage] = useState('');
     const [liveTaskId, setLiveTaskId] = useState(null); // If set, shows LiveAnalysis
 
     // Upload State
     const [file, setFile] = useState(null);
     const [mediaType, setMediaType] = useState('image');
-    const [selectedProtestId, setSelectedProtestId] = useState('');
-
-    // Dummy protests data for demonstration. In a real app, this would be fetched from an API.
-    const [protests, setProtests] = useState([
-        { id: '1', name: 'Climate Justice Rally', date: '2023-10-26' },
-        { id: '2', name: 'Housing Rights March', date: '2023-11-15' },
-        { id: '3', name: 'Healthcare for All Protest', date: '2023-12-01' },
-    ]);
 
     // Fetch protests on mount
     useEffect(() => {
@@ -39,8 +31,7 @@ const UploadPage = () => {
     const handleFileChange = (e) => {
         if (e.target.files && e.target.files[0]) {
             setFile(e.target.files[0]);
-            setStatus(null);
-            // Auto-detect type
+            setSubmitStatus(null);
             const type = e.target.files[0].type;
             if (type.startsWith('video/')) setMediaType('video');
             else if (type.startsWith('image/')) setMediaType('image');
@@ -51,7 +42,7 @@ const UploadPage = () => {
         e.preventDefault();
         if (e.dataTransfer.files && e.dataTransfer.files[0]) {
             setFile(e.dataTransfer.files[0]);
-            setStatus(null);
+            setSubmitStatus(null);
             const type = e.dataTransfer.files[0].type;
             if (type.startsWith('video/')) setMediaType('video');
             else if (type.startsWith('image/')) setMediaType('image');
@@ -62,29 +53,20 @@ const UploadPage = () => {
         e.preventDefault();
         if (!file) return;
 
-        if (!selectedProtestId) {
-            alert("Please select a protest first.");
-            return;
-        }
-
         setSubmitStatus('loading');
-        setStatus(null);
-
         const formData = new FormData();
         formData.append('file', file);
         formData.append('type', mediaType);
-        formData.append('protest_id', selectedProtestId);
+        formData.append('protest_id', 1); // Default ID, should be selectable if we add dropdown here too
 
         try {
             const response = await fetch(`${API_BASE}/upload`, {
                 method: 'POST',
                 body: formData,
             });
-
             if (!response.ok) throw new Error('Upload failed');
-
             const data = await response.json();
-            setStatus('success');
+            setSubmitStatus('success');
             setMessage(`Upload successful! ID: ${data.media_id}. Processing started...`);
             setFile(null);
             setSelectedProtestId('');
@@ -93,11 +75,8 @@ const UploadPage = () => {
             // and trigger async processing with SIO. For now, we only implemented this for URL Ingest.
 
         } catch (error) {
-            console.error(error);
-            setStatus('error');
+            setSubmitStatus('error');
             setMessage('Failed to upload file. Please try again.');
-        } finally {
-            setSubmitStatus(null);
         }
     };
 
@@ -121,7 +100,7 @@ const UploadPage = () => {
             }
             const data = await response.json();
 
-            setStatus('success');
+            setSubmitStatus('success');
             setMessage(`Ingestion started! ${data.message}`);
 
             // Start Live Analysis
@@ -131,10 +110,8 @@ const UploadPage = () => {
 
         } catch (error) {
             console.error(error);
-            setStatus('error');
-            setMessage(error.message || 'Failed to start ingestion. Check the URL or server logs.');
-        } finally {
-            setSubmitStatus(null);
+            setSubmitStatus('error');
+            setMessage('Failed to start ingestion. Check the URL or server logs.');
         }
     };
 
@@ -164,7 +141,7 @@ const UploadPage = () => {
             <div className="flex justify-center mb-8">
                 <div className="bg-white p-1 rounded-xl shadow-sm border border-gray-200 inline-flex">
                     <button
-                        onClick={() => { setActiveTab('upload'); setStatus(null); setMessage(''); }}
+                        onClick={() => { setActiveTab('upload'); setSubmitStatus(null); setMessage(''); }}
                         className={`px-6 py-2 rounded-lg font-medium flex items-center gap-2 transition-colors ${activeTab === 'upload' ? 'bg-green-100 text-green-800' : 'text-gray-600 hover:bg-gray-50'
                             }`}
                     >
@@ -172,7 +149,7 @@ const UploadPage = () => {
                         Upload File
                     </button>
                     <button
-                        onClick={() => { setActiveTab('link'); setStatus(null); setMessage(''); }}
+                        onClick={() => { setActiveTab('link'); setSubmitStatus(null); setMessage(''); }}
                         className={`px-6 py-2 rounded-lg font-medium flex items-center gap-2 transition-colors ${activeTab === 'link' ? 'bg-green-100 text-green-800' : 'text-gray-600 hover:bg-gray-50'
                             }`}
                     >
@@ -184,10 +161,10 @@ const UploadPage = () => {
 
             <Card className="p-8">
                 {/* Status Message */}
-                {(status || (submitStatus === 'loading')) && (
-                    <div className={`mb-6 p-4 rounded-lg flex items-center gap-2 ${status === 'success' ? 'bg-green-100 text-green-800' : (status === 'error' ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800')}`}>
-                        {status === 'success' ? <CheckCircle className="h-5 w-5" /> : (status === 'error' ? <AlertCircle className="h-5 w-5" /> : <div className="animate-spin h-5 w-5 border-2 border-current border-t-transparent rounded-full" />)}
-                        {submitStatus === 'loading' ? 'Processing...' : message}
+                {submitStatus && submitStatus !== 'loading' && (
+                    <div className={`mb-6 p-4 rounded-lg flex items-center gap-2 ${submitStatus === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                        {submitStatus === 'success' ? <CheckCircle className="h-5 w-5" /> : <AlertCircle className="h-5 w-5" />}
+                        {message}
                     </div>
                 )}
 
@@ -259,32 +236,16 @@ const UploadPage = () => {
                             </label>
                         </div>
 
-                        {/* Protest Selection */}
-                        <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Related Protest</label>
-                            <select
-                                required
-                                value={selectedProtestId}
-                                onChange={(e) => setSelectedProtestId(e.target.value)}
-                                className="w-full p-2 border border-gray-300 rounded-md bg-white focus:ring-green-500 focus:border-green-500"
-                            >
-                                <option value="">Select a protest...</option>
-                                {protests.map(p => (
-                                    <option key={p.id} value={p.id}>{p.name} ({new Date(p.date).toLocaleDateString()})</option>
-                                ))}
-                            </select>
-                        </div>
-                        <br />
-                        {/* Submit Button */}
                         <Button
                             type="submit"
                             className="w-full bg-green-700 hover:bg-green-800 text-white py-6 text-lg"
-                            disabled={!file || !selectedProtestId || submitStatus === 'loading'}
+                            disabled={!file || submitStatus === 'loading'}
                         >
                             {submitStatus === 'loading' ? 'Uploading...' : 'Submit Evidence'}
                         </Button>
                     </form>
                 ) : (
+                    // Ingest URL Tab
                     <IngestQuestionnaire
                         protests={protests}
                         onSubmit={handleUrlSubmit}
