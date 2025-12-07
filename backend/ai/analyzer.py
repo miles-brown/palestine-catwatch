@@ -21,52 +21,112 @@ else:
 #     print(f"Warning: OCR Init failed: {e}")
 reader = None
 
+# Face Detection
 # Load Face Detector
 # We assume the model files are in the same directory as this script or known location
-# We downloaded them to backend/ai/
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-prototxt_path = os.path.join(CURRENT_DIR, "deploy.prototxt")
-model_path = os.path.join(CURRENT_DIR, "res10_300x300_ssd_iter_140000.caffemodel")
+prototxt_path = os.path.join(os.path.dirname(__file__), "deploy.prototxt")
+model_path = os.path.join(os.path.dirname(__file__), "res10_300x300_ssd_iter_140000.caffemodel")
 
-print(f"Loading Face Detector from {model_path}...")
-net = cv2.dnn.readNetFromCaffe(prototxt_path, model_path)
+net = None
+if os.path.exists(prototxt_path) and os.path.exists(model_path):
+    print(f"Loading Face Detector from {model_path}...")
+    net = cv2.dnn.readNetFromCaffe(prototxt_path, model_path)
+else:
+    print("Warning: Face detection models not found.")
+
+# Face Recognition (Re-ID)
+resnet = None
+try:
+    from facenet_pytorch import InceptionResnetV1
+    import torch
+    import torchvision.transforms as transforms
+    from PIL import Image
+    
+    # Initialize ResNet
+    print("Loading Face Re-ID model (InceptionResnetV1)...")
+    resnet = InceptionResnetV1(pretrained='vggface2').eval()
+    
+    # Standard transform for Facenet
+    face_transform = transforms.Compose([
+        transforms.Resize((160, 160)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+    ])
+    
+except ImportError:
+    print("Warning: facenet-pytorch not installed. Re-ID disabled.")
+except Exception as e:
+    print(f"Warning: Failed to load Re-ID model: {e}")
+
 
 def detect_faces(image_path):
     """
-    Detects faces using OpenCV DNN.
-    Returns list of dicts: {'box': (x, y, w, h), 'encoding': None}
+    Detects faces in an image using OpenCV DNN.
+    Returns a list of dicts: {'box': [x, y, w, h], 'confidence': float}
     """
+    if net is None:
+        return []
+
     image = cv2.imread(image_path)
     if image is None:
         return []
     
     (h, w) = image.shape[:2]
-    # Resize to 300x300 for the model
     blob = cv2.dnn.blobFromImage(cv2.resize(image, (300, 300)), 1.0,
         (300, 300), (104.0, 177.0, 123.0))
- 
+
     net.setInput(blob)
     detections = net.forward()
-    
+
     results = []
-    # Loop over detections
     for i in range(0, detections.shape[2]):
         confidence = detections[0, 0, i, 2]
-        
-        # Filter weak detections
+
+        # Filter out weak detections
         if confidence > 0.5:
             box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
             (startX, startY, endX, endY) = box.astype("int")
+
+            # Ensure coordinates are within image bounds
+            startX = max(0, startX)
+            startY = max(0, startY)
+            endX = min(w, endX)
+            endY = min(h, endY)
             
-            width = endX - startX
-            height = endY - startY
-            
-            results.append({
-                "box": (startX, startY, width, height),
-                "encoding": None # No recognition yet
-            })
-            
+            # Avoid tiny invalid boxes
+            if endX - startX > 10 and endY - startY > 10:
+                results.append({
+                    'box': [startX, startY, endX - startX, endY - startY],
+                    'confidence': float(confidence)
+                })
+
     return results
+
+def generate_embedding(image_path, face_box=None):
+    """
+    Generates a 512-d embedding for the face in the image.
+    If face_box (x, y, w, h) is provided, crops first.
+    """
+    if resnet is None:
+        return None
+        
+    try:
+        img = Image.open(image_path).convert('RGB')
+        
+        if face_box:
+            x, y, w, h = face_box
+            img = img.crop((x, y, x+w, y+h))
+            
+        # Transform and add batch dimension
+        img_tensor = face_transform(img).unsqueeze(0)
+        
+        # Inference
+        embedding = resnet(img_tensor).detach().numpy()[0]
+        return embedding.tolist()
+        
+    except Exception as e:
+        print(f"Embedding generation failed: {e}")
+        return None
 
 def extract_text(image_path):
     """

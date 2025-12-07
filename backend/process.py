@@ -4,6 +4,8 @@ import shutil
 import json
 import numpy as np
 import models
+import json
+from scipy.spatial.distance import euclidean
 from database import SessionLocal
 
 FRAMES_DIR = "../data/frames"
@@ -75,7 +77,7 @@ def extract_frames(media_item, media_frames_dir, interval_seconds=1):
     print(f"Extracted {frame_count} frames.")
 
 def analyze_frames(media_item, media_frames_dir):
-    from ai import process_image_ai
+    from ai import analyzer
     
     print("Running AI analysis on frames...")
     
@@ -84,59 +86,84 @@ def analyze_frames(media_item, media_frames_dir):
     # But best to use ID if unsure.
     media_item = db.merge(media_item)
 
-    frames = sorted([os.path.join(media_frames_dir, f) for f in os.listdir(media_frames_dir) if f.endswith(".jpg")])
+    frames = sorted([
+        os.path.join(media_frames_dir, f) 
+        for f in os.listdir(media_frames_dir) 
+        if f.endswith(".jpg") and not f.startswith("face_") and not f.startswith("crop_")
+    ])
     
     existing_officers = db.query(models.Officer).all()
     
     for frame_path in frames:
-        results = process_image_ai(frame_path, media_frames_dir)
+        results = analyzer.process_image_ai(frame_path, media_frames_dir)
         
-        for res in results:
+        for i, res in enumerate(results):
             print(f"Found officer in {frame_path}")
             
             matched_officer = None
             
-            # 1. Try matching by badge
-            if res.get('badge'):
-                badge = res['badge']
-                if len(badge) > 2: # validation
-                    matched_officer = db.query(models.Officer).filter(models.Officer.badge_number.like(f"%{badge}%")).first()
-                    if matched_officer:
-                        print(f"Matched by badge: {badge}")
+            embedding = analyzer.generate_embedding(res['crop_path'])
             
-            # 2. Try matching by face encoding
-            # (Deferred/Implementing basic shim)
-            encoding = res.get('encoding')
-            if not matched_officer and encoding is not None:
-                # Compare logic would go here
-                pass
+            # Match with existing officers
+            matched_officer = None
+            min_dist = 100.0
             
-            # 3. Create new if not found
-            if not matched_officer:
-                # print("Creating new officer") 
-                # (Commented out to reduce noise if many faces, but for test it's fine)
-                matched_officer = models.Officer(
-                    badge_number=res.get('badge'),
-                    visual_id=None, # No encoding yet
+            if embedding is not None: # Check if embedding was successfully generated
+                # Fetch all officers with embeddings
+                existing_officers_with_embeddings = db.query(models.Officer).filter(models.Officer.visual_id.isnot(None)).all()
+                
+                for off in existing_officers_with_embeddings:
+                    try:
+                        off_emb = json.loads(off.visual_id)
+                        dist = euclidean(embedding, off_emb)
+                        if dist < min_dist:
+                            min_dist = dist
+                            matched_officer = off
+                    except json.JSONDecodeError:
+                        print(f"Warning: Could not decode visual_id for officer {off.id}")
+                        continue
+                    except Exception as e:
+                        print(f"Error comparing embeddings for officer {off.id}: {e}")
+                        continue
+                
+                print(f"Face {i}: Min Dist = {min_dist}")
+                # Threshold for match (e.g. 0.6 for Facenet)
+                if min_dist > 0.8: # Conservative threshold
+                    matched_officer = None
+
+            if matched_officer:
+                print(f"Matched existing Officer {matched_officer.id} (Dist: {min_dist:.4f})")
+                officer = matched_officer
+            else:
+                print("Creating new Officer.")
+                # Create new officer
+                officer = models.Officer(
+                    badge_number=None, # OCR logic below could update this
                     force="Unknown",
-                    notes="Auto-detected"
+                    visual_id=json.dumps(embedding) if embedding is not None else None,
+                    notes="Auto-detected from media."
                 )
-                db.add(matched_officer)
+                db.add(officer)
                 db.commit()
-                db.refresh(matched_officer)
-                existing_officers.append(matched_officer)
+                db.refresh(officer)
+
+            # 5. Extract Text (Badge Number) - associate with this officer if plausible
+            # ... logic for OCR assignment can be refined. For now, we just log unique texts.
             
-            # Create Appearance
+            # 6. Record Appearance
+            # Calculate timestamp
+            timestamp_str = "00:00:00" # Placeholder, todo: calculate from frame_idx / fps
+            
             appearance = models.OfficerAppearance(
-                officer_id=matched_officer.id,
+                officer_id=officer.id,
                 media_id=media_item.id,
-                timestamp_in_video="00:00:00", 
-                image_crop_path=res['crop_path'],
-                role=res['role'],
-                action=res['action']
+                timestamp_in_video=timestamp_str,
+                image_crop_path=res['crop_path'], # Use the full crop_path
+                role="Unknown",
+                action="Observed"
             )
             db.add(appearance)
-            
+            db.commit()
     db.commit()
     print("AI Analysis complete.")
 

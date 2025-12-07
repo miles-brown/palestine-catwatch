@@ -154,15 +154,57 @@ const HomePage = () => {
           </div>
         </div>
 
+        {/* Search and Filters */}
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mb-8">
+          <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* Text Search */}
+              <div className="col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Search Officials</label>
+                <input
+                  type="text"
+                  placeholder="Search by badge number, notes, or role..."
+                  className="w-full p-2 border border-gray-300 rounded-md focus:ring-green-500 focus:border-green-500"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
+
+              {/* Force Filter (Mock for now, can be populated from DB) */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Filter by Force</label>
+                <select
+                  className="w-full p-2 border border-gray-300 rounded-md focus:ring-green-500 focus:border-green-500"
+                >
+                  <option value="">All Forces</option>
+                  <option value="Metropolitan Police">Metropolitan Police</option>
+                  <option value="City of London Police">City of London Police</option>
+                  <option value="BTP">British Transport Police</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* Grid of officer cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-          {officers.map((officer) => (
-            <OfficerCard
-              key={officer.id}
-              officer={officer}
-              onClick={handleOfficerClick}
-            />
-          ))}
+          {officers
+            .filter(officer => {
+              if (!searchQuery) return true;
+              const query = searchQuery.toLowerCase();
+              return (
+                (officer.badgeNumber && officer.badgeNumber.toLowerCase().includes(query)) ||
+                (officer.notes && officer.notes.toLowerCase().includes(query)) ||
+                (officer.role && officer.role.toLowerCase().includes(query))
+              );
+            })
+            .map((officer) => (
+              <OfficerCard
+                key={officer.id}
+                officer={officer}
+                onClick={handleOfficerClick}
+              />
+            ))}
         </div>
 
         {/* Stats section */}

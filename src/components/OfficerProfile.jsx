@@ -1,4 +1,4 @@
-import { X, ExternalLink, Calendar, MapPin, Shield, FileText } from 'lucide-react';
+import { X, ExternalLink, Calendar, MapPin, Shield, FileText, Megaphone } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 
@@ -168,7 +168,7 @@ const OfficerProfile = ({ officer, onClose }) => {
         </div>
       </div>
     </div>
-    </div >
+
   );
 };
 

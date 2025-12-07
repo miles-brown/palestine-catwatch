@@ -53,6 +53,48 @@ def ingest_media(url: str, protest_id: int, media_type: str, db: Session):
         print(f"Error downloading {url}: {e}")
         return None
 
+def save_upload(file_obj, filename: str, protest_id: int, media_type: str, db: Session):
+    """
+    Saves an uploaded file to disk and creates DB record.
+    """
+    print(f"Saving upload {filename} for protest {protest_id}...")
+    
+    # Generate unique filename (keep extension from original if possible, else default)
+    _, ext = os.path.splitext(filename)
+    if not ext:
+        ext = ".jpg" if media_type == "image" else ".mp4"
+        
+    unique_filename = f"{uuid.uuid4()}{ext}"
+    filepath = os.path.join(MEDIA_DIR, unique_filename)
+    
+    try:
+        with open(filepath, "wb") as buffer:
+            # Handle both bytes and file-like objects (FastAPI UploadFile.file)
+            if hasattr(file_obj, "read"):
+                # Read in chunks
+                while content := file_obj.read(1024 * 1024): # 1MB chunks
+                     buffer.write(content)
+            else:
+                buffer.write(file_obj)
+
+        print(f"Saved to {filepath}")
+        
+        # Save to DB
+        db_media = models.Media(
+            url=filepath,
+            type=media_type,
+            protest_id=protest_id,
+            timestamp=datetime.utcnow()
+        )
+        db.add(db_media)
+        db.commit()
+        db.refresh(db_media)
+        return db_media
+
+    except Exception as e:
+        print(f"Error saving upload: {e}")
+        return None
+
 if __name__ == "__main__":
     # Test run
     db = SessionLocal()

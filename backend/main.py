@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
@@ -27,8 +27,21 @@ def read_root():
     return {"message": "Palestine Catwatch Backend Operational"}
 
 @app.get("/officers", response_model=List[schemas.Officer])
-def get_officers(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    officers = db.query(models.Officer).offset(skip).limit(limit).all()
+def get_officers(
+    skip: int = 0, 
+    limit: int = 100, 
+    badge_number: str = None,
+    force: str = None,
+    db: Session = Depends(get_db)
+):
+    query = db.query(models.Officer)
+    
+    if badge_number:
+        query = query.filter(models.Officer.badge_number.contains(badge_number))
+    if force:
+        query = query.filter(models.Officer.force == force)
+        
+    officers = query.offset(skip).limit(limit).all()
     return officers
 
 @app.get("/officers/{officer_id}", response_model=schemas.Officer)
@@ -51,4 +64,28 @@ def ingest_url(url: str, protest_id: int, type: str, db: Session = Depends(get_d
     process_media(media.id)
     
     return {"status": "ingested", "media_id": media.id}
+
+@app.post("/upload")
+async def upload_file(
+    file: UploadFile = File(...), 
+    protest_id: int = Form(...),
+    type: str = Form(...),
+    db: Session = Depends(get_db)
+):
+    from ingest import save_upload
+    
+    # Validate type
+    if type not in ["image", "video"]:
+         raise HTTPException(status_code=400, detail="Invalid media type. Must be 'image' or 'video'.")
+
+    media = save_upload(file.file, file.filename, protest_id, type, db)
+    
+    if not media:
+        raise HTTPException(status_code=500, detail="File upload failed")
+        
+    # Trigger processing
+    from process import process_media
+    process_media(media.id)
+    
+    return {"status": "uploaded", "media_id": media.id, "filename": file.filename}
 
