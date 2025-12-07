@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+python-multipart
+sqlalchemy
+python-dotenv
+requests
+opencv-python-headless
+# opencv is sufficient for dnn face detection
+easyocr
+numpy
+facenet-pytorch
+torch
+torchvision
+tqdm
+scipy

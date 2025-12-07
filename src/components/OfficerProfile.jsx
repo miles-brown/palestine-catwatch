@@ -1,4 +1,4 @@
-import { X, ExternalLink, Calendar, MapPin, Shield, FileText } from 'lucide-react';
+import { X, ExternalLink, Calendar, MapPin, Shield, FileText, Megaphone } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 
@@ -51,7 +51,7 @@ const OfficerProfile = ({ officer, onClose }) => {
             />
             <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
           </div>
-          
+
           <div className="absolute bottom-6 left-6 text-white">
             <div className="flex items-center gap-2 mb-2">
               <Shield className="h-5 w-5" />
@@ -73,7 +73,7 @@ const OfficerProfile = ({ officer, onClose }) => {
               </div>
               <p className="text-gray-600">{formatDate(officer.protestDate)}</p>
             </Card>
-            
+
             <Card className="p-4">
               <div className="flex items-center gap-3 mb-2">
                 <MapPin className="h-5 w-5 text-blue-600" />
@@ -130,16 +130,45 @@ const OfficerProfile = ({ officer, onClose }) => {
             </div>
           </div>
 
-          {/* Footer note */}
-          <div className="mt-8 p-4 bg-gray-50 rounded-lg">
-            <p className="text-sm text-gray-600 text-center">
-              This documentation is part of our commitment to transparency and accountability. 
-              All information is sourced from publicly available materials.
-            </p>
+        </div>
+
+        {/* Coordinates if available */}
+        {(officer.latitude && officer.longitude) && (
+          <div className="mt-2 text-xs text-gray-400 font-mono">
+            {officer.latitude}, {officer.longitude}
           </div>
+        )}
+
+        {/* Appeal for Information */}
+        <div className="mt-8 bg-red-50 border-2 border-red-200 rounded-lg p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <Megaphone className="h-6 w-6 text-red-600" />
+            <h3 className="text-xl font-bold text-red-900">Appeal for Information</h3>
+          </div>
+          <p className="text-gray-700 mb-4">
+            We are building a case against this officer for their actions. If you have any additional footage,
+            photos, or information about this individual or this event, please contact us securely.
+          </p>
+          <div className="flex gap-4">
+            <Button className="bg-red-600 hover:bg-red-700 text-white">
+              Submit Evidence
+            </Button>
+            <Button variant="outline" className="text-red-600 border-red-600 hover:bg-red-50">
+              Contact Legal Team
+            </Button>
+          </div>
+        </div>
+
+        {/* Footer note */}
+        <div className="mt-8 p-4 bg-gray-50 rounded-lg">
+          <p className="text-sm text-gray-600 text-center">
+            This documentation is part of our commitment to transparency and accountability.
+            All information is sourced from publicly available materials.
+          </p>
         </div>
       </div>
     </div>
+
   );
 };
 

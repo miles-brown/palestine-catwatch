@@ -24,7 +24,7 @@ const Header = () => {
     <>
       {/* Palestine flag stripe */}
       <div className="palestine-flag-stripe"></div>
-      
+
       {/* Dystopian warning banner */}
       <div className="warning-banner px-4 py-2 text-center text-sm">
         <div className="max-w-7xl mx-auto flex items-center justify-center gap-2">
@@ -58,15 +58,19 @@ const Header = () => {
                 <Link
                   key={item.name}
                   to={item.href}
-                  className={`text-sm font-medium transition-colors hover:text-green-700 ${
-                    isActive(item.href)
+                  className={`text-sm font-medium transition-colors hover:text-green-700 ${isActive(item.href)
                       ? 'text-green-700 border-b-2 border-green-700 pb-1'
                       : 'text-gray-700'
-                  }`}
+                    }`}
                 >
                   {item.name}
                 </Link>
               ))}
+              <Link to="/upload">
+                <Button className="bg-red-600 hover:bg-red-700 text-white text-sm">
+                  Submit Evidence
+                </Button>
+              </Link>
             </nav>
 
             {/* Mobile menu button */}
@@ -92,9 +96,8 @@ const Header = () => {
                   <Link
                     key={item.name}
                     to={item.href}
-                    className={`text-sm font-medium transition-colors hover:text-green-700 ${
-                      isActive(item.href) ? 'text-green-700' : 'text-gray-700'
-                    }`}
+                    className={`text-sm font-medium transition-colors hover:text-green-700 ${isActive(item.href) ? 'text-green-700' : 'text-gray-700'
+                      }`}
                     onClick={() => setIsMenuOpen(false)}
                   >
                     {item.name}

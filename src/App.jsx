@@ -6,6 +6,7 @@ import WhatWeWant from './pages/WhatWeWant';
 import About from './pages/About';
 import Terms from './pages/Terms';
 import Privacy from './pages/Privacy';
+import UploadPage from './pages/UploadPage';
 import './App.css';
 
 function App() {
@@ -21,9 +22,10 @@ function App() {
             <Route path="/about" element={<About />} />
             <Route path="/terms" element={<Terms />} />
             <Route path="/privacy" element={<Privacy />} />
+            <Route path="/upload" element={<UploadPage />} />
           </Routes>
         </main>
-        
+
         {/* Footer */}
         <footer className="bg-black text-white py-8 mt-16">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
