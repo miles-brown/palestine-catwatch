@@ -48,6 +48,8 @@ class OfficerBase(BaseModel):
     force: Optional[str] = None
     visual_id: Optional[str] = None
     notes: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
 class OfficerAppearance(OfficerAppearanceBase):
     id: int

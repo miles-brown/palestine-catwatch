@@ -4,7 +4,13 @@
   "version": "1.0.0",
   "type": "module",
   "description": "Palestine Accountability Campaign - Police Oversight Documentation",
-  "keywords": ["palestine", "accountability", "police-oversight", "activism", "transparency"],
+  "keywords": [
+    "palestine",
+    "accountability",
+    "police-oversight",
+    "activism",
+    "transparency"
+  ],
   "author": "Palestine Accountability Campaign",
   "license": "MIT",
   "scripts": {
@@ -14,10 +20,12 @@
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
+    "leaflet": "^1.9.4",
+    "lucide-react": "^0.294.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-router-dom": "^6.20.1",
-    "lucide-react": "^0.294.0"
+    "react-leaflet": "^4.2.1",
+    "react-router-dom": "^6.20.1"
   },
   "devDependencies": {
     "@types/react": "^18.2.37",
