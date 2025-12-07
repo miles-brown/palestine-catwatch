@@ -28,6 +28,11 @@ const OfficerProfile = ({ officer, onClose }) => {
     });
   };
 
+  let API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+  if (!API_BASE.startsWith("http")) {
+    API_BASE = `https://${API_BASE}`;
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
       <div className="relative w-full max-w-4xl max-h-[90vh] overflow-y-auto bg-white rounded-xl shadow-2xl">
@@ -92,7 +97,7 @@ const OfficerProfile = ({ officer, onClose }) => {
               <p className="text-gray-500 text-lg">{officer.force}</p>
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => window.open(`${import.meta.env.VITE_API_BASE || 'http://localhost:8000'}/officers/${officer.id}/dossier`, '_blank')}>
+              <Button variant="outline" onClick={() => window.open(`${API_BASE}/officers/${officer.id}/dossier`, '_blank')}>
                 <FileText className="mr-2 h-4 w-4" />
                 Download Dossier
               </Button>
