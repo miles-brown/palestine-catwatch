@@ -115,7 +115,10 @@ const UploadPage = () => {
                 }),
             });
 
-            if (!response.ok) throw new Error('Ingest failed');
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({}));
+                throw new Error(errData.detail || 'Ingest failed');
+            }
             const data = await response.json();
 
             setStatus('success');
@@ -129,7 +132,7 @@ const UploadPage = () => {
         } catch (error) {
             console.error(error);
             setStatus('error');
-            setMessage('Failed to start ingestion. Check the URL or server logs.');
+            setMessage(error.message || 'Failed to start ingestion. Check the URL or server logs.');
         } finally {
             setSubmitStatus(null);
         }

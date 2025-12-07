@@ -90,7 +90,15 @@ async def ingest_media_url(request: IngestURLRequest, background_tasks: Backgrou
     Ingest a URL (YouTube, web).
     Triggers background download and analysis.
     """
-    from ingest_video import process_video_workflow
+    try:
+        from ingest_video import process_video_workflow
+    except ImportError as e:
+        print(f"Import Error in ingest endpoint: {e}")
+        raise HTTPException(status_code=500, detail=f"Server Configuration Error: {e}")
+    except Exception as e:
+        print(f"Unexpected Error in ingest endpoint: {e}")
+        raise HTTPException(status_code=500, detail=f"Server Internal Error: {e}")
+
     import asyncio
     from datetime import datetime
     from sio import sio_server
