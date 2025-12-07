@@ -3,7 +3,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 import models, schemas
 from database import get_db, engine
 
@@ -17,7 +17,7 @@ except Exception as e:
 from pydantic import BaseModel
 class IngestURLRequest(BaseModel):
     url: str
-    protest_id: int = None
+    protest_id: Optional[int] = None
     answers: dict = {}
 
 
