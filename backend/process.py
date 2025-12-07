@@ -77,6 +77,11 @@ def extract_frames(media_item, media_frames_dir, interval_seconds=1):
     cap.release()
     print(f"Extracted {frame_count} frames.")
 
+def get_timestamp_str(seconds):
+    m, s = divmod(seconds, 60)
+    h, m = divmod(m, 60)
+    return f"{int(h):02d}:{int(m):02d}:{int(s):02d}"
+
 def analyze_frames(media_id, media_frames_dir):
     from ai import analyzer
     
@@ -98,10 +103,18 @@ def analyze_frames(media_id, media_frames_dir):
         existing_officers = db.query(models.Officer).all()
         
         for frame_path in frames:
+            # Calculate timestamp from filename (frame_XXXX.jpg -> XXXX seconds)
+            frame_filename = os.path.basename(frame_path)
+            try:
+                frame_idx = int(frame_filename.split('_')[1].split('.')[0])
+                timestamp_str = get_timestamp_str(frame_idx) # Assuming 1s interval
+            except Exception:
+                timestamp_str = "00:00:00"
+
             results = analyzer.process_image_ai(frame_path, media_frames_dir)
             
             for i, res in enumerate(results):
-                print(f"Found officer in {frame_path}")
+                print(f"Found officer in {frame_path} at {timestamp_str}")
                 
                 matched_officer = None
                 
@@ -150,54 +163,32 @@ def analyze_frames(media_id, media_frames_dir):
                     db.commit()
                     db.refresh(officer)
     
-                # 5. Extract Text (Badge Number) - associate with this officer if plausible
-                # ... logic for OCR assignment can be refined. For now, we just log unique texts.
+                # 5. Extract Text (Badge Number)
+                badge_text = analyzer.extract_text(res['crop_path'])
+                badge_str = ", ".join(badge_text) if badge_text else None
+                if badge_str:
+                    print(f"OCR found text: {badge_str}")
+                    # Ideally update officer badge number if confident
                 
-                # 6. Record Appearance
-                # Calculate timestamp
-                timestamp_str = "00:00:00" # Placeholder, todo: calculate from frame_idx / fps
-                
+                # 6. Object Detection (Context)
+                objects = analyzer.detect_objects(frame_path)
+                relevant_objects = [obj for obj in objects if obj in ['baseball bat', 'knife', 'cell phone', 'handbag', 'backpack']]
+                action_desc = "Observed"
+                if relevant_objects:
+                    action_desc += f"; Holding: {', '.join(relevant_objects)}"
+                    print(f"Detected objects: {relevant_objects}")
+    
+                # 7. Record Appearance
                 appearance = models.OfficerAppearance(
                     officer_id=officer.id,
                     media_id=media_item.id,
                     timestamp_in_video=timestamp_str,
                     image_crop_path=res['crop_path'], # Use the full crop_path
                     role="Unknown",
-                    action="Observed"
+                    action=action_desc
                 )
                 db.add(appearance)
                 db.commit()
-                db.refresh(officer)
-
-            # 5. Extract Text (Badge Number)
-            badge_text = analyzer.extract_text(res['crop_path'])
-            badge_str = ", ".join(badge_text) if badge_text else None
-            if badge_str:
-                print(f"OCR found text: {badge_str}")
-                # Ideally update officer badge number if confident
-            
-            # 6. Object Detection (Context)
-            objects = analyzer.detect_objects(frame_path)
-            relevant_objects = [obj for obj in objects if obj in ['baseball bat', 'knife', 'cell phone', 'handbag', 'backpack']]
-            action_desc = "Observed"
-            if relevant_objects:
-                action_desc += f"; Holding: {', '.join(relevant_objects)}"
-                print(f"Detected objects: {relevant_objects}")
-
-            # 7. Record Appearance
-            # Calculate timestamp
-            timestamp_str = "00:00:00" # Placeholder, todo: calculate from frame_idx / fps
-            
-            appearance = models.OfficerAppearance(
-                officer_id=officer.id,
-                media_id=media_item.id,
-                timestamp_in_video=timestamp_str,
-                image_crop_path=res['crop_path'], # Use the full crop_path
-                role="Unknown",
-                action=action_desc
-            )
-            db.add(appearance)
-            db.commit()
     db.commit()
     print("AI Analysis complete.")
     finally:

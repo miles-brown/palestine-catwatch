@@ -67,6 +67,7 @@ const UploadPage = () => {
             setSubmitStatus('success');
             setMessage(`Upload successful! ID: ${data.media_id}. Processing started...`);
             setFile(null);
+            setSelectedProtestId('');
         } catch (error) {
             setSubmitStatus('error');
             setMessage('Failed to upload file. Please try again.');
@@ -229,3 +230,4 @@ const UploadPage = () => {
 };
 
 export default UploadPage;
+
