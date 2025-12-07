@@ -7,6 +7,7 @@ import About from './pages/About';
 import Terms from './pages/Terms';
 import Privacy from './pages/Privacy';
 import UploadPage from './pages/UploadPage';
+import ManifestoPage from './pages/ManifestoPage';
 import './App.css';
 
 function App() {
@@ -23,6 +24,7 @@ function App() {
             <Route path="/terms" element={<Terms />} />
             <Route path="/privacy" element={<Privacy />} />
             <Route path="/upload" element={<UploadPage />} />
+            <Route path="/manifesto" element={<ManifestoPage />} />
           </Routes>
         </main>
 
