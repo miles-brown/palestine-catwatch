@@ -90,40 +90,41 @@ async def ingest_media_url(request: IngestURLRequest, background_tasks: Backgrou
     Ingest a URL (YouTube, web).
     Triggers background download and analysis.
     """
-    try:
-        from ingest_video import process_video_workflow
-    except ImportError as e:
-        print(f"Import Error in ingest endpoint: {e}")
-        raise HTTPException(status_code=500, detail=f"Server Configuration Error: {e}")
-    except Exception as e:
-        print(f"Unexpected Error in ingest endpoint: {e}")
-        raise HTTPException(status_code=500, detail=f"Server Internal Error: {e}")
-
-    import asyncio
-    from datetime import datetime
-    from sio import sio_server
-    
-    # Validation logic here (mock)
-    if "2 + 3" in str(request.answers):
-         pass
-    
     # Create a unique Task ID and room
-    # We will return this ID so the frontend can join the room
     task_id = f"task_{int(datetime.utcnow().timestamp())}"
 
     # We need to capture the current event loop to schedule async emits from the sync background thread
     loop = asyncio.get_running_loop()
 
+    # Define wrapper here (or outside) to lazily import heavy modules
     def background_wrapper(url, answers, protest_id, room_id, event_loop):
-        def callback(event, data):
-            # Schedule the emit coroutine on the main event loop
-            # This is thread-safe
+        # 1. Define callback for socket events
+        def status_callback(event, data):
             asyncio.run_coroutine_threadsafe(
                 sio_server.emit(event, data, room=room_id),
                 event_loop
             )
-        
-        process_video_workflow(url, answers, protest_id, status_callback=callback)
+
+        try:
+            status_callback("log", "Initializing AI engines (this may take a moment)...")
+            
+            # 2. Lazy Import - Move heavy imports HERE
+            print("Importing ingest_video in background task...")
+            from ingest_video import process_video_workflow
+            
+            # 3. Run Workflow
+            process_video_workflow(url, answers, protest_id, status_callback=status_callback)
+            
+        except ImportError as e:
+            error_msg = f"Server Configuration Error: Failed to load AI modules. {e}"
+            print(error_msg)
+            status_callback("log", error_msg)
+            status_callback("Error", f"Import failed: {e}")
+        except Exception as e:
+            error_msg = f"Processing Error: {e}"
+            print(error_msg)
+            status_callback("log", error_msg)
+            status_callback("Error", str(e))
 
     background_tasks.add_task(background_wrapper, request.url, request.answers, request.protest_id, task_id, loop)
     
