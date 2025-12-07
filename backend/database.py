@@ -24,7 +24,16 @@ print(f"Attempting DB connection to: ...@{safe_url}")
 # Fallback to sqlite if needed for tests without docker, but prefer PG
 # SQLALCHEMY_DATABASE_URL = "sqlite:///./protest_monitor.db"
 
-engine = create_engine(SQLALCHEMY_DATABASE_URL)
+# Neon/Railway optimization: 
+# pool_pre_ping=True checks if connection is alive before using it (fixes SSL closed error)
+# pool_recycle=300 recycles connections every 5 mins to prevent stale timeouts
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL,
+    pool_pre_ping=True,
+    pool_recycle=300,
+    pool_size=10,
+    max_overflow=20
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
