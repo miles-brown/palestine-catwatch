@@ -99,7 +99,11 @@ const UploadPage = () => {
 
             if (!response.ok) {
                 const errData = await response.json().catch(() => ({}));
-                throw new Error(errData.detail || 'Ingest failed');
+                let errorMsg = errData.detail || 'Ingest failed';
+                if (typeof errorMsg === 'object') {
+                    errorMsg = JSON.stringify(errorMsg);
+                }
+                throw new Error(errorMsg);
             }
             const data = await response.json();
 
