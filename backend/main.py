@@ -90,7 +90,7 @@ def get_officer_dossier(officer_id: int, db: Session = Depends(get_db)):
     )
 
 @app.post("/ingest/url")
-async def ingest_media_url(request: IngestURLRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def ingest_media_url(request: IngestURLRequest, background_tasks: BackgroundTasks):
     """
     Ingest a URL (YouTube, web).
     Triggers background download and analysis.
