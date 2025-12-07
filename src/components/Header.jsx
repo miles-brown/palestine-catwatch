@@ -46,7 +46,9 @@ const Header = () => {
                 <div className="text-xl font-bold text-gray-900">
                   Palestine Accountability
                 </div>
-                <div className="text-xs text-gray-600 font-medium">
+                <div className="text-xs text-gray-600 font-medium flex items-center gap-2">
+                  <Link to="/" className="text-gray-600 hover:text-gray-900 font-medium">Dashboard</Link>
+                  <Link to="/manifesto" className="text-gray-600 hover:text-red-600 font-medium transition-colors">Manifesto</Link>
                   For Press Freedom & Democratic Rights
                 </div>
               </div>
@@ -59,8 +61,8 @@ const Header = () => {
                   key={item.name}
                   to={item.href}
                   className={`text-sm font-medium transition-colors hover:text-green-700 ${isActive(item.href)
-                      ? 'text-green-700 border-b-2 border-green-700 pb-1'
-                      : 'text-gray-700'
+                    ? 'text-green-700 border-b-2 border-green-700 pb-1'
+                    : 'text-gray-700'
                     }`}
                 >
                   {item.name}
