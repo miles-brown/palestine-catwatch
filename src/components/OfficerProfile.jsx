@@ -92,7 +92,7 @@ const OfficerProfile = ({ officer, onClose }) => {
               <p className="text-gray-500 text-lg">{officer.force}</p>
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => window.open(`http://localhost:8000/officers/${officer.id}/dossier`, '_blank')}>
+              <Button variant="outline" onClick={() => window.open(`${import.meta.env.VITE_API_BASE || 'http://localhost:8000'}/officers/${officer.id}/dossier`, '_blank')}>
                 <FileText className="mr-2 h-4 w-4" />
                 Download Dossier
               </Button>
