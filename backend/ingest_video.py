@@ -64,17 +64,21 @@ def extract_metadata(info):
         "description": description[:500] + "..." if len(description) > 500 else description
     }
 
-def process_video_workflow(url, answers, user_provided_protest_id=None):
+def process_video_workflow(url, answers, user_provided_protest_id=None, status_callback=None):
     """
     Full workflow: Download -> Extract Metadata -> DB Record -> AI Analysis
     """
     print(f"Starting workflow for {url}")
+    if status_callback: status_callback("log", f"Starting workflow for {url}")
     
     # 1. Download
     try:
+        if status_callback: status_callback("log", "Downloading video... (this may take a moment)")
         file_path, info = download_video(url)
+        if status_callback: status_callback("log", "Download complete.")
     except Exception as e:
         print(f"Download failed: {e}")
+        if status_callback: status_callback("log", f"Error: Download failed - {e}")
         return
 
     # 2. Metadata / Protest Association
@@ -99,6 +103,7 @@ def process_video_workflow(url, answers, user_provided_protest_id=None):
             db.refresh(new_protest)
             protest_id = new_protest.id
             print(f"Created new protest: {new_protest.name} (ID: {protest_id})")
+            if status_callback: status_callback("log", f"Created new protest record: {new_protest.name}")
 
         # 3. Create Media Record
         # We store the LOCAL file path now, not the URL (since we downloaded it)
@@ -123,6 +128,7 @@ def process_video_workflow(url, answers, user_provided_protest_id=None):
         db.refresh(new_media)
         
         media_id = new_media.id
+        if status_callback: status_callback("log", f"Media record created ID: {media_id}")
         
     finally:
         db.close()
@@ -130,5 +136,7 @@ def process_video_workflow(url, answers, user_provided_protest_id=None):
     # 4. Trigger Analysis
     # This runs the standard frame extraction, face detection, OCR, etc.
     print(f"Triggering analysis for Media {media_id}...")
-    process_media(media_id)
+    if status_callback: status_callback("log", "Starting AI Analysis...")
+    process_media(media_id, status_callback)
     print(f"Workflow complete for {url}")
+    if status_callback: status_callback("complete", "Analysis Workflow Complete.")

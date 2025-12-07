@@ -11,9 +11,12 @@ from database import SessionLocal
 FRAMES_DIR = "data/frames"
 os.makedirs(FRAMES_DIR, exist_ok=True)
 
-def process_media(media_id: int):
+def process_media(media_id: int, status_callback=None):
     db = SessionLocal()
     try:
+        if status_callback:
+            status_callback("log", f"Starting processing for media {media_id}")
+            
         media_item = db.query(models.Media).filter(models.Media.id == media_id).first()
         
         if not media_item:
@@ -21,11 +24,14 @@ def process_media(media_id: int):
             return
 
         print(f"Processing media {media_id}: {media_item.url}")
+        if status_callback:
+             status_callback("log", f"Processing file: {os.path.basename(media_item.url)}")
         
         media_frames_dir = os.path.join(FRAMES_DIR, str(media_item.id))
         os.makedirs(media_frames_dir, exist_ok=True)
         
         if media_item.type == "video":
+            if status_callback: status_callback("log", "Extracting frames...")
             extract_frames(media_item, media_frames_dir)
         else:
             # For images, treat as a single frame
@@ -37,7 +43,7 @@ def process_media(media_id: int):
                 print(f"Error copying image: {e}")
                 return
 
-        analyze_frames(media_item.id, media_frames_dir) # Pass ID instead of object
+        analyze_frames(media_item.id, media_frames_dir, status_callback) # Pass ID instead of object
         
         # Mark as processed
         media_item.processed = True
@@ -82,10 +88,11 @@ def get_timestamp_str(seconds):
     h, m = divmod(m, 60)
     return f"{int(h):02d}:{int(m):02d}:{int(s):02d}"
 
-def analyze_frames(media_id, media_frames_dir):
+def analyze_frames(media_id, media_frames_dir, status_callback=None):
     from ai import analyzer
     
     print("Running AI analysis on frames...")
+    if status_callback: status_callback("log", "Running AI analysis on frames...")
     
     db = SessionLocal()
     try:
@@ -115,6 +122,29 @@ def analyze_frames(media_id, media_frames_dir):
             
             for i, res in enumerate(results):
                 print(f"Found officer in {frame_path} at {timestamp_str}")
+                if status_callback:
+                    # Construct URL for the crop
+                    # Assuming crop_path is relative to project root or absolute
+                    # If relative to project root (e.g. data/frames/...), URL is /data/frames/...
+                    # We need to ensure paths are correct. 
+                    # analyzer.process_image_ai returns paths. Let's assume they are relative to CWD if created there.
+                    # Safe bet: relative path from 'data' folder.
+                    
+                    crop_rel_path = os.path.relpath(res['crop_path'], start=os.getcwd())
+                    image_url = f"/data/{os.path.relpath(res['crop_path'], start='data')}"
+                    
+                    status_callback("candidate_officer", {
+                        "image_url": image_url,
+                        "timestamp": timestamp_str,
+                        "confidence": res.get('confidence', 0.9),
+                        "badge": res.get('badge'),
+                        "quality": res.get('quality'),
+                        "meta": {
+                            "uniform_guess": "Metropolitan Police" if "London" in "London" else "Unknown", # Mock logic
+                            "rank_guess": "Constable" # Mock logic
+                        }
+                    })
+                    status_callback("log", f"Found officer at {timestamp_str}")
                 
                 matched_officer = None
                 

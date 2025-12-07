@@ -3,6 +3,7 @@ import { Upload, FileVideo, Image as ImageIcon, CheckCircle, AlertCircle, Link a
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import IngestQuestionnaire from '@/components/IngestQuestionnaire';
+import LiveAnalysis from '@/components/LiveAnalysis';
 
 const API_BASE = "http://localhost:8000";
 
@@ -12,6 +13,7 @@ const UploadPage = () => {
     const [protests, setProtests] = useState([]);
     const [submitStatus, setSubmitStatus] = useState(null); // 'success' | 'error' | 'loading'
     const [message, setMessage] = useState('');
+    const [liveTaskId, setLiveTaskId] = useState(null); // If set, shows LiveAnalysis
 
     // Upload State
     const [file, setFile] = useState(null);
@@ -68,6 +70,10 @@ const UploadPage = () => {
             setMessage(`Upload successful! ID: ${data.media_id}. Processing started...`);
             setFile(null);
             setSelectedProtestId('');
+
+            // TODO: If we want upload to also trigger live analysis, backend upload endpoint needs to return task_id 
+            // and trigger async processing with SIO. For now, we only implemented this for URL Ingest.
+
         } catch (error) {
             setSubmitStatus('error');
             setMessage('Failed to upload file. Please try again.');
@@ -93,12 +99,31 @@ const UploadPage = () => {
 
             setSubmitStatus('success');
             setMessage(`Ingestion started! ${data.message}`);
+
+            // Start Live Analysis
+            if (data.task_id) {
+                setLiveTaskId(data.task_id);
+            }
+
         } catch (error) {
             console.error(error);
             setSubmitStatus('error');
             setMessage('Failed to start ingestion. Check the URL or server logs.');
         }
     };
+
+    if (liveTaskId) {
+        return (
+            <LiveAnalysis
+                taskId={liveTaskId}
+                onComplete={() => {
+                    setLiveTaskId(null);
+                    setStatus('idle');
+                    setMessage('');
+                }}
+            />
+        );
+    }
 
     return (
         <div className="max-w-3xl mx-auto px-4 py-12">

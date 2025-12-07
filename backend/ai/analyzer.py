@@ -165,20 +165,61 @@ def detect_objects(image_path):
         print(f"Object Detection Error: {e}")
         return []
 
-def extract_text(image_path):
+def extract_text(image_input):
     """
-    Extracts text from the image using EasyOCR.
+    Extracts text from the image (path or numpy array) using EasyOCR.
     """
     if reader is None:
         return []
         
     try:
-        results = reader.readtext(image_path)
+        # reader.readtext accepts file path or numpy array
+        results = reader.readtext(image_input)
+        # Filter for text with reasonable confidence
         texts = [res[1] for res in results if res[2] > 0.3]
         return texts
     except Exception as e:
         print(f"OCR Error: {e}")
         return []
+
+def get_body_roi(img, face_box):
+    """
+    Returns a crop of the body area (shoulders/chest) based on face location.
+    """
+    x, y, w, h = face_box
+    h_img, w_img = img.shape[:2]
+    
+    # Heuristic: Badge is usually on shoulders (epaulettes) or chest
+    # Region: Start from slightly below face, extend down 2.5x face height
+    # Widen: Extend left/right by 1x face width to catch shoulders
+    
+    roi_y1 = min(h_img, y + int(h * 0.8)) # Start from chin/neck area
+    roi_y2 = min(h_img, y + int(h * 3.5)) # Down to mid-chest
+    roi_x1 = max(0, x - int(w * 0.8))     # Extend left
+    roi_x2 = min(w_img, x + w + int(w * 0.8)) # Extend right
+    
+    if roi_y2 <= roi_y1 or roi_x2 <= roi_x1:
+        return None
+        
+    return img[roi_y1:roi_y2, roi_x1:roi_x2]
+
+def filter_badge_number(texts):
+    """
+     heuristics to identify the most likely badge number from text list.
+    """
+    candidates = []
+    for t in texts:
+        # Clean string
+        clean = t.replace(" ", "").upper()
+        # UK Badge numbers are typically 2-6 digits, sometimes with 1-2 letters prefix
+        # Regex equivalent check
+        digit_count = sum(c.isdigit() for c in clean)
+        if digit_count >= 2 and len(clean) <= 8:
+            candidates.append(clean)
+            
+    # Return the best candidate (longest digit sequence? or just all joined?)
+    # For transparency, let's return all likely candidates joined
+    return ", ".join(candidates) if candidates else None
 
 def process_image_ai(image_path, output_dir):
     """
@@ -190,10 +231,6 @@ def process_image_ai(image_path, output_dir):
     print(f"Analyzing {image_path}...")
     
     detections = detect_faces(image_path)
-    
-    # Run OCR
-    detected_text = extract_text(image_path)
-    badge_text = ", ".join(detected_text) if detected_text else None
     
     analyzed_data = []
     
@@ -215,6 +252,18 @@ def process_image_ai(image_path, output_dir):
             continue
             
         face_img = img[y:y+h, x:x+w]
+        
+        # 1. Quality Check
+        blur_score = calculate_blur(face_img)
+        is_blurry = blur_score < 100 # Threshold
+        
+        # 2. Focused OCR on Body
+        body_crop = get_body_roi(img, (x, y, w, h))
+        badge_text = None
+        if body_crop is not None and body_crop.size > 0:
+            raw_text = extract_text(body_crop)
+            badge_text = filter_badge_number(raw_text)
+        
         face_filename = f"face_{os.path.basename(image_path)}_{i}.jpg"
         face_path = os.path.join(output_dir, face_filename)
         cv2.imwrite(face_path, face_img)
@@ -223,8 +272,13 @@ def process_image_ai(image_path, output_dir):
             "crop_path": face_path,
             "role": "Officer",
             "action": "Detected", 
-            "badge": badge_text,
-            "encoding": None
+            "badge": badge_text, # Result from focused OCR
+            "encoding": None,
+            "quality": {
+                "blur_score": float(blur_score),
+                "is_blurry": is_blurry,
+                "resolution": f"{w}x{h}"
+            }
         })
         
     return analyzed_data
