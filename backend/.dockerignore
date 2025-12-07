@@ -1,0 +1,11 @@
+__pycache__
+venv
+.env
+*.db
+*.sqlite3
+.git
+.gitignore
+*.pyc
+ai/easyocr_models/temp.zip
+downloads/
+data/
