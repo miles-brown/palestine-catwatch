@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
@@ -53,6 +54,24 @@ def get_officer(officer_id: int, db: Session = Depends(get_db)):
     if officer is None:
         raise HTTPException(status_code=404, detail="Officer not found")
     return officer
+
+@app.get("/officers/{officer_id}/dossier")
+def get_officer_dossier(officer_id: int, db: Session = Depends(get_db)):
+    officer = db.query(models.Officer).filter(models.Officer.id == officer_id).first()
+    if not officer:
+        raise HTTPException(status_code=404, detail="Officer not found")
+        
+    # Get appearances
+    appearances = db.query(models.OfficerAppearance).filter(models.OfficerAppearance.officer_id == officer_id).all()
+    
+    from reports import generate_officer_dossier
+    pdf_buffer = generate_officer_dossier(officer, appearances)
+    
+    return StreamingResponse(
+        pdf_buffer, 
+        media_type="application/pdf", 
+        headers={"Content-Disposition": f"attachment; filename=officer_{officer_id}_dossier.pdf"}
+    )
 
 @app.post("/ingest")
 def ingest_url(url: str, protest_id: int, type: str, db: Session = Depends(get_db)):

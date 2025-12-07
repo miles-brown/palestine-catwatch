@@ -83,6 +83,25 @@ const OfficerProfile = ({ officer, onClose }) => {
             </Card>
           </div>
 
+          <div className="flex justify-between items-start mb-6">
+            <div>
+              <h2 className="text-2xl font-bold flex items-center gap-2">
+                <Shield className="h-6 w-6 text-blue-600" />
+                Officer #{officer.badgeNumber || 'Unknown'}
+              </h2>
+              <p className="text-gray-500 text-lg">{officer.force}</p>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => window.open(`http://localhost:8000/officers/${officer.id}/dossier`, '_blank')}>
+                <FileText className="mr-2 h-4 w-4" />
+                Download Dossier
+              </Button>
+              <Button variant="ghost" size="icon" onClick={onClose}>
+                <X className="h-6 w-6" />
+              </Button>
+            </div>
+          </div>
+
           {/* Notes section */}
           <div className="mb-8">
             <div className="flex items-center gap-3 mb-4">
