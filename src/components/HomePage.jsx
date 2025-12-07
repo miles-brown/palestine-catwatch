@@ -6,7 +6,10 @@ import MapView from './MapView';
 import { Heart, Camera, Megaphone, AlertTriangle, Users, Eye, Map, Grid } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+let API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+if (!API_BASE.startsWith("http")) {
+  API_BASE = `https://${API_BASE}`;
+}
 
 const HomePage = () => {
   const [searchQuery, setSearchQuery] = useState('');

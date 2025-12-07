@@ -5,7 +5,10 @@ import { Card } from '@/components/ui/card';
 import IngestQuestionnaire from '@/components/IngestQuestionnaire';
 import LiveAnalysis from '@/components/LiveAnalysis';
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+let API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+if (!API_BASE.startsWith("http")) {
+    API_BASE = `https://${API_BASE}`;
+}
 
 const UploadPage = () => {
     // Shared State
