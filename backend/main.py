@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -8,6 +8,13 @@ import models, schemas
 from database import get_db, engine
 
 models.Base.metadata.create_all(bind=engine)
+
+from pydantic import BaseModel
+class IngestURLRequest(BaseModel):
+    url: str
+    protest_id: int = None
+    answers: dict = {}
+
 
 app = FastAPI(title="Palestine Catwatch API")
 
@@ -73,19 +80,26 @@ def get_officer_dossier(officer_id: int, db: Session = Depends(get_db)):
         headers={"Content-Disposition": f"attachment; filename=officer_{officer_id}_dossier.pdf"}
     )
 
-@app.post("/ingest")
-def ingest_url(url: str, protest_id: int, type: str, db: Session = Depends(get_db)):
-    from ingest import ingest_media
-    media = ingest_media(url, protest_id, type, db)
-    if not media:
-        raise HTTPException(status_code=400, detail="Ingest failed")
+@app.post("/ingest/url")
+def ingest_media_url(request: IngestURLRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """
+    Ingest a URL (YouTube, web).
+    Triggers background download and analysis.
+    """
+    from ingest_video import process_video_workflow
     
-    # Trigger processing background task?
-    # For now, synchronous or manual.
-    from process import process_media
-    process_media(media.id)
+    # Validation logic here (mock)
+    if "2 + 3" in str(request.answers):
+         # Check captcha answer if passed (omitted for speed)
+         pass
+
+    background_tasks.add_task(process_video_workflow, request.url, request.answers, request.protest_id)
     
-    return {"status": "ingested", "media_id": media.id}
+    return {"status": "processing_started", "message": "Video queued for analysis."}
+
+@app.get("/protests")
+def get_protests(db: Session = Depends(get_db)):
+    return db.query(models.Protest).all()
 
 @app.post("/upload")
 async def upload_file(

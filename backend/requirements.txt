@@ -3,6 +3,7 @@ uvicorn
 python-multipart
 psycopg2-binary
 reportlab
+yt-dlp
 sqlalchemy
 python-dotenv
 requests
