@@ -33,3 +33,22 @@ dist-ssr
 # OS generated files
 Thumbs.db
 .DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.pytest_cache/
+
+# Database
+*.db
+*.sqlite3
+
+# Data directory (media & frames)
+data/
+
+# AI Models
+backend/ai/*.caffemodel
+backend/ai/*.prototxt
+backend/ai/easyocr_models/

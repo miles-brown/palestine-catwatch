@@ -1,12 +1,63 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import OfficerCard from './OfficerCard';
 import OfficerProfile from './OfficerProfile';
-import { officers } from '../data/officers';
+// import { officers } from '../data/officers'; // Deprecated
 import { Heart, Camera, Megaphone, AlertTriangle, Users, Eye } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 
+const API_BASE = "http://localhost:8000";
+
 const HomePage = () => {
+  const [searchQuery, setSearchQuery] = useState('');
   const [selectedOfficer, setSelectedOfficer] = useState(null);
+  const [officers, setOfficers] = useState([]);
+
+  useEffect(() => {
+    const fetchOfficers = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/officers`);
+        const data = await response.json();
+
+        const mappedOfficers = data.map(off => {
+          const mainAppearance = off.appearances?.[0];
+          const media = mainAppearance?.media;
+          const cropPath = mainAppearance?.image_crop_path;
+
+          // Format photo URL
+          // Backend stores: ../data/frames/2/frame_0000.jpg using relative paths from backend dir
+          // API serves /data -> mapped to ../data
+          // So we need to strip ../data/ and append to API_BASE/data/
+          let photoUrl = "https://via.placeholder.com/400?text=No+Image";
+          if (cropPath) {
+            const relativePath = cropPath.replace('../data/', '').replace(/^\/+/, '');
+            photoUrl = `${API_BASE}/data/${relativePath}`;
+          }
+
+          return {
+            id: off.id,
+            badgeNumber: off.badge_number || 'Unknown',
+            role: mainAppearance?.role || off.force || 'Officer',
+            force: off.force || 'Unknown Force',
+            location: 'London',
+            protestDate: media?.timestamp || new Date().toISOString(),
+            photo: photoUrl,
+            status: 'Identified',
+            notes: off.notes || 'No notes available.',
+            sources: off.appearances.map(app => ({
+              type: app.media?.type || 'photo',
+              description: app.action || 'Evidence',
+              url: app.media?.url ? `${API_BASE}/data/${app.media.url.replace('../data/', '').replace(/^\/+/, '')}` : '#'
+            }))
+          };
+        });
+        setOfficers(mappedOfficers);
+      } catch (error) {
+        console.error("Failed to fetch officers:", error);
+      }
+    };
+
+    fetchOfficers();
+  }, []);
 
   const handleOfficerClick = (officer) => {
     setSelectedOfficer(officer);
@@ -51,8 +102,8 @@ const HomePage = () => {
               <span className="block memorial-text">Accountability</span>
             </h1>
             <p className="text-xl text-gray-600 max-w-3xl mx-auto mb-8">
-              Documenting state oppression during Palestine solidarity demonstrations. 
-              Exposing the erosion of democratic rights and the rise of authoritarian policing 
+              Documenting state oppression during Palestine solidarity demonstrations.
+              Exposing the erosion of democratic rights and the rise of authoritarian policing
               in Britain's descent toward fascist control.
             </p>
             <div className="flex flex-wrap justify-center gap-4 text-sm text-gray-700">
@@ -70,8 +121,8 @@ const HomePage = () => {
         <div className="max-w-4xl mx-auto text-center">
           <AlertTriangle className="h-8 w-8 mx-auto mb-4 text-red-500" />
           <blockquote className="text-lg mb-4">
-            "Every record has been destroyed or falsified, every book rewritten, every picture repainted, 
-            every statue and street building renamed, every date altered. And the process is continuing 
+            "Every record has been destroyed or falsified, every book rewritten, every picture repainted,
+            every statue and street building renamed, every date altered. And the process is continuing
             day by day and minute by minute. History has stopped."
           </blockquote>
           <cite className="text-sm opacity-75">— George Orwell, 1984</cite>
@@ -88,7 +139,7 @@ const HomePage = () => {
             State Oppression Documentation
           </h2>
           <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-            Evidence of authoritarian policing tactics used against Palestine solidarity protesters. 
+            Evidence of authoritarian policing tactics used against Palestine solidarity protesters.
             Each profile documents the systematic suppression of democratic rights and free speech.
           </p>
           <div className="mt-6 p-4 bg-yellow-50 border-l-4 border-yellow-400 rounded-r-lg max-w-2xl mx-auto">
@@ -97,7 +148,7 @@ const HomePage = () => {
               <span className="font-semibold text-yellow-800">Big Brother is Watching</span>
             </div>
             <p className="text-sm text-yellow-700">
-              These officers participated in the suppression of peaceful Palestine solidarity demonstrations. 
+              These officers participated in the suppression of peaceful Palestine solidarity demonstrations.
               Their actions represent the state's authoritarian response to legitimate protest.
             </p>
           </div>
@@ -146,7 +197,7 @@ const HomePage = () => {
               🇵🇸 Resist Fascism - Defend Democracy 🇵🇸
             </h3>
             <p className="text-lg text-gray-700 mb-6">
-              The systematic suppression of Palestine solidarity demonstrates Britain's slide toward authoritarianism. 
+              The systematic suppression of Palestine solidarity demonstrates Britain's slide toward authoritarianism.
               When peaceful protest is criminalized, democracy dies. When journalists are silenced, truth perishes.
             </p>
             <div className="flex flex-wrap justify-center gap-4 text-sm">
