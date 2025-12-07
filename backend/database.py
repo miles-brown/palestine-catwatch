@@ -9,11 +9,18 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Use Postgres URL from env, or valid default
-SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost/protest_db")
+SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL")
+if not SQLALCHEMY_DATABASE_URL:
+    SQLALCHEMY_DATABASE_URL = "postgresql://user:password@localhost/protest_db"
 
 # Fix for SQLAlchemy 1.4+ which deprecated 'postgres://'
-if SQLALCHEMY_DATABASE_URL and SQLALCHEMY_DATABASE_URL.startswith("postgres://"):
+if SQLALCHEMY_DATABASE_URL.startswith("postgres://"):
     SQLALCHEMY_DATABASE_URL = SQLALCHEMY_DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+# Log URL structure for debugging (masking sensitive info)
+# This helps identify if the URL is malformed or empty in logs
+safe_url = SQLALCHEMY_DATABASE_URL.split("@")[-1] if "@" in SQLALCHEMY_DATABASE_URL else "local_or_no_auth"
+print(f"Attempting DB connection to: ...@{safe_url}")
 # Fallback to sqlite if needed for tests without docker, but prefer PG
 # SQLALCHEMY_DATABASE_URL = "sqlite:///./protest_monitor.db"
 
