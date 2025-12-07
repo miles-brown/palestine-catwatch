@@ -7,7 +7,12 @@ from typing import List
 import models, schemas
 from database import get_db, engine
 
-models.Base.metadata.create_all(bind=engine)
+try:
+    print("Attempting to connect to database and create tables...")
+    models.Base.metadata.create_all(bind=engine)
+    print("Database tables created successfully.")
+except Exception as e:
+    print(f"Startup Warning: Database connection failed. App will start but DB features will fail. Error: {e}")
 
 from pydantic import BaseModel
 class IngestURLRequest(BaseModel):
