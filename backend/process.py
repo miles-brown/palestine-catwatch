@@ -167,8 +167,39 @@ def analyze_frames(media_id, media_frames_dir):
                 )
                 db.add(appearance)
                 db.commit()
-        db.commit()
-        print("AI Analysis complete.")
+                db.refresh(officer)
+
+            # 5. Extract Text (Badge Number)
+            badge_text = analyzer.extract_text(res['crop_path'])
+            badge_str = ", ".join(badge_text) if badge_text else None
+            if badge_str:
+                print(f"OCR found text: {badge_str}")
+                # Ideally update officer badge number if confident
+            
+            # 6. Object Detection (Context)
+            objects = analyzer.detect_objects(frame_path)
+            relevant_objects = [obj for obj in objects if obj in ['baseball bat', 'knife', 'cell phone', 'handbag', 'backpack']]
+            action_desc = "Observed"
+            if relevant_objects:
+                action_desc += f"; Holding: {', '.join(relevant_objects)}"
+                print(f"Detected objects: {relevant_objects}")
+
+            # 7. Record Appearance
+            # Calculate timestamp
+            timestamp_str = "00:00:00" # Placeholder, todo: calculate from frame_idx / fps
+            
+            appearance = models.OfficerAppearance(
+                officer_id=officer.id,
+                media_id=media_item.id,
+                timestamp_in_video=timestamp_str,
+                image_crop_path=res['crop_path'], # Use the full crop_path
+                role="Unknown",
+                action=action_desc
+            )
+            db.add(appearance)
+            db.commit()
+    db.commit()
+    print("AI Analysis complete.")
     finally:
         db.close()
 if __name__ == "__main__":

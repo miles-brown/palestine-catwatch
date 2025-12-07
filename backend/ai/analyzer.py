@@ -57,6 +57,22 @@ except ImportError:
     print("Warning: facenet-pytorch not installed. Re-ID disabled.")
 except Exception as e:
     print(f"Warning: Failed to load Re-ID model: {e}")
+except Exception as e:
+    print(f"Warning: Failed to load Re-ID model: {e}")
+
+# Object Detection (YOLOv8)
+yolo_model = None
+try:
+    from ultralytics import YOLO
+    
+    # Initialize YOLOv8
+    # It will auto-download 'yolov8n.pt' on first use if not found
+    print("Loading YOLOv8 Object Detector...")
+    yolo_model = YOLO("yolov8n.pt")
+except ImportError:
+    print("Warning: ultralytics not installed. Object Detection disabled.")
+except Exception as e:
+    print(f"Warning: Failed to load YOLO model: {e}")
 
 
 def detect_faces(image_path):
@@ -127,6 +143,27 @@ def generate_embedding(image_path, face_box=None):
     except Exception as e:
         print(f"Embedding generation failed: {e}")
         return None
+
+def detect_objects(image_path):
+    """
+    Detects objects using YOLOv8.
+    Returns a list of class names found (e.g., ['person', 'baseball bat']).
+    """
+    if yolo_model is None:
+        return []
+        
+    try:
+        results = yolo_model(image_path, verbose=False)
+        detected_classes = []
+        for r in results:
+            for c in r.boxes.cls:
+                class_name = yolo_model.names[int(c)]
+                detected_classes.append(class_name)
+        
+        return list(set(detected_classes)) # Unique items
+    except Exception as e:
+        print(f"Object Detection Error: {e}")
+        return []
 
 def extract_text(image_path):
     """
