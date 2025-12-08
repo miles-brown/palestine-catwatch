@@ -118,13 +118,18 @@ def analyze_frames(media_id, media_frames_dir, status_callback=None):
             except Exception:
                 timestamp_str = "00:00:00"
 
+            if status_callback: status_callback("status_update", "Thinking")
             results = analyzer.process_image_ai(frame_path, media_frames_dir)
             
             # Log summary to UI
             if len(results) == 0:
-                 if status_callback: status_callback("log", f"AI Scan: No targets detected in {os.path.basename(frame_path)}")
+                 if status_callback: 
+                     status_callback("log", f"AI Scan: No targets detected in {os.path.basename(frame_path)}")
+                     status_callback("status_update", "Scanning")
             else:
-                 if status_callback: status_callback("log", f"AI Scan: Found {len(results)} targets in {os.path.basename(frame_path)}")
+                 if status_callback: 
+                     status_callback("log", f"AI Scan: Found {len(results)} targets in {os.path.basename(frame_path)}")
+                     status_callback("status_update", "Havesting")
             
             for i, res in enumerate(results):
                 if res.get('is_scene_summary'):

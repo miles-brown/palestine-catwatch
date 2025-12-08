@@ -19,13 +19,89 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
     Fallback: If video fails, try to scrape images.
     """
     # Cloudscraper handles User-Agent and TLS fingerprinting automatically
+    if status_callback: status_callback("status_update", "Connecting")
     scraper = cloudscraper.create_scraper()
     
     if status_callback: status_callback("log", "Video download failed/not found. Attempting to scrape images...")
     
     try:
+        if status_callback: status_callback("status_update", "Scraping")
         response = scraper.get(url, timeout=15)
         response.raise_for_status()
+
+# ... skipping unchanged ...
+
+            for img_url_raw in potential_urls:
+                if not img_url_raw: continue
+                
+                # Resolve relative URLs
+                img_url = urljoin(url, img_url_raw)
+                
+                # Deduplicate
+                if img_url in seen_urls: continue
+                seen_urls.add(img_url)
+                
+                # Filter small icons/pixels (very basic)
+                if 'icon' in img_url.lower() or 'logo' in img_url.lower() or 'tracker' in img_url.lower():
+                    continue
+                    
+                # Download image
+                try:
+                    if status_callback: status_callback("status_update", "Downloading")
+                    img_data = scraper.get(img_url, timeout=5).content
+                    if len(img_data) < 5000: # Lowered to 5KB to catch more images
+                        continue
+                        
+                    ext = os.path.splitext(img_url)[1].split('?')[0]
+                    if not ext or len(ext) > 5: ext = ".jpg"
+                    
+                    filename = f"scraped_{uuid.uuid4().hex}{ext}"
+                    filepath = os.path.join(DOWNLOAD_DIR, filename)
+                    
+                    with open(filepath, "wb") as f:
+                        f.write(img_data)
+                        
+                    # Calculate web-accessible URL
+                    web_url = f"/data/downloads/{filename}"
+
+                    # Emit event for UI
+                    if status_callback: 
+                        status_callback("scraped_image", {
+                            "url": web_url,
+                            "filename": filename
+                        })
+                        status_callback("log", f"Scraped image: {filename}")
+                        
+                    # Create Media Record
+                    new_media = models.Media(
+                        url=filepath,
+                        type='image',
+                        protest_id=protest_id,
+                        timestamp=datetime.utcnow(),
+                        processed=False
+                    )
+                    db.add(new_media)
+                    db.commit()
+                    db.refresh(new_media)
+                    
+                    saved_count += 1
+                    
+                    # Trigger analysis immediately for each image
+                    if status_callback: status_callback("status_update", "Analyzing")
+                    process_media(new_media.id, status_callback)
+                    
+                    if saved_count >= 15: # Increased limit since we finding better images
+                        break
+                        
+                except Exception as e:
+                    continue
+                    
+        finally:
+            db.close()
+            
+        if saved_count > 0:
+            if status_callback: status_callback("complete", f"Successfully scraped {saved_count} images.")
+            if status_callback: status_callback("status_update", "Completed")
         soup = BeautifulSoup(response.content, 'html.parser')
         
         # Extract meaningful text for description

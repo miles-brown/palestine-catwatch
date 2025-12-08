@@ -49,6 +49,10 @@ export default function LiveAnalysis({ taskId, onComplete }) {
             setScrapedMedia(prev => [...prev, data]);
         });
 
+        socket.on('status_update', (newStatus) => {
+            setStatus(newStatus);
+        });
+
 
         socket.on('candidate_officer', (data) => {
             addLog('AI', `Candidate detected with ${(data.confidence * 100).toFixed(1)}% confidence.`);
@@ -92,7 +96,7 @@ export default function LiveAnalysis({ taskId, onComplete }) {
                     <div>
                         <p className="text-xs text-slate-500 uppercase tracking-wider">Status</p>
                         <p className="font-bold text-lg text-blue-400">
-                            {status === 'active' ? 'PROCESSING' : status.toUpperCase()}
+                            {status.toUpperCase()}
                         </p>
                     </div>
                 </Card>
