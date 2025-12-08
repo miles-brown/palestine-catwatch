@@ -40,15 +40,39 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
         description_text = f"Scraped from {url}\n\n{article_text[:1000]}"
         if len(article_text) > 1000: description_text += "..."
         
-        # Heuristic: Find 'large' images or images in main content
-        # This is a naive implementation; specialized scrapers are better
+        # 1. Open Graph Image (Highest Quality usually)
+        og_image = soup.find('meta', property='og:image')
+        potential_urls = []
+        if og_image and og_image.get('content'):
+            potential_urls.append(og_image['content'])
+            if status_callback: status_callback("log", "Found Article Main Image (OpenGraph).")
+
+        # 2. Main Content Images (handling lazy loading)
         images = soup.find_all('img')
+        for img in images:
+            # Check common lazy loading attributes in order of preference
+            src = img.get('data-src') or img.get('data-original') or img.get('data-lazy-src') or img.get('src')
+            
+            # Handle srcset - parse and get the largest (simplified: get last url)
+            srcset = img.get('srcset')
+            if srcset and not src:
+                # format: url 100w, url 200w. Split by comma, extract url.
+                try:
+                    candidates = srcset.split(',')
+                    last_candidate = candidates[-1].strip().split(' ')[0]
+                    src = last_candidate
+                except:
+                    pass
+            
+            if src:
+                potential_urls.append(src)
         
         saved_count = 0
+        seen_urls = set()
         db = SessionLocal()
         
         try:
-            # Create a protest placeholder if needed (reusing logic from ingest_video could be better refactored)
+            # Create a protest placeholder if needed
             if not protest_id:
                 # Metadata extraction (simplified)
                 title = soup.title.string if soup.title else "Scraped Article"
@@ -66,15 +90,18 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
                 protest_id = new_protest.id
                 if status_callback: status_callback("log", f"Created protest record from article: {clean_title}")
 
-            for img in images:
-                src = img.get('src')
-                if not src: continue
+            for img_url_raw in potential_urls:
+                if not img_url_raw: continue
                 
                 # Resolve relative URLs
-                img_url = urljoin(url, src)
+                img_url = urljoin(url, img_url_raw)
+                
+                # Deduplicate
+                if img_url in seen_urls: continue
+                seen_urls.add(img_url)
                 
                 # Filter small icons/pixels (very basic)
-                if 'icon' in img_url or 'logo' in img_url:
+                if 'icon' in img_url.lower() or 'logo' in img_url.lower() or 'tracker' in img_url.lower():
                     continue
                     
                 # Download image
@@ -93,9 +120,6 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
                         f.write(img_data)
                         
                     # Calculate web-accessible URL
-                    # Assuming running in /app, data is at /app/data
-                    # backend mounts /data -> static
-                    # filepath is data/downloads/filename
                     web_url = f"/data/downloads/{filename}"
 
                     # Emit event for UI
@@ -123,12 +147,12 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
                     # Trigger analysis immediately for each image
                     process_media(new_media.id, status_callback)
                     
-                    if saved_count >= 10: # Limit to 10 images
+                    if saved_count >= 15: # Increased limit since we finding better images
                         break
                         
                 except Exception as e:
-                    # print(f"Failed to download image {img_url}: {e}")
                     continue
+
                     
         finally:
             db.close()
