@@ -78,7 +78,16 @@ def process_video_workflow(url, answers, user_provided_protest_id=None, status_c
         if status_callback: status_callback("log", "Download complete.")
     except Exception as e:
         print(f"Download failed: {e}")
-        if status_callback: status_callback("log", f"Error: Download failed - {e}")
+        if status_callback: status_callback("log", f"Video download failed. Trying image scraper...")
+        
+        # Fallback to image scraping
+        try:
+            from ingest_images import scrape_images_from_url
+            scrape_images_from_url(url, user_provided_protest_id, status_callback)
+        except Exception as  scrape_err:
+             if status_callback: status_callback("log", f"Scraping also failed: {scrape_err}")
+             
+        # Stop video workflow here since we switched to image workflow
         return
 
     # 2. Metadata / Protest Association
