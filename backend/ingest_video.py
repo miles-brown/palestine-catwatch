@@ -16,15 +16,51 @@ def download_video(url, protest_id=None, status_callback=None):
     Downloads video using yt-dlp.
     Returns: file_path, info_dict
     """
+    from tqdm import tqdm
+    
+    # Progress bar state
+    pbar = None
+    last_socket_percent = -1
+    
     def progress_hook(d):
-        if d['status'] == 'downloading' and status_callback:
-            percent = d.get('_percent_str', '').strip()
+        nonlocal pbar, last_socket_percent
+        
+        if d['status'] == 'downloading':
+            # 1. Initialize TQDM if needed
             total_bytes = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
-            size_mb = total_bytes / (1024 * 1024)
-            msg = f"Downloading: {percent} of {size_mb:.1f}MB"
-            status_callback("log", msg)
-            if '100%' in percent:
-                status_callback("status_update", "Extracting")
+            downloaded = d.get('downloaded_bytes', 0)
+            
+            if pbar is None and total_bytes > 0:
+                pbar = tqdm(total=total_bytes, unit='B', unit_scale=True, unit_divisor=1024, desc="Downloading")
+            
+            # 2. Update TQDM (Terminal)
+            if pbar:
+                pbar.n = downloaded
+                pbar.refresh()
+            
+            # 3. Update Frontend (Throttle to ~10%)
+            if status_callback:
+                # Parse percent string " 45.3%" -> 45.3
+                try:
+                    percent_str = d.get('_percent_str', '0%').strip().replace('%','')
+                    current_percent = float(percent_str)
+                    
+                    # Update only if we crossed a 10% threshold or it's 100%
+                    if current_percent >= 100 or (current_percent - last_socket_percent >= 10):
+                        size_mb = total_bytes / (1024 * 1024)
+                        status_callback("log", f"Downloading: {current_percent:.1f}% of {size_mb:.1f}MB")
+                        last_socket_percent = current_percent
+                        
+                        if current_percent >= 100:
+                            status_callback("status_update", "Extracting")
+                except ValueError:
+                    pass
+
+        elif d['status'] == 'finished':
+            if pbar:
+                pbar.close()
+            if status_callback:
+                status_callback("log", "Download complete.")
 
     ydl_opts = {
         'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
