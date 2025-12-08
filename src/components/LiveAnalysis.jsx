@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import { io } from 'socket.io-client';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Terminal, Cpu, Shield, AlertTriangle, Check, X, Server, Activity } from 'lucide-react';
+import { Terminal, Cpu, Shield, AlertTriangle, Check, X, Server, Activity, ZoomIn } from 'lucide-react';
 
 let API_URL = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 if (!API_URL.startsWith("http")) {
@@ -19,6 +19,7 @@ export default function LiveAnalysis({ taskId, onComplete }) {
     const socketRef = useRef(null);
 
     const [currentFrame, setCurrentFrame] = useState(null);
+    const [reconData, setReconData] = useState(null);
     const frameTimeoutRef = useRef(null);
 
     useEffect(() => {
@@ -63,6 +64,9 @@ export default function LiveAnalysis({ taskId, onComplete }) {
             setStatus(newStatus);
         });
 
+        socket.on('recon_result', (data) => {
+            setReconData(data);
+        });
 
         socket.on('candidate_officer', (data) => {
             addLog('AI', `Candidate detected with ${(data.confidence * 100).toFixed(1)}% confidence.`);

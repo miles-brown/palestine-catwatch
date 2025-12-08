@@ -128,6 +128,25 @@ async def ingest_media_url(request: IngestURLRequest, background_tasks: Backgrou
             # 2. Lazy Import - Move heavy imports HERE
             print("Importing ingest_video in background task...")
             from ingest_video import process_video_workflow
+            import recon
+            
+            # --- AI RECONNAISSANCE ---
+            status_callback("log", "🤖 AI Recon: analyzing URL context...")
+            status_callback("status_update", "Intel Scan")
+            
+            recon_data = recon.analyze_url(url)
+            
+            # Emit Recon Data to Frontend
+            status_callback("recon_result", recon_data)
+            
+            rec_str = f"Category: {recon_data['category']} | Score: {recon_data['score']}/100 | Action: {recon_data['recommendation']}"
+            status_callback("log", f"AI Assessment: {rec_str}")
+            
+            if recon_data['keywords']:
+                status_callback("log", f"Context Identifiers: {', '.join(recon_data['keywords'])}")
+            
+            # Optional: Stop if truly irrelevant? For now we just advise.
+            # -------------------------
             
             # 3. Run Workflow
             process_video_workflow(url, answers, protest_id, status_callback=status_callback)
