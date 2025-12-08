@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y \
     libxrender-dev \
     ffmpeg \
     curl \
+    nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # Download AI Models (since they are gitignored)
