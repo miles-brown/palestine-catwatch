@@ -26,6 +26,10 @@ COPY requirements.txt .
 # Use --no-cache-dir to keep image small
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Preload AI Models (YOLO, Facenet) into the image
+COPY preload_models.py .
+RUN python preload_models.py && rm preload_models.py
+
 # Copy application code
 COPY . .
 
