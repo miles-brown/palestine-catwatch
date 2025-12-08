@@ -120,6 +120,12 @@ def analyze_frames(media_id, media_frames_dir, status_callback=None):
 
             results = analyzer.process_image_ai(frame_path, media_frames_dir)
             
+            # Log summary to UI
+            if len(results) == 0:
+                 if status_callback: status_callback("log", f"AI Scan: No targets detected in {os.path.basename(frame_path)}")
+            else:
+                 if status_callback: status_callback("log", f"AI Scan: Found {len(results)} targets in {os.path.basename(frame_path)}")
+            
             for i, res in enumerate(results):
                 print(f"Found officer in {frame_path} at {timestamp_str}")
                 if status_callback:
