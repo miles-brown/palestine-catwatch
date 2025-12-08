@@ -131,6 +131,12 @@ export default function LiveAnalysis({ taskId, onComplete }) {
                         <span className="text-xs font-semibold text-slate-400">SYSTEM LOG</span>
                     </div>
                     <div className="flex-1 overflow-y-auto p-4 font-mono text-xs space-y-2">
+                        {logs.length === 0 && (
+                            <div className="text-slate-500 italic p-4 text-center opacity-50">
+                                Waiting for connection... <br />
+                                If this persists, check your network or server logs.
+                            </div>
+                        )}
                         {logs.map((log, i) => (
                             <div key={i} className="flex gap-2">
                                 <span className="text-slate-600">[{log.time}]</span>
