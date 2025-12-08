@@ -127,6 +127,13 @@ def analyze_frames(media_id, media_frames_dir, status_callback=None):
                  if status_callback: status_callback("log", f"AI Scan: Found {len(results)} targets in {os.path.basename(frame_path)}")
             
             for i, res in enumerate(results):
+                if res.get('is_scene_summary'):
+                    # Just log the context objects
+                    objs = ", ".join(res.get('objects', []))
+                    print(f"Scene summary for {frame_path}: {objs}")
+                    if status_callback: status_callback("log", f"AI Context: Detected {objs}")
+                    continue
+
                 print(f"Found officer in {frame_path} at {timestamp_str}")
                 if status_callback:
                     # Construct URL for the crop

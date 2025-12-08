@@ -221,23 +221,41 @@ def filter_badge_number(texts):
     # For transparency, let's return all likely candidates joined
     return ", ".join(candidates) if candidates else None
 
+def calculate_blur(image):
+    """
+    Computes the Laplacian variance of the image.
+    Lower variance = fewer edges = blurrier.
+    Typical threshold is 100.
+    """
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    return cv2.Laplacian(gray, cv2.CV_64F).var()
+
 def process_image_ai(image_path, output_dir):
     """
     Runs full analysis pipeline on an image.
+    1. Detects Objects (YOLO) - Generic scene analysis
+    2. Detects Faces (SSD) - Specific officer identification
     """
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
         
     print(f"Analyzing {image_path}...")
     
-    detections = detect_faces(image_path)
-    
     analyzed_data = []
+    
+    # 1. Object Detection (YOLO) - Context
+    objects_found = detect_objects(image_path)
+    # If YOLO detects people but SSD misses faces, we should still report it
+    has_person = "person" in objects_found
+    
+    # 2. Face Detection
+    detections = detect_faces(image_path)
     
     img = cv2.imread(image_path)
     if img is None: 
         return []
 
+    # Process Faces
     for i, det in enumerate(detections):
         x, y, w, h = det['box']
         
@@ -253,11 +271,11 @@ def process_image_ai(image_path, output_dir):
             
         face_img = img[y:y+h, x:x+w]
         
-        # 1. Quality Check
+        # Quality Check
         blur_score = calculate_blur(face_img)
         is_blurry = blur_score < 100 # Threshold
         
-        # 2. Focused OCR on Body
+        # Focused OCR on Body
         body_crop = get_body_roi(img, (x, y, w, h))
         badge_text = None
         if body_crop is not None and body_crop.size > 0:
@@ -272,13 +290,25 @@ def process_image_ai(image_path, output_dir):
             "crop_path": face_path,
             "role": "Officer",
             "action": "Detected", 
-            "badge": badge_text, # Result from focused OCR
+            "badge": badge_text, 
+            "context_objects": objects_found, # Include scene objects
             "encoding": None,
             "quality": {
                 "blur_score": float(blur_score),
                 "is_blurry": is_blurry,
                 "resolution": f"{w}x{h}"
             }
+        })
+    
+    # If no faces found but people/objects detected, create a summary entry
+    # This prevents "Silent Failure" where AI sees stuff but reports nothing because no perfect face
+    if len(analyzed_data) == 0 and len(objects_found) > 0:
+        # Create a "Scene Summary" entry
+        # We don't have a specific crop, so maybe just pass the full image or no crop
+        analyzed_data.append({
+            "is_scene_summary": True,
+            "objects": objects_found,
+            "message": f"Detected objects: {', '.join(objects_found)}"
         })
         
     return analyzed_data
