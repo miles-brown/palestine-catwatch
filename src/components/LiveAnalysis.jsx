@@ -56,6 +56,10 @@ export default function LiveAnalysis({ taskId, onComplete }) {
             frameTimeoutRef.current = setTimeout(() => setCurrentFrame(null), 2000);
         });
 
+        socket.on('recon_result', (data) => {
+            setReconData(data);
+        });
+
         socket.on('scraped_image', (data) => {
             setScrapedMedia(prev => [...prev, data]);
         });
@@ -64,9 +68,6 @@ export default function LiveAnalysis({ taskId, onComplete }) {
             setStatus(newStatus);
         });
 
-        socket.on('recon_result', (data) => {
-            setReconData(data);
-        });
 
         socket.on('candidate_officer', (data) => {
             addLog('AI', `Candidate detected with ${(data.confidence * 100).toFixed(1)}% confidence.`);
@@ -86,16 +87,103 @@ export default function LiveAnalysis({ taskId, onComplete }) {
         };
     }, [taskId]);
 
-    // ... (rest of log logic)
+    // Auto-scroll logs
+    useEffect(() => {
+        logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [logs]);
 
-    // ... (rest of HUD)
+    const addLog = (source, message) => {
+        setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), source, message }]);
+    };
+
+    const handledecision = (id, decision) => {
+        // In a real app, send API call to update DB
+        console.log(`User decision for ${id}: ${decision}`);
+        setCandidates(prev => prev.map(c => c.id === id ? { ...c, reviewed: true, decision } : c));
+    };
 
     return (
         <div className="min-h-screen bg-slate-950 text-slate-200 p-6 font-mono">
-            {/* ... (HUD) ... */}
+            {/* Header / HUD */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                <Card className="bg-slate-900 border-slate-800 p-4 flex items-center gap-4">
+                    <div className="p-3 bg-blue-500/10 rounded-full text-blue-400">
+                        <Activity className="h-6 w-6 animate-pulse" />
+                    </div>
+                    <div>
+                        <p className="text-xs text-slate-500 uppercase tracking-wider">Status</p>
+                        <p className="font-bold text-lg text-blue-400">
+                            {status.toUpperCase()}
+                        </p>
+                    </div>
+                </Card>
+
+                <Card className="bg-slate-900 border-slate-800 p-4 flex items-center gap-4">
+                    <div className="p-3 bg-green-500/10 rounded-full text-green-400">
+                        <Shield className="h-6 w-6" />
+                    </div>
+                    <div>
+                        <p className="text-xs text-slate-500 uppercase tracking-wider">Officers Found</p>
+                        <p className="font-bold text-lg text-slate-100">{stats.faces}</p>
+                    </div>
+                </Card>
+
+                <Card className="bg-slate-900 border-slate-800 p-4 flex items-center gap-4">
+                    <div className="p-3 bg-purple-500/10 rounded-full text-purple-400">
+                        <Cpu className="h-6 w-6" />
+                    </div>
+                    <div>
+                        <p className="text-xs text-slate-500 uppercase tracking-wider">Avg Confidence</p>
+                        <p className="font-bold text-lg text-slate-100">{(stats.confidence_avg * 100).toFixed(1)}%</p>
+                    </div>
+                </Card>
+
+                <Card className="bg-slate-900 border-slate-800 p-4 flex items-center gap-4">
+                    <div className="p-3 bg-indigo-500/10 rounded-full text-indigo-400">
+                        <ZoomIn className="h-6 w-6" />
+                    </div>
+                    <div>
+                        <p className="text-xs text-slate-500 uppercase tracking-wider">AI Recon</p>
+                        {reconData ? (
+                            <div className="flex flex-col">
+                                <span className={`font-bold text-lg ${reconData.score > 50 ? 'text-green-400' : 'text-yellow-400'}`}>
+                                    {reconData.score}/100
+                                </span>
+                                <span className="text-[10px] text-slate-400">{reconData.category}</span>
+                            </div>
+                        ) : (
+                            <p className="font-bold text-sm text-slate-500 italic">Waiting...</p>
+                        )}
+                    </div>
+                </Card>
+            </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[700px]">
-                {/* ... (Terminal) ... */}
+                {/* Terminal Log */}
+                <Card className="bg-slate-900 border-slate-800 col-span-1 flex flex-col h-full overflow-hidden shadow-2xl shadow-blue-900/5">
+                    <div className="p-3 border-b border-slate-800 bg-slate-950 flex items-center gap-2">
+                        <Terminal className="h-4 w-4 text-slate-400" />
+                        <span className="text-xs font-semibold text-slate-400">SYSTEM LOG</span>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-4 font-mono text-xs space-y-2">
+                        {logs.length === 0 && (
+                            <div className="text-slate-500 italic p-4 text-center opacity-50">
+                                Waiting for connection... <br />
+                                If this persists, check your network or server logs.
+                            </div>
+                        )}
+                        {logs.map((log, i) => (
+                            <div key={i} className="flex gap-2">
+                                <span className="text-slate-600">[{log.time}]</span>
+                                <span className={`${log.source === 'Error' ? 'text-red-400' : 'text-blue-400'} font-bold`}>
+                                    {log.source}:
+                                </span>
+                                <span className="text-slate-300">{log.message}</span>
+                            </div>
+                        ))}
+                        <div ref={logEndRef} />
+                    </div>
+                </Card>
 
                 {/* Main Visualizer */}
                 <Card className="bg-slate-900 border-slate-800 col-span-1 lg:col-span-2 flex flex-col h-full relative overflow-hidden">
@@ -244,6 +332,5 @@ export default function LiveAnalysis({ taskId, onComplete }) {
         </div>
     );
 }
-
 // Add these to tailwind config or global css if not present:
 // .bg-slate-* colors (if using standard tailwind they are there)
