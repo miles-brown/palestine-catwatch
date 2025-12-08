@@ -30,5 +30,5 @@ async def join_task(sid, task_id):
     Allow client to join a room specific to a processing task (e.g. video URL or upload).
     """
     print(f"Client {sid} joining task room: {task_id}")
-    sio_server.enter_room(sid, task_id)
+    await sio_server.enter_room(sid, task_id)
     await sio_server.emit('log_message', {'message': f"Joined room for task {task_id}"}, to=sid)
