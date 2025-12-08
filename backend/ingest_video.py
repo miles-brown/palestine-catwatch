@@ -71,23 +71,54 @@ def process_video_workflow(url, answers, user_provided_protest_id=None, status_c
     print(f"Starting workflow for {url}")
     if status_callback: status_callback("log", f"Starting workflow for {url}")
     
+    # 0. Smart Routing (Heuristic)
+    # If the URL is likely a news article (text/images) and NOT a dedicated video site, capture content first.
+    IS_VIDEO_SITE = False
+    video_domains = ["youtube.com", "youtu.be", "vimeo.com", "dailymotion.com", "twitch.tv", "tiktok.com", "instagram.com", "facebook.com", "twitter.com", "x.com"]
+    
+    for domain in video_domains:
+        if domain in url.lower():
+            IS_VIDEO_SITE = True
+            break
+            
+    # If it is NOT a known video site, it's likely a news article (e.g. dailymail, bbc news text)
+    # Strategy: Try to scrape article content/images FIRST.
+    # If we find a video embedded later, we can process that too (future work), but photos are priority for articles.
+    if not IS_VIDEO_SITE:
+        print(f"URL {url} identified as Article/Page. Routing to Image Scraper first.")
+        if status_callback: status_callback("log", "URL identified as Article/Page. Priority: Scrape Images & Text.")
+        
+        try:
+             from ingest_images import scrape_images_from_url
+             scrape_images_from_url(url, user_provided_protest_id, status_callback)
+             # Should we also try to find video? Maybe. For now, if scraper succeeds, we are good.
+             return
+        except Exception as e:
+             print(f"Scraper failed: {e}. Falling back to Video Downloader just in case...")
+    
+    # ... Fallthrough to Video Logic if it IS a video site, OR if scraper failed ...
+    
     # 1. Download
     try:
-        if status_callback: status_callback("log", "Downloading video... (this may take a moment)")
+        if status_callback: status_callback("log", "Processing Video content...")
         file_path, info = download_video(url)
-        if status_callback: status_callback("log", "Download complete.")
+        if status_callback: status_callback("log", "Video download complete.")
     except Exception as e:
-        print(f"Download failed: {e}")
-        if status_callback: status_callback("log", f"Video download failed. Trying image scraper...")
+        # Only log error if we were sure it was a video site.
+        # If it was an article and we fell back here, it implies it had no video either.
+        print(f"Video process failed: {e}")
         
-        # Fallback to image scraping
-        try:
-            from ingest_images import scrape_images_from_url
-            scrape_images_from_url(url, user_provided_protest_id, status_callback)
-        except Exception as  scrape_err:
-             if status_callback: status_callback("log", f"Scraping also failed: {scrape_err}")
-             
-        # Stop video workflow here since we switched to image workflow
+        if IS_VIDEO_SITE:
+            if status_callback: status_callback("log", f"Error: Video download failed - {e}")
+            # Try scraper as last resort even for video sites (maybe it's a page with a video that failed, but headers work)
+            try:
+                from ingest_images import scrape_images_from_url
+                scrape_images_from_url(url, user_provided_protest_id, status_callback)
+            except:
+                pass
+        else:
+             if status_callback: status_callback("log", "No video found on page either.")
+        
         return
 
     # 2. Metadata / Protest Association
