@@ -219,8 +219,9 @@ def analyze_frames(media_id, media_frames_dir, status_callback=None):
                 )
                 db.add(appearance)
                 db.commit()
-    db.commit()
-    print("AI Analysis complete.")
+    
+        db.commit()
+        print("AI Analysis complete.")
     finally:
         db.close()
 if __name__ == "__main__":
