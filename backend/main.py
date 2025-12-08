@@ -12,6 +12,16 @@ import asyncio
 try:
     print("Attempting to connect to database and create tables...")
     models.Base.metadata.create_all(bind=engine)
+    
+    # --- HOTFIX FOR SCHEMA ---
+    # Drop the index on visual_id because it is too large (vector) for b-tree
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        conn.execute(text("DROP INDEX IF EXISTS ix_officers_visual_id"))
+        conn.commit()
+        print("Schema Patch: Dropped ix_officers_visual_id index.")
+    # -------------------------
+        
     print("Database tables created successfully.")
 except Exception as e:
     print(f"Startup Warning: Database connection failed. App will start but DB features will fail. Error: {e}")
