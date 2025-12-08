@@ -35,7 +35,7 @@ app.add_middleware(
 )
 
 # Mount Socket.IO
-from sio import sio_app
+from sio import sio_app, sio_server
 app.mount("/socket.io", sio_app)
 
 # Mount data directory to serve images
