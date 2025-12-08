@@ -35,7 +35,7 @@ class Officer(Base):
     id = Column(Integer, primary_key=True, index=True)
     badge_number = Column(String, index=True, nullable=True) # OCR findings
     force = Column(String, nullable=True) # e.g. Met Police
-    visual_id = Column(String, index=True, nullable=True) # Face encoding hash or similar ID
+    visual_id = Column(String, index=False, nullable=True) # Face encoding hash - DO NOT INDEX (Too large for B-Tree)
     notes = Column(Text, nullable=True)
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)

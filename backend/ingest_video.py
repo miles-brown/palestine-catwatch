@@ -11,16 +11,27 @@ from ingest import ingest_media # Reuse logic if possible, or replicate for flex
 DOWNLOAD_DIR = "data/downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-def download_video(url, protest_id=None):
+def download_video(url, protest_id=None, status_callback=None):
     """
     Downloads video using yt-dlp.
     Returns: file_path, info_dict
     """
+    def progress_hook(d):
+        if d['status'] == 'downloading' and status_callback:
+            percent = d.get('_percent_str', '').strip()
+            total_bytes = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
+            size_mb = total_bytes / (1024 * 1024)
+            msg = f"Downloading: {percent} of {size_mb:.1f}MB"
+            status_callback("log", msg)
+            if '100%' in percent:
+                status_callback("status_update", "Extracting")
+
     ydl_opts = {
         'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
         'outtmpl': f'{DOWNLOAD_DIR}/%(id)s.%(ext)s',
         'quiet': True,
         'no_warnings': True,
+        'progress_hooks': [progress_hook],
     }
     
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -101,7 +112,7 @@ def process_video_workflow(url, answers, user_provided_protest_id=None, status_c
     # 1. Download
     try:
         if status_callback: status_callback("log", "Processing Video content...")
-        file_path, info = download_video(url)
+        file_path, info = download_video(url, status_callback=status_callback)
         if status_callback: status_callback("log", "Video download complete.")
     except Exception as e:
         # Only log error if we were sure it was a video site.
