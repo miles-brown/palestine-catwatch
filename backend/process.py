@@ -118,18 +118,33 @@ def analyze_frames(media_id, media_frames_dir, status_callback=None):
             except Exception:
                 timestamp_str = "00:00:00"
 
-            if status_callback: status_callback("status_update", "Thinking")
+            # Emit the current frame for the frontend visualizer
+            if status_callback:
+                # Construct relative URL for the frame. 
+                # Assuming FRAMES_DIR is "data/frames", file is "data/frames/123/frame_001.jpg"
+                # URL should be "/data/frames/123/frame_001.jpg"
+                frame_rel_path = os.path.relpath(frame_path, start=os.getcwd())
+                frame_url = f"/{frame_rel_path}"
+                
+                status_callback("analyzing_frame", {
+                    "url": frame_url,
+                    "timestamp": timestamp_str,
+                    "frame_id": frame_filename
+                })
+                
+                status_callback("status_update", "Scanning")
+
             results = analyzer.process_image_ai(frame_path, media_frames_dir)
             
             # Log summary to UI
             if len(results) == 0:
                  if status_callback: 
-                     status_callback("log", f"AI Scan: No targets detected in {os.path.basename(frame_path)}")
-                     status_callback("status_update", "Scanning")
+                     # status_callback("log", f"AI Scan: No targets detected in {os.path.basename(frame_path)}")
+                     pass # Reduce spam for empty frames
             else:
                  if status_callback: 
                      status_callback("log", f"AI Scan: Found {len(results)} targets in {os.path.basename(frame_path)}")
-                     status_callback("status_update", "Havesting")
+                     status_callback("status_update", "Harvesting")
             
             for i, res in enumerate(results):
                 if res.get('is_scene_summary'):
