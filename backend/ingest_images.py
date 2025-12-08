@@ -1,4 +1,5 @@
 import requests
+import cloudscraper
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 import os
@@ -17,25 +18,13 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
     """
     Fallback: If video fails, try to scrape images.
     """
-    # Robust Browser Headers to bypass 403 blocks (DailyMail, Cloudflare, etc)
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-        "Sec-Fetch-User": "?1",
-        "Cache-Control": "max-age=0",
-    }
+    # Cloudscraper handles User-Agent and TLS fingerprinting automatically
+    scraper = cloudscraper.create_scraper()
     
     if status_callback: status_callback("log", "Video download failed/not found. Attempting to scrape images...")
     
     try:
-        response = requests.get(url, headers=headers, timeout=10)
+        response = scraper.get(url, timeout=15)
         response.raise_for_status()
         soup = BeautifulSoup(response.content, 'html.parser')
         
@@ -90,7 +79,7 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
                     
                 # Download image
                 try:
-                    img_data = requests.get(img_url, headers=headers, timeout=5).content
+                    img_data = scraper.get(img_url, timeout=5).content
                     if len(img_data) < 5000: # Lowered to 5KB to catch more images
                         continue
                         

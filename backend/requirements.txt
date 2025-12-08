@@ -19,3 +19,4 @@ scipy
 ultralytics
 python-socketio
 beautifulsoup4
+cloudscraper
