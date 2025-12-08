@@ -29,21 +29,36 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
         response = scraper.get(url, timeout=15)
         response.raise_for_status()
 
-# ... skipping unchanged ...
+        # Parse content
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # Extract images
+        potential_urls = []
+        for img in soup.find_all('img'):
+            src = img.get('src') or img.get('data-src')
+            if src: potential_urls.append(src)
+            
+        # Also look for og:image
+        og_img = soup.find("meta", property="og:image")
+        if og_img and og_img.get("content"):
+            potential_urls.insert(0, og_img.get("content"))
 
-            for img_url_raw in potential_urls:
-                if not img_url_raw: continue
-                
-                # Resolve relative URLs
-                img_url = urljoin(url, img_url_raw)
-                
-                # Deduplicate
-                if img_url in seen_urls: continue
-                seen_urls.add(img_url)
-                
-                # Filter small icons/pixels (very basic)
-                if 'icon' in img_url.lower() or 'logo' in img_url.lower() or 'tracker' in img_url.lower():
-                    continue
+        seen_urls = set()
+        saved_count = 0
+        
+        for img_url_raw in potential_urls:
+            if not img_url_raw: continue
+            
+            # Resolve relative URLs
+            img_url = urljoin(url, img_url_raw)
+            
+            # Deduplicate
+            if img_url in seen_urls: continue
+            seen_urls.add(img_url)
+            
+            # Filter small icons/pixels (very basic)
+            if 'icon' in img_url.lower() or 'logo' in img_url.lower() or 'tracker' in img_url.lower():
+                continue
                     
                 # Download image
                 try:
