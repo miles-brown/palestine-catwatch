@@ -12,6 +12,7 @@ if (!API_URL.startsWith("http")) {
 export default function LiveAnalysis({ taskId, onComplete }) {
     const [logs, setLogs] = useState([]);
     const [candidates, setCandidates] = useState([]);
+    const [scrapedMedia, setScrapedMedia] = useState([]);
     const [status, setStatus] = useState('connecting'); // connecting, active, complete, error
     const [stats, setStats] = useState({ faces: 0, objects: 0, confidence_avg: 0 });
     const logEndRef = useRef(null);
@@ -42,6 +43,10 @@ export default function LiveAnalysis({ taskId, onComplete }) {
         // Custom events from backend
         socket.on('log', (msg) => {
             addLog('Info', msg);
+        });
+
+        socket.on('scraped_image', (data) => {
+            setScrapedMedia(prev => [...prev, data]);
         });
 
 
@@ -161,8 +166,26 @@ export default function LiveAnalysis({ taskId, onComplete }) {
                     </div>
 
                     <div className="flex-1 p-6 overflow-y-auto">
+
+                        {/* Scraped Media Gallery */}
+                        {scrapedMedia.length > 0 && (
+                            <div className="mb-8">
+                                <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Ingested Content ({scrapedMedia.length})</h3>
+                                <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-slate-700">
+                                    {scrapedMedia.map((media, i) => (
+                                        <div key={i} className="flex-shrink-0 w-32 h-24 bg-slate-950 border border-slate-800 rounded overflow-hidden relative group">
+                                            <img src={`${API_URL}${media.url}`} className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity" alt="Scraped" />
+                                            <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent flex items-end p-1">
+                                                <span className="text-[10px] text-slate-300 truncate w-full">{media.filename}</span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
                         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-                            {candidates.length === 0 && status === 'active' && (
+                            {candidates.length === 0 && scrapedMedia.length === 0 && status === 'active' && (
                                 <div className="col-span-full h-64 flex flex-col items-center justify-center text-slate-600 animate-pulse">
                                     <Cpu className="h-12 w-12 mb-4 opacity-50" />
                                     <p>Analyzing stream for targets...</p>

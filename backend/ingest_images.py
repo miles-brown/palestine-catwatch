@@ -83,7 +83,7 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
                 # Download image
                 try:
                     img_data = requests.get(img_url, headers=headers, timeout=5).content
-                    if len(img_data) < 15000: # Increase threshold to 15KB to skip spacers/ads
+                    if len(img_data) < 5000: # Lowered to 5KB to catch more images
                         continue
                         
                     ext = os.path.splitext(img_url)[1].split('?')[0]
@@ -94,6 +94,20 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
                     
                     with open(filepath, "wb") as f:
                         f.write(img_data)
+                        
+                    # Calculate web-accessible URL
+                    # Assuming running in /app, data is at /app/data
+                    # backend mounts /data -> static
+                    # filepath is data/downloads/filename
+                    web_url = f"/data/downloads/{filename}"
+
+                    # Emit event for UI
+                    if status_callback: 
+                        status_callback("scraped_image", {
+                            "url": web_url,
+                            "filename": filename
+                        })
+                        status_callback("log", f"Scraped image: {filename}")
                         
                     # Create Media Record
                     new_media = models.Media(
@@ -108,7 +122,6 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
                     db.refresh(new_media)
                     
                     saved_count += 1
-                    if status_callback: status_callback("log", f"Scraped image: {filename}")
                     
                     # Trigger analysis immediately for each image
                     process_media(new_media.id, status_callback)
