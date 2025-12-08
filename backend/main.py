@@ -6,6 +6,8 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 import models, schemas
 from database import get_db, engine
+from datetime import datetime
+import asyncio
 
 try:
     print("Attempting to connect to database and create tables...")
