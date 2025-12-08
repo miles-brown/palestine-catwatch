@@ -74,14 +74,36 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
         try:
             # Create a protest placeholder if needed
             if not protest_id:
-                # Metadata extraction (simplified)
-                title = soup.title.string if soup.title else "Scraped Article"
+                # Metadata extraction (Smart)
+                # 1. Title
+                og_title = soup.find('meta', property='og:title')
+                title = og_title['content'] if og_title else (soup.title.string if soup.title else "Scraped Article")
                 clean_title = title.strip()
                 
+                # 2. Date
+                pub_time = soup.find('meta', property='article:published_time') or \
+                           soup.find('meta', {'name': 'date'}) or \
+                           soup.find('meta', {'name': 'parsely-pub-date'})
+                event_date = datetime.utcnow()
+                if pub_time and pub_time.get('content'):
+                    try:
+                        # Handle ISO formats roughly
+                        dt_str = pub_time['content'].split('T')[0] 
+                        event_date = datetime.strptime(dt_str, "%Y-%m-%d")
+                    except:
+                        pass
+                
+                # 3. Location (Naive Heuristic via Title/Desc)
+                loc = "Unknown"
+                text_lower = (clean_title + description_text[:200]).lower()
+                if "london" in text_lower: loc = "London, UK"
+                elif "manchester" in text_lower: loc = "Manchester, UK"
+                elif "glasgow" in text_lower: loc = "Glasgow, UK"
+                
                 new_protest = models.Protest(
-                    name=f"Article: {clean_title[:50]}",
-                    date=datetime.utcnow(),
-                    location="Unknown",
+                    name=f"{clean_title[:80]}", # Cleaner name
+                    date=event_date,
+                    location=loc,
                     description=description_text
                 )
                 db.add(new_protest)
