@@ -144,7 +144,7 @@ def get_protests(db: Session = Depends(get_db)):
 @app.post("/upload")
 async def upload_file(
     file: UploadFile = File(...), 
-    protest_id: int = Form(...),
+    protest_id: Optional[int] = Form(None),
     type: str = Form(...),
     db: Session = Depends(get_db)
 ):

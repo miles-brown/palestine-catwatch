@@ -59,6 +59,22 @@ def save_upload(file_obj, filename: str, protest_id: int, media_type: str, db: S
     """
     print(f"Saving upload {filename} for protest {protest_id}...")
     
+    if protest_id is None:
+        # Find or create "General Uploads" protest
+        general_protest = db.query(models.Protest).filter(models.Protest.name == "General Uploads").first()
+        if not general_protest:
+            general_protest = models.Protest(
+                name="General Uploads",
+                date=datetime.utcnow(),
+                location="N/A",
+                description="Bucket for uploads without a specific protest."
+            )
+            db.add(general_protest)
+            db.commit()
+            db.refresh(general_protest)
+        protest_id = general_protest.id
+        print(f"Assigned to General Uploads (ID: {protest_id})")
+    
     # Generate unique filename (keep extension from original if possible, else default)
     _, ext = os.path.splitext(filename)
     if not ext:
