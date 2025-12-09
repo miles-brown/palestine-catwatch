@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -9,29 +9,8 @@ import {
 } from 'lucide-react';
 import UniformAnalysisCard from '@/components/UniformAnalysisCard';
 import { Skeleton } from '@/components/ui/skeleton';
-import { API_BASE, getMediaUrl, fetchWithErrorHandling } from '../utils/api';
-
-// Rank styling based on UK police hierarchy
-const RANK_COLORS = {
-  'Constable': 'bg-blue-100 text-blue-800 border-blue-300',
-  'Sergeant': 'bg-green-100 text-green-800 border-green-300',
-  'Inspector': 'bg-yellow-100 text-yellow-800 border-yellow-300',
-  'Chief Inspector': 'bg-orange-100 text-orange-800 border-orange-300',
-  'Superintendent': 'bg-red-100 text-red-800 border-red-300',
-  'Chief Superintendent': 'bg-purple-100 text-purple-800 border-purple-300',
-  'Commander': 'bg-pink-100 text-pink-800 border-pink-300',
-  'Assistant Commissioner': 'bg-indigo-100 text-indigo-800 border-indigo-300',
-  'Deputy Commissioner': 'bg-gray-800 text-white border-gray-900',
-  'Commissioner': 'bg-black text-white border-gray-900'
-};
-
-const getRankColor = (rank) => {
-  if (!rank) return 'bg-gray-100 text-gray-800 border-gray-300';
-  for (const [key, value] of Object.entries(RANK_COLORS)) {
-    if (rank.toLowerCase().includes(key.toLowerCase())) return value;
-  }
-  return 'bg-gray-100 text-gray-800 border-gray-300';
-};
+import { API_BASE, getMediaUrl } from '../utils/api';
+import { getRankColor } from '../utils/constants';
 
 // Use centralized utility for secure path handling
 const getCropUrl = getMediaUrl;
@@ -586,15 +565,18 @@ export default function OfficerProfilePage() {
   const [error, setError] = useState(null);
   const [downloading, setDownloading] = useState(false);
 
-  const fetchOfficerData = useCallback(async () => {
+  // Ref for abort controller to prevent memory leaks
+  const abortControllerRef = useRef(null);
+
+  const fetchOfficerData = useCallback(async (signal) => {
     setLoading(true);
     setError(null);
 
     try {
-      // Fetch officer data and network in parallel
+      // Fetch officer data and network in parallel with abort support
       const [officerRes, networkRes] = await Promise.all([
-        fetch(`${API_BASE}/officers/${officerId}`),
-        fetch(`${API_BASE}/officers/${officerId}/network`)
+        fetch(`${API_BASE}/officers/${officerId}`, { signal }),
+        fetch(`${API_BASE}/officers/${officerId}/network`, { signal })
       ]);
 
       if (!officerRes.ok) {
@@ -607,6 +589,8 @@ export default function OfficerProfilePage() {
       setOfficer(officerData);
       setNetwork(networkData);
     } catch (err) {
+      // Ignore abort errors
+      if (err.name === 'AbortError') return;
       setError(err.message);
     } finally {
       setLoading(false);
@@ -614,7 +598,21 @@ export default function OfficerProfilePage() {
   }, [officerId]);
 
   useEffect(() => {
-    fetchOfficerData();
+    // Abort previous request if any
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    // Create new abort controller
+    abortControllerRef.current = new AbortController();
+    fetchOfficerData(abortControllerRef.current.signal);
+
+    // Cleanup: abort on unmount or officerId change
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
   }, [fetchOfficerData]);
 
   const handleDownloadDossier = async () => {

@@ -6,28 +6,7 @@ import {
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { API_BASE, getMediaUrl, fetchWithErrorHandling } from '../utils/api';
-
-// Rank styling based on UK police hierarchy
-const RANK_COLORS = {
-  'Constable': 'bg-blue-100 text-blue-800 border-blue-300',
-  'Sergeant': 'bg-green-100 text-green-800 border-green-300',
-  'Inspector': 'bg-yellow-100 text-yellow-800 border-yellow-300',
-  'Chief Inspector': 'bg-orange-100 text-orange-800 border-orange-300',
-  'Superintendent': 'bg-red-100 text-red-800 border-red-300',
-  'Chief Superintendent': 'bg-purple-100 text-purple-800 border-purple-300',
-  'Commander': 'bg-pink-100 text-pink-800 border-pink-300',
-  'Assistant Commissioner': 'bg-indigo-100 text-indigo-800 border-indigo-300',
-  'Deputy Commissioner': 'bg-gray-800 text-white border-gray-900',
-  'Commissioner': 'bg-black text-white border-gray-900'
-};
-
-const getRankColor = (rank) => {
-  if (!rank) return 'bg-gray-100 text-gray-800 border-gray-300';
-  for (const [key, value] of Object.entries(RANK_COLORS)) {
-    if (rank.toLowerCase().includes(key.toLowerCase())) return value;
-  }
-  return 'bg-gray-100 text-gray-800 border-gray-300';
-};
+import { getRankColor } from '../utils/constants';
 
 // Officer Card Component
 const OfficerCard = ({ officer, isRoot = false, onSelectOfficer, selectedId }) => {
