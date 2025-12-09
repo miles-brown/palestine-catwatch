@@ -80,7 +80,10 @@ export function useFetch(url, { immediate = true } = {}) {
         abortControllerRef.current.abort();
       }
     };
-  }, [url, immediate, fetchData]);
+    // Note: fetchData is intentionally excluded from deps.
+    // It changes when url changes, so including both would cause double fetches.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url, immediate]);
 
   return { data, loading, error, refetch: fetchData };
 }

@@ -26,14 +26,32 @@ L.Icon.Default.mergeOptions({
   shadowUrl: markerShadow,
 });
 
-// Cluster size thresholds
+/**
+ * Cluster size thresholds for map marker grouping.
+ * These values determine the visual prominence of clusters based on officer count.
+ *
+ * Rationale:
+ * - SMALL (< 5): Individual officers or small groups, minimal visual weight
+ * - MEDIUM (< 15): Notable gathering, moderate visual prominence
+ * - LARGE (< 30): Significant concentration, high visual prominence
+ * - XLARGE (>= 30): Major deployment, maximum visual prominence
+ *
+ * These thresholds are tuned for typical UK protest scenarios where:
+ * - 1-4 officers: routine patrol/observation
+ * - 5-14 officers: coordinated presence
+ * - 15-29 officers: tactical unit deployment
+ * - 30+ officers: major operation or PSU deployment
+ */
 const CLUSTER_THRESHOLDS = {
   SMALL: 5,
   MEDIUM: 15,
   LARGE: 30
 };
 
-// Cluster sizes (pixels)
+/**
+ * Cluster icon sizes in pixels.
+ * Larger clusters get larger icons for visual hierarchy.
+ */
 const CLUSTER_SIZES = {
   SMALL: 30,
   MEDIUM: 40,

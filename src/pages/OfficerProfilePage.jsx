@@ -17,7 +17,7 @@ import { withErrorBoundary } from '../components/ErrorBoundary';
 const getCropUrl = getMediaUrl;
 
 // Profile Header Component
-const ProfileHeader = ({ officer, network, onDownloadDossier, downloading, mediaCount, verifiedCount }) => {
+const ProfileHeader = ({ officer, network, onDownloadDossier, downloading, downloadError, mediaCount, verifiedCount }) => {
   const primaryAppearance = officer.appearances?.[0];
   const cropUrl = primaryAppearance?.image_crop_path
     ? getCropUrl(primaryAppearance.image_crop_path)
@@ -117,6 +117,12 @@ const ProfileHeader = ({ officer, network, onDownloadDossier, downloading, media
               )}
               Download Dossier
             </Button>
+            {downloadError && (
+              <div className="text-red-400 text-xs flex items-center gap-1">
+                <AlertTriangle className="h-3 w-3" />
+                {downloadError}
+              </div>
+            )}
             <Button variant="outline" className="border-white/30 text-white hover:bg-white/10">
               <Share2 className="h-4 w-4 mr-2" />
               Share Profile
@@ -581,6 +587,7 @@ function OfficerProfilePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState(null);
 
   // Ref for abort controller to prevent memory leaks
   const abortControllerRef = useRef(null);
@@ -630,6 +637,7 @@ function OfficerProfilePage() {
 
   const handleDownloadDossier = async () => {
     setDownloading(true);
+    setDownloadError(null);
     try {
       const response = await fetch(`${API_BASE}/officers/${officerId}/dossier`);
       if (!response.ok) throw new Error('Failed to generate dossier');
@@ -645,6 +653,7 @@ function OfficerProfilePage() {
       document.body.removeChild(a);
     } catch (err) {
       logger.error('Dossier download failed:', err);
+      setDownloadError('Failed to download dossier. Please try again.');
     } finally {
       setDownloading(false);
     }
@@ -746,6 +755,7 @@ function OfficerProfilePage() {
             network={network}
             onDownloadDossier={handleDownloadDossier}
             downloading={downloading}
+            downloadError={downloadError}
             mediaCount={mediaCount}
             verifiedCount={verifiedCount}
           />

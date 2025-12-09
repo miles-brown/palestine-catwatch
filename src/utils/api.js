@@ -37,7 +37,7 @@ export const sanitizeMediaPath = (path) => {
 
   // Final safety check - reject if any .. remains
   if (sanitized.includes('..')) {
-    console.warn('Path traversal attempt detected:', path);
+    logger.warn('Path traversal attempt detected:', path);
     return null;
   }
 
