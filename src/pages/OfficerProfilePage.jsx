@@ -108,7 +108,7 @@ const ProfileHeader = ({ officer, network, onDownloadDossier, downloading }) => 
               </div>
               <div className="bg-white/10 rounded-lg p-3 text-center">
                 <div className="text-2xl font-bold">
-                  {new Set(officer.appearances?.map(a => a.media_id)).size || 0}
+                  {new Set((officer.appearances || []).map(a => a.media_id)).size}
                 </div>
                 <div className="text-xs text-slate-400 uppercase">Media Files</div>
               </div>
@@ -120,7 +120,7 @@ const ProfileHeader = ({ officer, network, onDownloadDossier, downloading }) => 
               </div>
               <div className="bg-white/10 rounded-lg p-3 text-center">
                 <div className="text-2xl font-bold">
-                  {officer.appearances?.filter(a => a.verified).length || 0}
+                  {(officer.appearances || []).filter(a => a.verified).length}
                 </div>
                 <div className="text-xs text-slate-400 uppercase">Verified</div>
               </div>

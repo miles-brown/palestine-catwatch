@@ -304,7 +304,7 @@ export default function EquipmentCorrelationPage() {
               <StatCard
                 icon={TrendingUp}
                 label="High-Risk Events"
-                value={data.escalation_events?.filter(e => e.escalation_score >= 8).length || 0}
+                value={(data.escalation_events || []).filter(e => e.escalation_score >= 8).length}
                 subtext="Elevated escalation"
                 color="red"
               />
