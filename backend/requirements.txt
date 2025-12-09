@@ -17,9 +17,14 @@ torchvision
 tqdm
 scipy
 ultralytics
+# Perceptual hashing for duplicate detection
+imagehash
+Pillow
 python-socketio
 beautifulsoup4
 cloudscraper
 slowapi
+# Database migrations
+alembic
 # Optional: Uniform analysis with Claude Vision API
 anthropic

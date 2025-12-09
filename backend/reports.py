@@ -4,6 +4,7 @@ from reportlab.lib.utils import ImageReader
 import io
 import os
 from datetime import datetime
+from utils.paths import get_absolute_path
 
 def generate_officer_dossier(officer, appearances):
     buffer = io.BytesIO()
@@ -53,12 +54,13 @@ def generate_officer_dossier(officer, appearances):
         y -= 20
         c.drawString(50, y, f"Action: {app.action}")
         
-        # Image
-        if app.image_crop_path and os.path.exists(app.image_crop_path):
+        # Image - use get_absolute_path for consistent path handling
+        abs_image_path = get_absolute_path(app.image_crop_path) if app.image_crop_path else None
+        if abs_image_path and os.path.exists(abs_image_path):
             try:
                 # Draw image
                 img_y = y - 110
-                c.drawImage(app.image_crop_path, 50, img_y, width=100, height=100, preserveAspectRatio=True)
+                c.drawImage(abs_image_path, 50, img_y, width=100, height=100, preserveAspectRatio=True)
                 y -= 120
             except Exception as e:
                 c.drawString(50, y-20, "[Image Error]")
