@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Request, Response
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -116,6 +117,11 @@ def validate_single_url(v):
 
 
 app = FastAPI(title="Palestine Catwatch API")
+
+# HTTPS enforcement in production
+_environment = os.getenv("ENVIRONMENT", "development").lower()
+if _environment in ("production", "prod"):
+    app.add_middleware(HTTPSRedirectMiddleware)
 
 # Setup rate limiting
 setup_rate_limiting(app)
@@ -1791,12 +1797,14 @@ def register_user(
         "message": "Registration successful!"
     }
 
-    # In development/when verification required, include token for testing
-    if REQUIRE_EMAIL_VERIFICATION and user.email_verification_token:
-        response["verification_token"] = user.email_verification_token
+    # Only return verification token in development mode (security: prevents token exposure in logs)
+    is_development = os.getenv("ENVIRONMENT", "development").lower() in ("development", "dev")
+    if REQUIRE_EMAIL_VERIFICATION:
         response["message"] = "Registration successful! Please check your email to verify your account."
         # TODO: Send actual verification email here
-        # For now, the token is returned in response for development testing
+        if is_development and user.email_verification_token:
+            # Only expose token in dev for testing - never in production
+            response["verification_token"] = user.email_verification_token
     elif not REQUIRE_EMAIL_VERIFICATION:
         response["message"] = "Registration successful! You can now log in."
 
@@ -2090,13 +2098,28 @@ async def revoke_user_tokens_endpoint(
             status_code=400
         )
 
+    old_version = target_user.token_version
     revoke_user_tokens(db, target_user)
+
+    # Audit log for security events
+    import logging
+    audit_logger = logging.getLogger("audit.security")
+    audit_logger.warning(
+        f"TOKEN_REVOCATION: admin_user_id={current_user.id} "
+        f"admin_username={current_user.username} "
+        f"target_user_id={user_id} "
+        f"target_username={target_user.username} "
+        f"old_token_version={old_version} "
+        f"new_token_version={target_user.token_version} "
+        f"client_ip={request.client.host if request.client else 'unknown'}"
+    )
 
     return {
         "success": True,
         "message": f"All tokens revoked for user {target_user.username}",
         "user_id": user_id,
-        "new_token_version": target_user.token_version
+        "new_token_version": target_user.token_version,
+        "revoked_by": current_user.username
     }
 
 

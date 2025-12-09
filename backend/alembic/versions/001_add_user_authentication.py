@@ -103,10 +103,32 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Remove users table and auth-related columns."""
+    """Remove users table and auth-related columns.
+
+    SAFETY: This will delete ALL user data. Only runs if:
+    - ALLOW_DESTRUCTIVE_MIGRATION env var is set to 'true'
+    - Or users table is empty
+    """
+    import os
+
     conn = op.get_bind()
     inspector = sa.inspect(conn)
     existing_tables = inspector.get_table_names()
+
+    # Safety check: prevent accidental data loss
+    allow_destructive = os.getenv('ALLOW_DESTRUCTIVE_MIGRATION', 'false').lower() == 'true'
+
+    if 'users' in existing_tables and not allow_destructive:
+        # Check if table has data
+        result = conn.execute(sa.text("SELECT COUNT(*) FROM users"))
+        user_count = result.scalar()
+
+        if user_count > 0:
+            raise RuntimeError(
+                f"SAFETY CHECK FAILED: Cannot downgrade - users table contains {user_count} users. "
+                f"This would permanently delete all user data. "
+                f"To proceed anyway, set ALLOW_DESTRUCTIVE_MIGRATION=true"
+            )
 
     # Remove foreign key and column from media
     if 'media' in existing_tables:
