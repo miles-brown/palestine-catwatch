@@ -423,7 +423,7 @@ function TimelinePage() {
                     <Clock className="h-5 w-5 text-gray-500" />
                     <span className="font-semibold text-gray-900">{formatTime(bucket)}</span>
                     <span className="text-sm text-gray-500">({events.length} events)</span>
-                    {events.some(e => e.equipment?.some(eq => ESCALATION_EQUIPMENT.includes(eq.name))) && (
+                    {events.some(e => e.equipment?.some(eq => eq?.name && ESCALATION_EQUIPMENT.includes(eq.name))) && (
                       <span className="px-2 py-0.5 text-xs bg-red-100 text-red-700 rounded-full flex items-center gap-1">
                         <AlertTriangle className="h-3 w-3" />
                         Escalation
@@ -480,7 +480,7 @@ export default withErrorBoundary(TimelinePage, 'An error occurred while loading 
 // Individual Timeline Event Component
 function TimelineEvent({ event, index, detailed = false }) {
   const hasEscalation = event.high_escalation_equipment ||
-    event.equipment?.some(eq => ESCALATION_EQUIPMENT.includes(eq.name));
+    event.equipment?.some(eq => eq?.name && ESCALATION_EQUIPMENT.includes(eq.name));
 
   let apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
   if (!apiBase.startsWith('http')) {
@@ -574,12 +574,12 @@ function TimelineEvent({ event, index, detailed = false }) {
                     <span
                       key={i}
                       className={`text-xs px-2 py-0.5 rounded ${
-                        ESCALATION_EQUIPMENT.includes(eq.name)
+                        eq?.name && ESCALATION_EQUIPMENT.includes(eq.name)
                           ? 'bg-red-100 text-red-700'
                           : 'bg-gray-100 text-gray-600'
                       }`}
                     >
-                      {eq.name}
+                      {eq?.name || 'Unknown'}
                     </span>
                   ))}
                 </div>

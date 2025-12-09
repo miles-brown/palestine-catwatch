@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import UniformAnalysisCard from '@/components/UniformAnalysisCard';
 import { Skeleton } from '@/components/ui/skeleton';
-import { API_BASE, getMediaUrl } from '../utils/api';
+import { API_BASE, getMediaUrl, fetchWithErrorHandling } from '../utils/api';
 import { getRankColor } from '../utils/constants';
 import { withErrorBoundary } from '../components/ErrorBoundary';
 
@@ -570,18 +570,14 @@ function OfficerProfilePage() {
     setError(null);
 
     try {
-      // Fetch officer data and network in parallel with abort support
-      const [officerRes, networkRes] = await Promise.all([
-        fetch(`${API_BASE}/officers/${officerId}`, { signal }),
-        fetch(`${API_BASE}/officers/${officerId}/network`, { signal })
+      // Fetch officer data (required) and network (optional) in parallel
+      const [officerData, networkData] = await Promise.all([
+        // Officer data is required - use error handling helper
+        fetchWithErrorHandling(`${API_BASE}/officers/${officerId}`, { signal }),
+        // Network data is optional - catch errors and return null
+        fetchWithErrorHandling(`${API_BASE}/officers/${officerId}/network`, { signal })
+          .catch(() => null)
       ]);
-
-      if (!officerRes.ok) {
-        throw new Error('Officer not found');
-      }
-
-      const officerData = await officerRes.json();
-      const networkData = networkRes.ok ? await networkRes.json() : null;
 
       setOfficer(officerData);
       setNetwork(networkData);
