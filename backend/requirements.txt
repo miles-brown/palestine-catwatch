@@ -5,6 +5,7 @@ psycopg2-binary
 reportlab
 yt-dlp
 sqlalchemy
+alembic
 python-dotenv
 requests
 # Authentication

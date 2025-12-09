@@ -8,7 +8,8 @@ const TOKEN_KEY = 'catwatch_auth_token';
 const REFRESH_TOKEN_KEY = 'catwatch_refresh_token';
 const USER_KEY = 'catwatch_auth_user';
 const TOKEN_EXPIRY_KEY = 'catwatch_token_expiry';
-const CSRF_TOKEN_KEY = 'catwatch_csrf_token';
+// NOTE: CSRF tokens are NOT stored in localStorage for security reasons
+// They are kept in React state only, and the cookie handles persistence
 
 // Refresh token 2 minutes before expiry to prevent unexpected logouts
 const TOKEN_REFRESH_MARGIN_MS = 2 * 60 * 1000;
@@ -25,15 +26,17 @@ export function AuthProvider({ children }) {
     const refreshTimerRef = useRef(null);
 
     // Fetch CSRF token for protected operations
+    // SECURITY: Token is kept in React state only, NOT localStorage
+    // The cookie provides persistence across page refreshes
     const fetchCsrfToken = useCallback(async () => {
         try {
             const response = await fetch(`${API_URL}/csrf/token`, {
-                credentials: 'include', // Include cookies
+                credentials: 'include', // Include cookies for CSRF
             });
             if (response.ok) {
                 const data = await response.json();
                 setCsrfToken(data.csrf_token);
-                localStorage.setItem(CSRF_TOKEN_KEY, data.csrf_token);
+                // Do NOT store in localStorage - that defeats CSRF protection
                 return data.csrf_token;
             }
         } catch (e) {
@@ -234,8 +237,9 @@ export function AuthProvider({ children }) {
     const register = async (userData) => {
         setError(null);
         try {
-            // Get CSRF token first (or use cached one)
-            let currentCsrfToken = csrfToken || localStorage.getItem(CSRF_TOKEN_KEY);
+            // Get CSRF token from state (NOT localStorage for security)
+            // If not in state, fetch a fresh one from the server
+            let currentCsrfToken = csrfToken;
             if (!currentCsrfToken) {
                 currentCsrfToken = await fetchCsrfToken();
             }

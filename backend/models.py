@@ -1,7 +1,12 @@
 from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, Boolean, Float
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime, timezone
 from database import Base
+
+
+def utc_now():
+    """Return current UTC time as timezone-aware datetime."""
+    return datetime.now(timezone.utc)
 
 
 class User(Base):
@@ -14,7 +19,7 @@ class User(Base):
     hashed_password = Column(String(255), nullable=False)
     role = Column(String(20), default="viewer", nullable=False)  # viewer, contributor, admin
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
     last_login = Column(DateTime, nullable=True)
 
     # Extended profile fields
@@ -62,7 +67,7 @@ class Media(Base):
     url = Column(String, index=True)  # URL or local path
     type = Column(String)  # 'image' or 'video'
     protest_id = Column(Integer, ForeignKey("protests.id"))
-    timestamp = Column(DateTime, default=datetime.utcnow)
+    timestamp = Column(DateTime, default=utc_now)
     processed = Column(Boolean, default=False)
     uploaded_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # Track who uploaded
 
@@ -163,7 +168,7 @@ class UniformAnalysis(Base):
 
     # Analysis metadata
     raw_analysis = Column(Text, nullable=True)  # Full Claude JSON response
-    analyzed_at = Column(DateTime, default=datetime.utcnow)
+    analyzed_at = Column(DateTime, default=utc_now)
     api_cost_tokens = Column(Integer, nullable=True)  # Track API usage
     image_hash = Column(String, nullable=True, index=True)  # SHA256 for caching
 
