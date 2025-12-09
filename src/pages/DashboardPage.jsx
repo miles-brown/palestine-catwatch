@@ -6,11 +6,7 @@ import {
   Download, FileJson, FileSpreadsheet
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
-
-let API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
-if (!API_BASE.startsWith("http")) {
-  API_BASE = `https://${API_BASE}`;
-}
+import { API_BASE, getMediaUrl, fetchWithErrorHandling } from '../utils/api';
 
 const StatCard = ({ icon: Icon, label, value, subtext, color = "green" }) => {
   const colorClasses = {
@@ -34,9 +30,7 @@ const StatCard = ({ icon: Icon, label, value, subtext, color = "green" }) => {
 };
 
 const OfficerRow = ({ officer, onViewNetwork }) => {
-  const cropUrl = officer.crop_path
-    ? `${API_BASE}/data/${officer.crop_path.replace('../data/', '').replace(/^\/+/, '')}`
-    : null;
+  const cropUrl = getMediaUrl(officer.crop_path);
 
   return (
     <tr className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
@@ -131,9 +125,7 @@ const NetworkModal = ({ officerId, onClose }) => {
           ) : network?.connections?.length > 0 ? (
             <div className="space-y-3">
               {network.connections.map((conn) => {
-                const cropUrl = conn.crop_path
-                  ? `${API_BASE}/data/${conn.crop_path.replace('../data/', '').replace(/^\/+/, '')}`
-                  : null;
+                const cropUrl = getMediaUrl(conn.crop_path);
 
                 return (
                   <div

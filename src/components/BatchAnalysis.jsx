@@ -1,15 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
   Shield, RefreshCw, Play, AlertTriangle, CheckCircle, XCircle,
   Loader2, Users, ChevronDown, ChevronUp
 } from 'lucide-react';
-
-let API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
-if (!API_BASE.startsWith("http")) {
-  API_BASE = `https://${API_BASE}`;
-}
+import { API_BASE, fetchWithErrorHandling, POLL_INTERVAL_MS } from '../utils/api';
 
 const BatchAnalysis = () => {
   const [pending, setPending] = useState([]);
@@ -20,15 +16,18 @@ const BatchAnalysis = () => {
   const [error, setError] = useState(null);
   const [expanded, setExpanded] = useState(true);
 
+  // Ref to track if batch is still in progress (avoids stale closure in interval)
+  const batchInProgressRef = useRef(false);
+
   // Fetch pending appearances
   const fetchPending = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/appearances/pending-analysis?limit=50`);
-      const data = await response.json();
+      const data = await fetchWithErrorHandling(`${API_BASE}/appearances/pending-analysis?limit=50`);
       setPending(data.appearances || []);
+      setError(null);
     } catch (err) {
-      setError('Failed to fetch pending appearances');
+      setError(`Failed to fetch pending appearances: ${err.message}`);
     } finally {
       setLoading(false);
     }
@@ -38,37 +37,43 @@ const BatchAnalysis = () => {
     fetchPending();
   }, [fetchPending]);
 
-  // Poll for batch progress
+  // Poll for batch progress - fixed race condition
+  // The interval is created once when batchId is set, and checks progress inside the callback
   useEffect(() => {
     if (!batchId) return;
 
+    batchInProgressRef.current = true;
+
     const pollProgress = async () => {
+      // Check ref instead of state to avoid stale closure
+      if (!batchInProgressRef.current) return;
+
       try {
-        const response = await fetch(`${API_BASE}/appearances/batch-status/${batchId}`);
-        const data = await response.json();
+        const data = await fetchWithErrorHandling(`${API_BASE}/appearances/batch-status/${batchId}`);
         setBatchProgress(data);
 
         if (!data.in_progress) {
-          // Batch complete - refresh pending list
+          // Batch complete - stop polling and refresh pending list
+          batchInProgressRef.current = false;
           fetchPending();
         }
       } catch (err) {
         console.error('Failed to fetch batch progress:', err);
+        // Don't stop polling on transient errors
       }
     };
 
     // Initial poll
     pollProgress();
 
-    // Set up interval
-    const interval = setInterval(() => {
-      if (batchProgress?.in_progress !== false) {
-        pollProgress();
-      }
-    }, 2000);
+    // Set up interval - no dependency on batchProgress state
+    const interval = setInterval(pollProgress, POLL_INTERVAL_MS);
 
-    return () => clearInterval(interval);
-  }, [batchId, batchProgress?.in_progress, fetchPending]);
+    return () => {
+      clearInterval(interval);
+      batchInProgressRef.current = false;
+    };
+  }, [batchId, fetchPending]);
 
   const handleSelectAll = () => {
     if (selected.size === pending.length) {
@@ -98,7 +103,7 @@ const BatchAnalysis = () => {
     setBatchProgress(null);
 
     try {
-      const response = await fetch(`${API_BASE}/appearances/batch-analyze`, {
+      const data = await fetchWithErrorHandling(`${API_BASE}/appearances/batch-analyze`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -108,8 +113,6 @@ const BatchAnalysis = () => {
           force_reanalyze: forceReanalyze
         })
       });
-
-      const data = await response.json();
 
       if (data.status === 'batch_started') {
         setBatchId(data.batch_id);
@@ -125,7 +128,7 @@ const BatchAnalysis = () => {
         setError(data.detail || 'Failed to start batch analysis');
       }
     } catch (err) {
-      setError('Failed to start batch analysis: ' + err.message);
+      setError(`Failed to start batch analysis: ${err.message}`);
     }
   };
 

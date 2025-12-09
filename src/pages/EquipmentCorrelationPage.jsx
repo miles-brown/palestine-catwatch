@@ -7,11 +7,7 @@ import {
   ChevronRight, AlertCircle, CheckCircle, Info, Siren
 } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
-
-let API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
-if (!API_BASE.startsWith("http")) {
-  API_BASE = `https://${API_BASE}`;
-}
+import { API_BASE, fetchWithErrorHandling } from '../utils/api';
 
 // Category colors
 const CATEGORY_COLORS = {

@@ -9,11 +9,7 @@ import {
 } from 'lucide-react';
 import UniformAnalysisCard from '@/components/UniformAnalysisCard';
 import { Skeleton } from '@/components/ui/skeleton';
-
-let API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
-if (!API_BASE.startsWith("http")) {
-  API_BASE = `https://${API_BASE}`;
-}
+import { API_BASE, getMediaUrl, fetchWithErrorHandling } from '../utils/api';
 
 // Rank styling based on UK police hierarchy
 const RANK_COLORS = {
@@ -37,11 +33,8 @@ const getRankColor = (rank) => {
   return 'bg-gray-100 text-gray-800 border-gray-300';
 };
 
-const getCropUrl = (cropPath) => {
-  if (!cropPath) return null;
-  const cleanPath = cropPath.split('data/')[1] || cropPath.replace('../data/', '').replace(/^\/+/, '');
-  return `${API_BASE}/data/${cleanPath}`;
-};
+// Use centralized utility for secure path handling
+const getCropUrl = getMediaUrl;
 
 // Profile Header Component
 const ProfileHeader = ({ officer, network, onDownloadDossier, downloading }) => {

@@ -1,15 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Users, ChevronDown, ChevronUp, ChevronRight,
   Shield, Award, RefreshCw, Link2, Unlink, Search
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-
-let API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
-if (!API_BASE.startsWith("http")) {
-  API_BASE = `https://${API_BASE}`;
-}
+import { API_BASE, getMediaUrl, fetchWithErrorHandling } from '../utils/api';
 
 // Rank styling based on UK police hierarchy
 const RANK_COLORS = {
@@ -35,9 +31,7 @@ const getRankColor = (rank) => {
 
 // Officer Card Component
 const OfficerCard = ({ officer, isRoot = false, onSelectOfficer, selectedId }) => {
-  const cropUrl = officer.crop_path
-    ? `${API_BASE}/data/${officer.crop_path.replace('../data/', '').replace(/^\/+/, '')}`
-    : null;
+  const cropUrl = getMediaUrl(officer.crop_path);
 
   const isSelected = selectedId === officer.id;
 
@@ -201,7 +195,7 @@ const ChainDetailPanel = ({ officerId, onClose, onLinkChanged }) => {
 
   const handleUnlink = async () => {
     try {
-      await fetch(`${API_BASE}/officers/${officerId}/supervisor`, {
+      await fetchWithErrorHandling(`${API_BASE}/officers/${officerId}/supervisor`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ supervisor_id: null })
@@ -215,9 +209,7 @@ const ChainDetailPanel = ({ officerId, onClose, onLinkChanged }) => {
 
   if (!officerId) return null;
 
-  const cropUrl = chainData?.officer?.crop_path
-    ? `${API_BASE}/data/${chainData.officer.crop_path.replace('../data/', '').replace(/^\/+/, '')}`
-    : null;
+  const cropUrl = getMediaUrl(chainData?.officer?.crop_path);
 
   return (
     <div className="bg-white rounded-lg shadow-lg border border-gray-200 p-6 h-full overflow-y-auto">
@@ -383,23 +375,33 @@ const ChainOfCommand = () => {
     fetchHierarchy();
   }, [fetchHierarchy]);
 
-  // Filter tree based on search
-  useEffect(() => {
+  // Filter tree based on search - memoized with cycle detection
+  const filteredTreeMemo = useMemo(() => {
     if (!searchQuery.trim()) {
-      setFilteredTree(hierarchyTree);
-      return;
+      return hierarchyTree;
     }
 
     const query = searchQuery.toLowerCase();
 
-    const filterNode = (node) => {
+    // Filter with cycle detection to prevent infinite loops from circular references
+    const filterNode = (node, visited = new Set()) => {
+      // Cycle detection - if we've seen this node ID, skip it
+      if (node.id && visited.has(node.id)) {
+        console.warn('Circular reference detected in hierarchy:', node.id);
+        return null;
+      }
+
+      // Add to visited set
+      const newVisited = new Set(visited);
+      if (node.id) newVisited.add(node.id);
+
       const matches =
         (node.badge_number && node.badge_number.toLowerCase().includes(query)) ||
         (node.force && node.force.toLowerCase().includes(query)) ||
         (node.rank && node.rank.toLowerCase().includes(query));
 
       const filteredSubs = node.subordinates
-        ? node.subordinates.map(filterNode).filter(Boolean)
+        ? node.subordinates.map(sub => filterNode(sub, newVisited)).filter(Boolean)
         : [];
 
       if (matches || filteredSubs.length > 0) {
@@ -408,9 +410,13 @@ const ChainOfCommand = () => {
       return null;
     };
 
-    const filtered = hierarchyTree.map(filterNode).filter(Boolean);
-    setFilteredTree(filtered);
+    return hierarchyTree.map(node => filterNode(node)).filter(Boolean);
   }, [searchQuery, hierarchyTree]);
+
+  // Update filtered tree when memo changes
+  useEffect(() => {
+    setFilteredTree(filteredTreeMemo);
+  }, [filteredTreeMemo]);
 
   return (
     <div className="min-h-screen bg-gray-50">

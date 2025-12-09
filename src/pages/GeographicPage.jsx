@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, Circle, useMap } from 'react-leaflet';
 import L from 'leaflet';
@@ -8,12 +8,8 @@ import {
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { API_BASE, fetchWithErrorHandling } from '../utils/api';
 import 'leaflet/dist/leaflet.css';
-
-let API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
-if (!API_BASE.startsWith("http")) {
-  API_BASE = `https://${API_BASE}`;
-}
 
 // Fix for default marker icons in React-Leaflet
 delete L.Icon.Default.prototype._getIconUrl;
@@ -232,9 +228,7 @@ export default function GeographicPage() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${API_BASE}/stats/geographic`);
-      if (!response.ok) throw new Error('Failed to fetch geographic data');
-      const data = await response.json();
+      const data = await fetchWithErrorHandling(`${API_BASE}/stats/geographic`);
       setGeoData(data);
     } catch (err) {
       setError(err.message);

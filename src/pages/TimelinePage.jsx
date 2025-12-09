@@ -7,11 +7,7 @@ import {
   ChevronDown, ChevronRight, Play, Image, Video,
   Filter, X, Users, Camera, TrendingUp
 } from 'lucide-react';
-
-let API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
-if (!API_BASE.startsWith('http')) {
-  API_BASE = `https://${API_BASE}`;
-}
+import { API_BASE, fetchWithErrorHandling } from '../utils/api';
 
 // Escalation indicators
 const ESCALATION_EQUIPMENT = ['Shield', 'Long Shield', 'Baton', 'Taser', 'Ballistic Helmet'];
@@ -39,8 +35,7 @@ export default function TimelinePage() {
   useEffect(() => {
     const fetchProtests = async () => {
       try {
-        const res = await fetch(`${API_BASE}/protests`);
-        const data = await res.json();
+        const data = await fetchWithErrorHandling(`${API_BASE}/protests`);
         setProtests(data);
       } catch (err) {
         console.error('Failed to fetch protests:', err);
