@@ -7,6 +7,10 @@ yt-dlp
 sqlalchemy
 python-dotenv
 requests
+# Authentication
+python-jose[cryptography]
+passlib[bcrypt]
+pydantic[email]
 opencv-python-headless
 # opencv is sufficient for dnn face detection
 easyocr

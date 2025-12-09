@@ -3,6 +3,37 @@ from sqlalchemy.orm import relationship
 from datetime import datetime
 from database import Base
 
+
+class User(Base):
+    """User account for authentication and authorization."""
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(50), unique=True, index=True, nullable=False)
+    email = Column(String(255), unique=True, index=True, nullable=False)
+    hashed_password = Column(String(255), nullable=False)
+    role = Column(String(20), default="viewer", nullable=False)  # viewer, contributor, admin
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_login = Column(DateTime, nullable=True)
+
+    # Extended profile fields
+    full_name = Column(String(255), nullable=True)
+    date_of_birth = Column(DateTime, nullable=True)
+    city = Column(String(100), nullable=True)
+    country = Column(String(100), nullable=True)
+
+    # Consent and verification
+    consent_given = Column(Boolean, default=False)  # User consented to T&Cs
+    consent_date = Column(DateTime, nullable=True)  # When consent was given
+    email_verified = Column(Boolean, default=False)  # Email has been verified
+    email_verification_token = Column(String(255), nullable=True)  # Token for email verification
+    email_verification_sent_at = Column(DateTime, nullable=True)  # When verification email was sent
+
+    # Track user actions for audit
+    uploads = relationship("Media", back_populates="uploaded_by_user", foreign_keys="Media.uploaded_by")
+
+
 class Protest(Base):
     __tablename__ = "protests"
 
@@ -25,9 +56,11 @@ class Media(Base):
     protest_id = Column(Integer, ForeignKey("protests.id"))
     timestamp = Column(DateTime, default=datetime.utcnow)
     processed = Column(Boolean, default=False)
+    uploaded_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # Track who uploaded
 
     protest = relationship("Protest", back_populates="media")
     appearances = relationship("OfficerAppearance", back_populates="media")
+    uploaded_by_user = relationship("User", back_populates="uploads", foreign_keys=[uploaded_by])
 
 class Officer(Base):
     __tablename__ = "officers"

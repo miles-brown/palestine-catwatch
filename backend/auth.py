@@ -22,7 +22,8 @@ Usage:
 
 import os
 import secrets
-from datetime import datetime, timedelta, date
+import warnings
+from datetime import datetime, timedelta, date, timezone
 from typing import Optional
 from enum import Enum
 
@@ -40,7 +41,23 @@ from database import get_db
 # =============================================================================
 
 # Secret key for JWT signing - MUST be set in environment for production
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dev-secret-key-change-in-production")
+_DEFAULT_SECRET = "dev-secret-key-change-in-production-INSECURE"
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", _DEFAULT_SECRET)
+
+# Warn loudly if using default secret in production
+if SECRET_KEY == _DEFAULT_SECRET:
+    _env = os.getenv("ENVIRONMENT", "development").lower()
+    if _env in ("production", "prod", "staging"):
+        raise RuntimeError(
+            "CRITICAL: JWT_SECRET_KEY environment variable must be set in production! "
+            "Generate a secure key with: python -c \"import secrets; print(secrets.token_hex(32))\""
+        )
+    else:
+        warnings.warn(
+            "WARNING: Using default JWT secret key. Set JWT_SECRET_KEY in production!",
+            UserWarning
+        )
+
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "1440"))  # Default 24 hours
 
@@ -164,10 +181,12 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     """
     to_encode = data.copy()
 
+    # Use timezone-aware datetime (not deprecated datetime.utcnow())
+    now = datetime.now(timezone.utc)
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = now + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = now + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
 
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
@@ -253,10 +272,10 @@ def create_user(db: Session, user: UserCreate, require_verification: bool = True
         city=user.city,
         country=user.country,
         consent_given=user.consent_given,
-        consent_date=datetime.utcnow() if user.consent_given else None,
+        consent_date=datetime.now(timezone.utc) if user.consent_given else None,
         email_verified=not require_verification,
         email_verification_token=verification_token,
-        email_verification_sent_at=datetime.utcnow() if require_verification else None
+        email_verification_sent_at=datetime.now(timezone.utc) if require_verification else None
     )
     db.add(db_user)
     db.commit()
