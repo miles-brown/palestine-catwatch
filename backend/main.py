@@ -121,7 +121,7 @@ app = FastAPI(title="Palestine Catwatch API")
 setup_rate_limiting(app)
 
 # Setup standardized error handling
-from errors import setup_error_handlers
+from errors import setup_error_handlers, APIError, ErrorCode
 setup_error_handlers(app)
 
 # Configure CORS
@@ -1757,17 +1757,19 @@ def register_user(
     # Check if username already exists
     existing_user = get_user_by_username(db, user_data.username)
     if existing_user:
-        raise HTTPException(
-            status_code=400,
-            detail="Username already registered"
+        raise APIError(
+            code=ErrorCode.ALREADY_EXISTS,
+            message="Username already registered",
+            status_code=400
         )
 
     # Check if email already exists
     existing_email = get_user_by_email(db, user_data.email)
     if existing_email:
-        raise HTTPException(
-            status_code=400,
-            detail="Email already registered"
+        raise APIError(
+            code=ErrorCode.ALREADY_EXISTS,
+            message="Email already registered",
+            status_code=400
         )
 
     # Create user - verification requirement based on environment
@@ -1831,39 +1833,21 @@ def login(
             ip_address=client_ip
         )
     except AuthenticationError as e:
-        # Map error codes to HTTP responses
-        if e.code == "invalid_credentials":
-            raise HTTPException(
-                status_code=401,
-                detail=e.message,
-                headers={"WWW-Authenticate": "Bearer"}
-            )
-        elif e.code == "email_not_verified":
-            raise HTTPException(
-                status_code=403,
-                detail={
-                    "code": "email_not_verified",
-                    "message": e.message
-                }
-            )
-        elif e.code == "account_disabled":
-            raise HTTPException(
-                status_code=403,
-                detail={
-                    "code": "account_disabled",
-                    "message": e.message
-                }
-            )
-        elif e.code == "account_locked":
-            raise HTTPException(
-                status_code=429,
-                detail={
-                    "code": "account_locked",
-                    "message": e.message
-                }
-            )
-        else:
-            raise HTTPException(status_code=401, detail="Authentication failed")
+        # Map error codes to standardized API errors
+        error_map = {
+            "invalid_credentials": (ErrorCode.INVALID_CREDENTIALS, 401),
+            "email_not_verified": (ErrorCode.EMAIL_NOT_VERIFIED, 403),
+            "account_disabled": (ErrorCode.ACCOUNT_DISABLED, 403),
+            "account_locked": (ErrorCode.ACCOUNT_LOCKED, 429),
+        }
+
+        error_info = error_map.get(e.code, (ErrorCode.UNAUTHORIZED, 401))
+        raise APIError(
+            code=error_info[0],
+            message=e.message,
+            status_code=error_info[1],
+            headers={"WWW-Authenticate": "Bearer"} if error_info[1] == 401 else None
+        )
 
     # Update last login timestamp (use timezone-aware datetime)
     user.last_login = datetime.now(timezone.utc)
@@ -1915,13 +1899,14 @@ def verify_email(
     user = verify_user_email(db, token)
 
     if not user:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid or expired verification token"
+        raise APIError(
+            code=ErrorCode.TOKEN_INVALID,
+            message="Invalid or expired verification token",
+            status_code=400
         )
 
     return {
-        "status": "success",
+        "success": True,
         "message": "Email verified successfully. You can now log in.",
         "username": user.username
     }
@@ -1943,9 +1928,10 @@ def get_current_user_info(
     # This endpoint requires manual token validation since we can't use Depends easily here
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
-        raise HTTPException(
+        raise APIError(
+            code=ErrorCode.UNAUTHORIZED,
+            message="Not authenticated",
             status_code=401,
-            detail="Not authenticated",
             headers={"WWW-Authenticate": "Bearer"}
         )
 
@@ -1954,17 +1940,19 @@ def get_current_user_info(
 
     token_data = decode_token(token)
     if not token_data:
-        raise HTTPException(
+        raise APIError(
+            code=ErrorCode.TOKEN_INVALID,
+            message="Invalid token",
             status_code=401,
-            detail="Invalid token",
             headers={"WWW-Authenticate": "Bearer"}
         )
 
     user = get_user(db, token_data.username)
     if not user:
-        raise HTTPException(
+        raise APIError(
+            code=ErrorCode.NOT_FOUND,
+            message="User not found",
             status_code=401,
-            detail="User not found",
             headers={"WWW-Authenticate": "Bearer"}
         )
 
@@ -2003,25 +1991,28 @@ def refresh_access_token(
 
     token_data = decode_refresh_token(body.refresh_token)
     if not token_data:
-        raise HTTPException(
+        raise APIError(
+            code=ErrorCode.TOKEN_INVALID,
+            message="Invalid or expired refresh token",
             status_code=401,
-            detail="Invalid or expired refresh token",
             headers={"WWW-Authenticate": "Bearer"}
         )
 
     # Verify user still exists and is active
     user = get_user_by_username(db, token_data.username)
     if not user:
-        raise HTTPException(
+        raise APIError(
+            code=ErrorCode.NOT_FOUND,
+            message="User not found",
             status_code=401,
-            detail="User not found",
             headers={"WWW-Authenticate": "Bearer"}
         )
 
     if not user.is_active:
-        raise HTTPException(
-            status_code=403,
-            detail="Account is disabled"
+        raise APIError(
+            code=ErrorCode.ACCOUNT_DISABLED,
+            message="Account is disabled",
+            status_code=403
         )
 
     # Validate token version for revocation support
@@ -2029,9 +2020,10 @@ def refresh_access_token(
     token_version = token_data.token_version or 0
     if token_version < user_token_version:
         # Refresh token was issued before tokens were revoked
-        raise HTTPException(
+        raise APIError(
+            code=ErrorCode.TOKEN_REVOKED,
+            message="Token has been revoked. Please log in again.",
             status_code=401,
-            detail="Token has been revoked. Please log in again.",
             headers={"WWW-Authenticate": "Bearer"}
         )
 
@@ -2084,19 +2076,24 @@ async def revoke_user_tokens_endpoint(
 
     target_user = get_user_by_id(db, user_id)
     if not target_user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise APIError(
+            code=ErrorCode.NOT_FOUND,
+            message="User not found",
+            status_code=404
+        )
 
     # Prevent revoking own tokens through this endpoint
     if target_user.id == current_user.id:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot revoke your own tokens. Use /auth/logout instead."
+        raise APIError(
+            code=ErrorCode.INVALID_INPUT,
+            message="Cannot revoke your own tokens. Use /auth/logout instead.",
+            status_code=400
         )
 
     revoke_user_tokens(db, target_user)
 
     return {
-        "status": "success",
+        "success": True,
         "message": f"All tokens revoked for user {target_user.username}",
         "user_id": user_id,
         "new_token_version": target_user.token_version
@@ -2118,6 +2115,6 @@ async def logout_user(
     revoke_user_tokens(db, current_user)
 
     return {
-        "status": "success",
+        "success": True,
         "message": "Logged out successfully. All tokens have been revoked."
     }
