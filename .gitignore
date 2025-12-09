@@ -52,3 +52,4 @@ data/
 backend/ai/*.caffemodel
 backend/ai/*.prototxt
 backend/ai/easyocr_models/
+backend/.env

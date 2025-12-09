@@ -9,11 +9,10 @@ const Header = () => {
 
   const navigation = [
     { name: 'Home', href: '/' },
+    { name: 'Dashboard', href: '/dashboard' },
     { name: 'Our Story', href: '/our-story' },
     { name: 'What We Want', href: '/what-we-want' },
     { name: 'About', href: '/about' },
-    { name: 'Terms', href: '/terms' },
-    { name: 'Privacy', href: '/privacy' },
   ];
 
   const isActive = (href) => {
@@ -40,16 +39,14 @@ const Header = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             {/* Logo with PA emblem */}
-            <Link to="/" className="flex items-center gap-3">
-              <div className="pa-emblem">PA</div>
+            <Link to="/" className="flex items-center gap-2 sm:gap-3">
+              <div className="pa-emblem text-sm sm:text-base">PA</div>
               <div>
-                <div className="text-xl font-bold text-gray-900">
+                <div className="text-base sm:text-xl font-bold text-gray-900">
                   Palestine Accountability
                 </div>
-                <div className="text-xs text-gray-600 font-medium flex items-center gap-2">
-                  <Link to="/" className="text-gray-600 hover:text-gray-900 font-medium">Dashboard</Link>
-                  <Link to="/manifesto" className="text-gray-600 hover:text-red-600 font-medium transition-colors">Manifesto</Link>
-                  For Press Freedom & Democratic Rights
+                <div className="hidden sm:flex text-xs text-gray-600 font-medium items-center gap-2">
+                  <span className="hidden md:inline">For Press Freedom & Democratic Rights</span>
                 </div>
               </div>
             </Link>
@@ -92,19 +89,79 @@ const Header = () => {
 
           {/* Mobile Navigation */}
           {isMenuOpen && (
-            <div className="md:hidden border-t border-gray-200 py-4">
-              <nav className="flex flex-col space-y-4">
+            <div className="md:hidden border-t border-gray-200 py-4 animate-in slide-in-from-top duration-200">
+              <nav className="flex flex-col space-y-1">
                 {navigation.map((item) => (
                   <Link
                     key={item.name}
                     to={item.href}
-                    className={`text-sm font-medium transition-colors hover:text-green-700 ${isActive(item.href) ? 'text-green-700' : 'text-gray-700'
+                    className={`text-base font-medium transition-colors hover:text-green-700 px-3 py-3 rounded-lg ${isActive(item.href) ? 'text-green-700 bg-green-50' : 'text-gray-700'
                       }`}
                     onClick={() => setIsMenuOpen(false)}
                   >
                     {item.name}
                   </Link>
                 ))}
+
+                {/* Tools Section */}
+                <div className="pt-3 mt-2 border-t border-gray-200">
+                  <p className="px-3 py-1 text-xs font-semibold text-gray-400 uppercase tracking-wider">Tools</p>
+                  <Link
+                    to="/face-search"
+                    className={`text-base font-medium px-3 py-3 rounded-lg block ${isActive('/face-search') ? 'text-green-700 bg-green-50' : 'text-gray-700'}`}
+                    onClick={() => setIsMenuOpen(false)}
+                  >
+                    Face Search
+                  </Link>
+                  <Link
+                    to="/equipment"
+                    className={`text-base font-medium px-3 py-3 rounded-lg block ${isActive('/equipment') ? 'text-green-700 bg-green-50' : 'text-gray-700'}`}
+                    onClick={() => setIsMenuOpen(false)}
+                  >
+                    Equipment Database
+                  </Link>
+                  <Link
+                    to="/admin"
+                    className={`text-base font-medium px-3 py-3 rounded-lg block ${isActive('/admin') ? 'text-green-700 bg-green-50' : 'text-gray-700'}`}
+                    onClick={() => setIsMenuOpen(false)}
+                  >
+                    Admin Panel
+                  </Link>
+                </div>
+
+                {/* Info Section */}
+                <div className="pt-3 mt-2 border-t border-gray-200">
+                  <p className="px-3 py-1 text-xs font-semibold text-gray-400 uppercase tracking-wider">Info</p>
+                  <Link
+                    to="/manifesto"
+                    className="text-base font-medium text-gray-700 hover:text-red-600 px-3 py-3 rounded-lg block"
+                    onClick={() => setIsMenuOpen(false)}
+                  >
+                    Manifesto
+                  </Link>
+                  <Link
+                    to="/terms"
+                    className="text-base font-medium text-gray-700 px-3 py-3 rounded-lg block"
+                    onClick={() => setIsMenuOpen(false)}
+                  >
+                    Terms
+                  </Link>
+                  <Link
+                    to="/privacy"
+                    className="text-base font-medium text-gray-700 px-3 py-3 rounded-lg block"
+                    onClick={() => setIsMenuOpen(false)}
+                  >
+                    Privacy
+                  </Link>
+                </div>
+
+                <div className="pt-3 mt-2 border-t border-gray-200">
+                  <Link to="/upload" onClick={() => setIsMenuOpen(false)}>
+                    <Button className="w-full bg-red-600 hover:bg-red-700 text-white py-3 text-base">
+                      Submit Evidence
+                    </Button>
+                  </Link>
+                </div>
               </nav>
             </div>
           )}

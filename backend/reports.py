@@ -29,7 +29,9 @@ def generate_officer_dossier(officer, appearances):
     y -= 20
     c.drawString(50, y, f"Force: {officer.force or 'Unknown'}")
     y -= 20
-    c.drawString(50, y, f"Role: {officer.role or 'Unknown'}")
+    # Role is on OfficerAppearance, not Officer - get from first appearance if available
+    first_role = appearances[0].role if appearances and appearances[0].role else 'Unknown'
+    c.drawString(50, y, f"Role: {first_role}")
     y -= 20
     c.drawString(50, y, f"Total Appearances: {len(appearances)}")
     y -= 40
