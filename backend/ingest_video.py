@@ -62,6 +62,9 @@ def download_video(url, protest_id=None, status_callback=None):
             if status_callback:
                 status_callback("log", "Download complete.")
 
+    # Cookie file path (optional - export from browser for best results)
+    cookie_file = os.path.join(os.path.dirname(__file__), 'cookies.txt')
+
     ydl_opts = {
         # More robust format selection - fallback chain for compatibility
         'format': 'best[ext=mp4]/best[ext=webm]/best',
@@ -69,11 +72,50 @@ def download_video(url, protest_id=None, status_callback=None):
         'quiet': True,
         'no_warnings': True,
         'progress_hooks': [progress_hook],
-        # Workarounds for YouTube changes
-        'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+
+        # === BOT DETECTION BYPASS OPTIONS ===
+
+        # 1. Player client rotation - try multiple clients if one fails
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['ios', 'android', 'web'],  # iOS client often works best
+                'player_skip': ['webpage', 'configs'],  # Skip slow webpage parsing
+            }
         },
+
+        # 2. Browser-like headers
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Sec-Fetch-Mode': 'navigate',
+        },
+
+        # 3. Retry logic
+        'retries': 5,
+        'fragment_retries': 5,
+        'file_access_retries': 3,
+
+        # 4. Rate limiting - be polite to avoid blocks
+        'sleep_interval': 1,
+        'max_sleep_interval': 5,
+        'sleep_interval_requests': 1,
+
+        # 5. Age-gate bypass (for age-restricted videos)
+        'age_limit': None,
+
+        # 6. Force IPv4 (some hosts block IPv6)
+        'source_address': '0.0.0.0',
+
+        # 7. Socket timeout
+        'socket_timeout': 30,
+
+        # 8. Use cookies if available (most reliable method)
+        **(({'cookiefile': cookie_file} if os.path.exists(cookie_file) else {})),
+
+        # 9. Geo bypass
+        'geo_bypass': True,
+        'geo_bypass_country': 'GB',  # UK-based content
     }
     
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
