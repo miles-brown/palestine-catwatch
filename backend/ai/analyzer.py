@@ -300,9 +300,10 @@ def process_image_ai(image_path, output_dir):
         
         analyzed_data.append({
             "crop_path": face_path,
+            "confidence": det['confidence'],  # Include detection confidence
             "role": "Officer",
-            "action": "Detected (Face)", 
-            "badge": badge_text, 
+            "action": "Detected (Face)",
+            "badge": badge_text,
             "encoding": None,
             "quality": {"blur_score": float(blur_score), "is_blurry": is_blurry, "resolution": f"{w}x{h}"}
         })
@@ -333,6 +334,7 @@ def process_image_ai(image_path, output_dir):
                 
                 analyzed_data.append({
                     "crop_path": person_path,
+                    "confidence": det['confidence'],  # Include detection confidence
                     "role": "Officer (Unidentified)",
                     "action": "Detected (Body)",
                     "badge": None,

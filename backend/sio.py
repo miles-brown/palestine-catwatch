@@ -10,10 +10,11 @@ sio_server = socketio.AsyncServer(
     cors_allowed_origins='*'
 )
 
-# Wrapper for ASGI application (FastAPI will mount this)
+# Wrapper for ASGI application (FastAPI will mount this at /socket.io)
+# socketio_path='' means socket.io listens at the mount root, avoiding path duplication
 sio_app = socketio.ASGIApp(
     socketio_server=sio_server,
-    socketio_path='socket.io'
+    socketio_path=''
 )
 
 # Track active task rooms for cleanup
