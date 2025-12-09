@@ -1684,9 +1684,10 @@ def get_force_statistics(
 
 from auth import (
     UserCreate, UserLogin, UserResponse, Token,
-    create_user, authenticate_user, create_access_token,
-    get_user_by_username, get_user_by_email, verify_user_email,
-    AuthenticationError, ACCESS_TOKEN_EXPIRE_MINUTES
+    create_user, authenticate_user, create_access_token, create_refresh_token,
+    decode_refresh_token, get_user_by_username, get_user_by_email, verify_user_email,
+    AuthenticationError, ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS,
+    log_security_event
 )
 from datetime import timedelta
 
@@ -1749,20 +1750,25 @@ def login(
     db: Session = Depends(get_db)
 ):
     """
-    Authenticate user and return JWT token.
+    Authenticate user and return JWT access and refresh tokens.
 
     Rate limited to prevent brute force attacks:
     - 5 attempts per minute
     - 20 attempts per hour
 
     Returns specific error codes for different failure reasons.
+    Account is locked after 5 failed attempts for 15 minutes.
     """
+    # Get client IP for security logging
+    client_ip = request.client.host if request.client else None
+
     try:
         user = authenticate_user(
             db,
             login_data.username,
             login_data.password,
-            require_verified_email=True
+            require_verified_email=True,
+            ip_address=client_ip
         )
     except AuthenticationError as e:
         # Map error codes to HTTP responses
@@ -1788,6 +1794,14 @@ def login(
                     "message": e.message
                 }
             )
+        elif e.code == "account_locked":
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "code": "account_locked",
+                    "message": e.message
+                }
+            )
         else:
             raise HTTPException(status_code=401, detail="Authentication failed")
 
@@ -1795,20 +1809,28 @@ def login(
     user.last_login = datetime.utcnow()
     db.commit()
 
-    # Create access token
+    # Token payload
+    token_data = {
+        "sub": user.username,
+        "user_id": user.id,
+        "role": user.role
+    }
+
+    # Create access token (short-lived: 30 minutes)
     access_token = create_access_token(
-        data={
-            "sub": user.username,
-            "user_id": user.id,
-            "role": user.role
-        },
+        data=token_data,
         expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     )
 
+    # Create refresh token (long-lived: 7 days)
+    refresh_token = create_refresh_token(data=token_data)
+
     return Token(
         access_token=access_token,
+        refresh_token=refresh_token,
         token_type="bearer",
         expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        refresh_expires_in=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
         user={
             "id": user.id,
             "username": user.username,
@@ -1898,3 +1920,71 @@ def get_current_user_info(
         email_verified=user.email_verified
     )
 
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
+
+@app.post("/auth/refresh")
+@limiter.limit("30/minute")  # Generous limit for token refresh
+def refresh_access_token(
+    request: Request,
+    body: RefreshTokenRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Exchange a valid refresh token for a new access token.
+
+    This allows clients to maintain sessions without re-authenticating.
+    Access tokens expire in 30 minutes, refresh tokens in 7 days.
+    """
+    client_ip = request.client.host if request.client else None
+
+    token_data = decode_refresh_token(body.refresh_token)
+    if not token_data:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired refresh token",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    # Verify user still exists and is active
+    user = get_user_by_username(db, token_data.username)
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail="User not found",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=403,
+            detail="Account is disabled"
+        )
+
+    # Log the token refresh
+    log_security_event(
+        "TOKEN_REFRESH",
+        username=user.username,
+        user_id=user.id,
+        ip_address=client_ip
+    )
+
+    # Create new access token
+    new_token_data = {
+        "sub": user.username,
+        "user_id": user.id,
+        "role": user.role
+    }
+
+    access_token = create_access_token(
+        data=new_token_data,
+        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    )
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    }

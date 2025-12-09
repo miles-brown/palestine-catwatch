@@ -24,6 +24,8 @@ import os
 import re
 import secrets
 import warnings
+import unicodedata
+import html
 from datetime import datetime, timedelta, date, timezone
 from typing import Optional, Tuple
 from enum import Enum
@@ -37,6 +39,76 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 
+
+# =============================================================================
+# INPUT SANITIZATION
+# =============================================================================
+
+def sanitize_string(value: str, max_length: int = 255, allow_newlines: bool = False) -> str:
+    """
+    Sanitize user input to prevent XSS and unicode normalization attacks.
+
+    Args:
+        value: The input string to sanitize
+        max_length: Maximum allowed length
+        allow_newlines: Whether to preserve newline characters
+
+    Returns:
+        Sanitized string
+    """
+    if not value:
+        return value
+
+    # Normalize unicode to NFC form (canonical decomposition, then canonical composition)
+    # This prevents unicode normalization attacks
+    value = unicodedata.normalize('NFC', value)
+
+    # Remove null bytes and other dangerous control characters
+    # Keep only printable characters, spaces, and optionally newlines
+    if allow_newlines:
+        value = ''.join(c for c in value if c.isprintable() or c in '\n\r\t')
+    else:
+        value = ''.join(c for c in value if c.isprintable())
+
+    # HTML-escape to prevent XSS
+    value = html.escape(value, quote=True)
+
+    # Strip leading/trailing whitespace
+    value = value.strip()
+
+    # Enforce max length
+    if len(value) > max_length:
+        value = value[:max_length]
+
+    return value
+
+
+def sanitize_name(value: str) -> str:
+    """
+    Sanitize a name field (full_name, city, country).
+    More permissive than general sanitization - allows letters, spaces, hyphens, apostrophes.
+    """
+    if not value:
+        return value
+
+    # Normalize unicode
+    value = unicodedata.normalize('NFC', value)
+
+    # Remove dangerous characters but allow common name characters
+    # Allow: letters (any script), spaces, hyphens, apostrophes, periods, commas
+    value = re.sub(r'[^\w\s\-\'\.,]', '', value, flags=re.UNICODE)
+
+    # Remove multiple consecutive spaces
+    value = re.sub(r'\s+', ' ', value)
+
+    # Strip and limit length
+    value = value.strip()[:255]
+
+    # HTML-escape the result
+    value = html.escape(value, quote=True)
+
+    return value
+
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
@@ -44,6 +116,14 @@ from database import get_db
 # Secret key for JWT signing - MUST be set in environment for production
 _DEFAULT_SECRET = "dev-secret-key-change-in-production-INSECURE"
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", _DEFAULT_SECRET)
+
+# Refresh token secret (should be different from access token secret)
+REFRESH_SECRET_KEY = os.getenv("JWT_REFRESH_SECRET_KEY", SECRET_KEY + "_refresh")
+
+# Account lockout settings
+MAX_FAILED_LOGIN_ATTEMPTS = int(os.getenv("MAX_FAILED_LOGIN_ATTEMPTS", "5"))
+LOCKOUT_DURATION_MINUTES = int(os.getenv("LOCKOUT_DURATION_MINUTES", "15"))
+FAILED_LOGIN_RESET_MINUTES = int(os.getenv("FAILED_LOGIN_RESET_MINUTES", "30"))
 
 # Warn loudly if using default secret in production
 if SECRET_KEY == _DEFAULT_SECRET:
@@ -60,7 +140,10 @@ if SECRET_KEY == _DEFAULT_SECRET:
         )
 
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "1440"))  # Default 24 hours
+# Reduced from 24 hours to 30 minutes for security (Issue #14)
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "30"))
+# Refresh token lasts longer - 7 days
+REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("JWT_REFRESH_EXPIRE_DAYS", "7"))
 
 # Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -92,10 +175,12 @@ class TokenData(BaseModel):
 
 
 class Token(BaseModel):
-    """Token response model."""
+    """Token response model with access and refresh tokens."""
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
-    expires_in: int
+    expires_in: int  # Access token expiration in seconds
+    refresh_expires_in: int  # Refresh token expiration in seconds
     user: dict
 
 
@@ -147,6 +232,39 @@ class UserCreate(BaseModel):
             raise ValueError('Username must be at most 50 characters')
         if not re.match(r'^[a-zA-Z0-9_-]+$', v):
             raise ValueError('Username can only contain letters, numbers, underscores, and hyphens')
+        return v
+
+    @field_validator('full_name')
+    @classmethod
+    def sanitize_full_name(cls, v):
+        """Sanitize full name to prevent XSS and unicode attacks."""
+        return sanitize_name(v)
+
+    @field_validator('city')
+    @classmethod
+    def sanitize_city(cls, v):
+        """Sanitize city name."""
+        return sanitize_name(v)
+
+    @field_validator('country')
+    @classmethod
+    def sanitize_country(cls, v):
+        """Sanitize country name."""
+        return sanitize_name(v)
+
+    @field_validator('email')
+    @classmethod
+    def validate_email(cls, v):
+        """Validate and normalize email."""
+        if not v:
+            raise ValueError('Email is required')
+        # Normalize unicode in email
+        v = unicodedata.normalize('NFC', v.lower().strip())
+        # Basic email validation
+        if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', v):
+            raise ValueError('Invalid email format')
+        if len(v) > 255:
+            raise ValueError('Email too long')
         return v
 
 
@@ -269,9 +387,50 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     else:
         expire = now + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
 
-    to_encode.update({"exp": expire})
+    to_encode.update({"exp": expire, "type": "access"})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
+
+
+def create_refresh_token(data: dict) -> str:
+    """
+    Create a JWT refresh token with longer expiration.
+
+    Refresh tokens are used to obtain new access tokens without re-authentication.
+    """
+    to_encode = data.copy()
+    now = datetime.now(timezone.utc)
+    expire = now + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+
+    to_encode.update({"exp": expire, "type": "refresh"})
+    encoded_jwt = jwt.encode(to_encode, REFRESH_SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+
+def decode_refresh_token(token: str) -> Optional[TokenData]:
+    """
+    Decode and validate a refresh token.
+
+    Returns:
+        TokenData if valid, None otherwise
+    """
+    try:
+        payload = jwt.decode(token, REFRESH_SECRET_KEY, algorithms=[ALGORITHM])
+
+        # Verify this is a refresh token
+        if payload.get("type") != "refresh":
+            return None
+
+        username: str = payload.get("sub")
+        user_id: int = payload.get("user_id")
+        role: str = payload.get("role")
+
+        if username is None:
+            return None
+
+        return TokenData(username=username, user_id=user_id, role=role)
+    except JWTError:
+        return None
 
 
 def decode_token(token: str) -> Optional[TokenData]:
@@ -393,6 +552,142 @@ def verify_user_email(db: Session, token: str):
 _DUMMY_HASH = pwd_context.hash("dummy_password_for_timing_attack_prevention")
 
 
+# =============================================================================
+# SECURITY EVENT LOGGING
+# =============================================================================
+
+import logging
+
+# Configure security logger
+security_logger = logging.getLogger("security")
+security_logger.setLevel(logging.INFO)
+
+# Create handler if not already configured
+if not security_logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setLevel(logging.INFO)
+    formatter = logging.Formatter(
+        '%(asctime)s - SECURITY - %(levelname)s - %(message)s'
+    )
+    handler.setFormatter(formatter)
+    security_logger.addHandler(handler)
+
+
+def log_security_event(
+    event_type: str,
+    username: Optional[str] = None,
+    user_id: Optional[int] = None,
+    ip_address: Optional[str] = None,
+    details: Optional[dict] = None
+):
+    """
+    Log security-relevant events for audit trail.
+
+    Event types:
+    - LOGIN_SUCCESS: Successful authentication
+    - LOGIN_FAILED: Failed authentication attempt
+    - LOGIN_LOCKED: Account locked due to failed attempts
+    - ACCOUNT_CREATED: New user registration
+    - PASSWORD_CHANGED: Password update
+    - EMAIL_VERIFIED: Email verification completed
+    - LOGOUT: User logged out
+    - TOKEN_REFRESH: Access token refreshed
+    """
+    log_data = {
+        "event": event_type,
+        "username": username,
+        "user_id": user_id,
+        "ip_address": ip_address,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    if details:
+        log_data.update(details)
+
+    # Log at appropriate level based on event type
+    if event_type in ("LOGIN_FAILED", "LOGIN_LOCKED"):
+        security_logger.warning(f"{event_type}: {log_data}")
+    else:
+        security_logger.info(f"{event_type}: {log_data}")
+
+
+# =============================================================================
+# ACCOUNT LOCKOUT
+# =============================================================================
+
+def check_account_lockout(user) -> Tuple[bool, Optional[int]]:
+    """
+    Check if an account is currently locked out.
+
+    Returns:
+        Tuple of (is_locked, remaining_seconds)
+    """
+    if user.locked_until is None:
+        return False, None
+
+    now = datetime.now(timezone.utc)
+    # Handle timezone-naive locked_until from database
+    locked_until = user.locked_until
+    if locked_until.tzinfo is None:
+        locked_until = locked_until.replace(tzinfo=timezone.utc)
+
+    if now < locked_until:
+        remaining = int((locked_until - now).total_seconds())
+        return True, remaining
+
+    return False, None
+
+
+def record_failed_login(db: Session, user, ip_address: Optional[str] = None):
+    """
+    Record a failed login attempt and potentially lock the account.
+    """
+    now = datetime.now(timezone.utc)
+
+    # Reset counter if last failed attempt was too long ago
+    if user.last_failed_login:
+        last_failed = user.last_failed_login
+        if last_failed.tzinfo is None:
+            last_failed = last_failed.replace(tzinfo=timezone.utc)
+
+        if (now - last_failed) > timedelta(minutes=FAILED_LOGIN_RESET_MINUTES):
+            user.failed_login_attempts = 0
+
+    user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
+    user.last_failed_login = now
+
+    # Lock account if too many attempts
+    if user.failed_login_attempts >= MAX_FAILED_LOGIN_ATTEMPTS:
+        user.locked_until = now + timedelta(minutes=LOCKOUT_DURATION_MINUTES)
+        log_security_event(
+            "LOGIN_LOCKED",
+            username=user.username,
+            user_id=user.id,
+            ip_address=ip_address,
+            details={
+                "failed_attempts": user.failed_login_attempts,
+                "locked_until": user.locked_until.isoformat()
+            }
+        )
+
+    db.commit()
+
+    log_security_event(
+        "LOGIN_FAILED",
+        username=user.username,
+        user_id=user.id,
+        ip_address=ip_address,
+        details={"failed_attempts": user.failed_login_attempts}
+    )
+
+
+def reset_failed_login_attempts(db: Session, user):
+    """Reset the failed login counter after successful authentication."""
+    user.failed_login_attempts = 0
+    user.locked_until = None
+    user.last_failed_login = None
+    db.commit()
+
+
 class AuthenticationError(Exception):
     """Custom exception for authentication failures with specific error codes."""
     def __init__(self, code: str, message: str):
@@ -401,7 +696,13 @@ class AuthenticationError(Exception):
         super().__init__(message)
 
 
-def authenticate_user(db: Session, username: str, password: str, require_verified_email: bool = True):
+def authenticate_user(
+    db: Session,
+    username: str,
+    password: str,
+    require_verified_email: bool = True,
+    ip_address: Optional[str] = None
+):
     """
     Authenticate a user by username and password.
 
@@ -409,12 +710,14 @@ def authenticate_user(db: Session, username: str, password: str, require_verifie
     - Always performs password hash verification to prevent timing attacks
     - Checks email verification status if required
     - Checks account active status
+    - Account lockout after multiple failed attempts
 
     Args:
         db: Database session
         username: The username to authenticate
         password: The plain text password
         require_verified_email: If True, requires email to be verified (default: True)
+        ip_address: Client IP for security logging
 
     Returns:
         User object if authentication successful
@@ -424,6 +727,7 @@ def authenticate_user(db: Session, username: str, password: str, require_verifie
             - "invalid_credentials": Username or password incorrect
             - "email_not_verified": Email address not verified
             - "account_disabled": Account is disabled
+            - "account_locked": Account temporarily locked
     """
     user = get_user_by_username(db, username)
 
@@ -433,21 +737,63 @@ def authenticate_user(db: Session, username: str, password: str, require_verifie
     if user is None:
         # Perform dummy verification to prevent timing-based username enumeration
         pwd_context.verify(password, _DUMMY_HASH)
+        log_security_event(
+            "LOGIN_FAILED",
+            username=username,
+            ip_address=ip_address,
+            details={"reason": "user_not_found"}
+        )
         raise AuthenticationError("invalid_credentials", "Invalid username or password")
 
+    # Check if account is locked
+    is_locked, remaining_seconds = check_account_lockout(user)
+    if is_locked:
+        raise AuthenticationError(
+            "account_locked",
+            f"Account is temporarily locked. Try again in {remaining_seconds // 60 + 1} minutes."
+        )
+
     if not verify_password(password, user.hashed_password):
+        # Record failed attempt and potentially lock account
+        record_failed_login(db, user, ip_address)
         raise AuthenticationError("invalid_credentials", "Invalid username or password")
+
+    # Reset failed attempts on successful password verification
+    if user.failed_login_attempts and user.failed_login_attempts > 0:
+        reset_failed_login_attempts(db, user)
 
     # Check if account is active
     if not user.is_active:
+        log_security_event(
+            "LOGIN_FAILED",
+            username=username,
+            user_id=user.id,
+            ip_address=ip_address,
+            details={"reason": "account_disabled"}
+        )
         raise AuthenticationError("account_disabled", "Account is disabled")
 
     # Check email verification if required
     if require_verified_email and not user.email_verified:
+        log_security_event(
+            "LOGIN_FAILED",
+            username=username,
+            user_id=user.id,
+            ip_address=ip_address,
+            details={"reason": "email_not_verified"}
+        )
         raise AuthenticationError(
             "email_not_verified",
             "Please verify your email address before logging in. Check your inbox for the verification link."
         )
+
+    # Log successful login
+    log_security_event(
+        "LOGIN_SUCCESS",
+        username=user.username,
+        user_id=user.id,
+        ip_address=ip_address
+    )
 
     return user
 

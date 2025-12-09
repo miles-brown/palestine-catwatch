@@ -30,6 +30,11 @@ class User(Base):
     email_verification_token = Column(String(255), nullable=True)  # Token for email verification
     email_verification_sent_at = Column(DateTime, nullable=True)  # When verification email was sent
 
+    # Account lockout fields (for brute force protection)
+    failed_login_attempts = Column(Integer, default=0)  # Count of consecutive failed logins
+    locked_until = Column(DateTime, nullable=True)  # Account locked until this time
+    last_failed_login = Column(DateTime, nullable=True)  # Time of last failed login
+
     # Track user actions for audit
     uploads = relationship("Media", back_populates="uploaded_by_user", foreign_keys="Media.uploaded_by")
 
