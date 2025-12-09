@@ -6,6 +6,7 @@ import {
   Download, FileJson, FileSpreadsheet
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
+import { StatCardSkeleton, TableRowSkeleton } from '@/components/ui/skeleton';
 
 let API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 if (!API_BASE.startsWith("http")) {
@@ -268,9 +269,28 @@ const DashboardPage = () => {
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {loading ? (
-          <div className="flex items-center justify-center py-24">
-            <RefreshCw className="h-12 w-12 animate-spin text-green-600" />
-          </div>
+          <>
+            {/* Stats Grid Skeleton */}
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <StatCardSkeleton key={i} />
+              ))}
+            </div>
+
+            {/* Table Skeleton */}
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+              <div className="p-6 border-b border-gray-200">
+                <div className="h-6 w-40 bg-gray-200 animate-pulse rounded" />
+              </div>
+              <table className="w-full">
+                <tbody>
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <TableRowSkeleton key={i} columns={4} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         ) : (
           <>
             {/* Stats Grid */}

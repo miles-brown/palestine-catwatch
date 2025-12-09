@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Printer, ArrowLeft, Shield, AlertTriangle, Play, Clock, User, Video, Image as ImageIcon, ChevronLeft, ChevronRight, Download } from 'lucide-react';
 import VideoPlayer from '@/components/VideoPlayer';
 import UniformAnalysisCard from '@/components/UniformAnalysisCard';
+import { ReportHeaderSkeleton, VideoPlayerSkeleton, OfficerCardSkeleton, Skeleton } from '@/components/ui/skeleton';
 
 let API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 if (!API_BASE.startsWith("http")) {
@@ -49,7 +50,12 @@ export default function ReportPage() {
 
     const handleOfficerTimestampClick = (timestamp) => {
         setActiveTab('video');
-        // VideoPlayer will handle seeking via its timeline
+        // Use ref to seek video player to the timestamp
+        setTimeout(() => {
+            if (videoPlayerRef.current) {
+                videoPlayerRef.current.seekTo(timestamp);
+            }
+        }, 100); // Small delay to ensure tab switch and player mount
     };
 
     const getMediaUrl = (url) => {
@@ -69,10 +75,43 @@ export default function ReportPage() {
 
     if (loading) {
         return (
-            <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-                <div className="text-center">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto mb-4"></div>
-                    <p className="text-gray-600">Loading Analysis Report...</p>
+            <div className="min-h-screen bg-gray-50">
+                {/* Navigation Header Skeleton */}
+                <div className="bg-white border-b border-gray-200 sticky top-0 z-30">
+                    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex justify-between items-center">
+                        <Skeleton className="h-8 w-32" />
+                        <Skeleton className="h-8 w-24" />
+                    </div>
+                </div>
+
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+                    {/* Report Header Skeleton */}
+                    <ReportHeaderSkeleton />
+
+                    {/* Stats Bar Skeleton */}
+                    <div className="grid grid-cols-3 bg-white border-x border-b border-gray-200">
+                        {Array.from({ length: 3 }).map((_, i) => (
+                            <div key={i} className="p-4 text-center border-r border-gray-200 last:border-r-0">
+                                <Skeleton className="h-3 w-24 mx-auto mb-2" />
+                                <Skeleton className="h-8 w-12 mx-auto" />
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* Video Player Skeleton */}
+                    <div className="bg-white border-x border-b border-gray-200 p-4">
+                        <VideoPlayerSkeleton />
+                    </div>
+
+                    {/* Officers Grid Skeleton */}
+                    <div className="bg-white border-x border-b border-gray-200 rounded-b-xl p-6">
+                        <Skeleton className="h-6 w-48 mb-4" />
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {Array.from({ length: 3 }).map((_, i) => (
+                                <OfficerCardSkeleton key={i} />
+                            ))}
+                        </div>
+                    </div>
                 </div>
             </div>
         );
