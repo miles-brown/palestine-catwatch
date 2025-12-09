@@ -6,8 +6,9 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 import models, schemas
 from database import get_db, engine
-from datetime import datetime
+from datetime import datetime, timezone
 import asyncio
+import os
 
 # Rate limiting
 from ratelimit import limiter, setup_rate_limiting, get_rate_limit
@@ -1692,7 +1693,12 @@ from auth import (
 from datetime import timedelta
 
 
-@app.post("/auth/register", response_model=UserResponse)
+# Environment variable to control email verification requirement
+# Set to "false" in development to skip email verification
+REQUIRE_EMAIL_VERIFICATION = os.getenv("REQUIRE_EMAIL_VERIFICATION", "true").lower() == "true"
+
+
+@app.post("/auth/register")
 @limiter.limit(get_rate_limit("auth_register"))
 @limiter.limit(get_rate_limit("auth_register_hourly"))
 def register_user(
@@ -1704,7 +1710,12 @@ def register_user(
     Register a new user account.
 
     Rate limited to prevent registration spam and abuse.
-    Requires email verification before account is active.
+
+    Email verification behavior controlled by REQUIRE_EMAIL_VERIFICATION env var:
+    - true (default): User must verify email before logging in
+    - false: User is immediately active (for development)
+
+    In development mode, returns verification_token for testing.
     """
     # Check if username already exists
     existing_user = get_user_by_username(db, user_data.username)
@@ -1722,23 +1733,35 @@ def register_user(
             detail="Email already registered"
         )
 
-    # Create user (requires email verification by default)
-    user = create_user(db, user_data, require_verification=True)
+    # Create user - verification requirement based on environment
+    user = create_user(db, user_data, require_verification=REQUIRE_EMAIL_VERIFICATION)
 
-    # TODO: Send verification email here
-    # For now, just return the user data
-    return UserResponse(
-        id=user.id,
-        username=user.username,
-        email=user.email,
-        role=user.role,
-        is_active=user.is_active,
-        created_at=user.created_at,
-        full_name=user.full_name,
-        city=user.city,
-        country=user.country,
-        email_verified=user.email_verified
-    )
+    # Build response
+    response = {
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "role": user.role,
+        "is_active": user.is_active,
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+        "full_name": user.full_name,
+        "city": user.city,
+        "country": user.country,
+        "email_verified": user.email_verified,
+        "verification_required": REQUIRE_EMAIL_VERIFICATION,
+        "message": "Registration successful!"
+    }
+
+    # In development/when verification required, include token for testing
+    if REQUIRE_EMAIL_VERIFICATION and user.email_verification_token:
+        response["verification_token"] = user.email_verification_token
+        response["message"] = "Registration successful! Please check your email to verify your account."
+        # TODO: Send actual verification email here
+        # For now, the token is returned in response for development testing
+    elif not REQUIRE_EMAIL_VERIFICATION:
+        response["message"] = "Registration successful! You can now log in."
+
+    return response
 
 
 @app.post("/auth/login", response_model=Token)
@@ -1767,7 +1790,7 @@ def login(
             db,
             login_data.username,
             login_data.password,
-            require_verified_email=True,
+            require_verified_email=REQUIRE_EMAIL_VERIFICATION,
             ip_address=client_ip
         )
     except AuthenticationError as e:
@@ -1805,8 +1828,8 @@ def login(
         else:
             raise HTTPException(status_code=401, detail="Authentication failed")
 
-    # Update last login timestamp
-    user.last_login = datetime.utcnow()
+    # Update last login timestamp (use timezone-aware datetime)
+    user.last_login = datetime.now(timezone.utc)
     db.commit()
 
     # Token payload

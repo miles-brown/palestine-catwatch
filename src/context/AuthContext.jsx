@@ -1,37 +1,145 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 
 const AuthContext = createContext(null);
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const TOKEN_KEY = 'catwatch_auth_token';
+const REFRESH_TOKEN_KEY = 'catwatch_refresh_token';
 const USER_KEY = 'catwatch_auth_user';
+const TOKEN_EXPIRY_KEY = 'catwatch_token_expiry';
+
+// Refresh token 2 minutes before expiry to prevent unexpected logouts
+const TOKEN_REFRESH_MARGIN_MS = 2 * 60 * 1000;
 
 export function AuthProvider({ children }) {
     const [user, setUser] = useState(null);
     const [token, setToken] = useState(null);
+    const [refreshToken, setRefreshToken] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+
+    // Ref to store the refresh timer
+    const refreshTimerRef = useRef(null);
+
+    // Clear refresh timer
+    const clearRefreshTimer = useCallback(() => {
+        if (refreshTimerRef.current) {
+            clearTimeout(refreshTimerRef.current);
+            refreshTimerRef.current = null;
+        }
+    }, []);
+
+    // Schedule token refresh before expiry
+    const scheduleTokenRefresh = useCallback((expiresIn) => {
+        clearRefreshTimer();
+
+        // Calculate when to refresh (2 minutes before expiry)
+        const refreshTime = (expiresIn * 1000) - TOKEN_REFRESH_MARGIN_MS;
+
+        if (refreshTime > 0) {
+            console.log(`Scheduling token refresh in ${Math.round(refreshTime / 1000)} seconds`);
+            refreshTimerRef.current = setTimeout(() => {
+                refreshAccessToken();
+            }, refreshTime);
+        }
+    }, []);
+
+    // Refresh the access token using the refresh token
+    const refreshAccessToken = useCallback(async () => {
+        const storedRefreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
+
+        if (!storedRefreshToken) {
+            console.log('No refresh token available');
+            return false;
+        }
+
+        try {
+            const response = await fetch(`${API_URL}/auth/refresh`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ refresh_token: storedRefreshToken }),
+            });
+
+            if (!response.ok) {
+                // Refresh token invalid/expired, force logout
+                console.log('Refresh token invalid, logging out');
+                logoutInternal();
+                return false;
+            }
+
+            const data = await response.json();
+
+            // Update access token
+            localStorage.setItem(TOKEN_KEY, data.access_token);
+            localStorage.setItem(TOKEN_EXPIRY_KEY, String(Date.now() + (data.expires_in * 1000)));
+            setToken(data.access_token);
+
+            // Schedule next refresh
+            scheduleTokenRefresh(data.expires_in);
+
+            console.log('Token refreshed successfully');
+            return true;
+        } catch (e) {
+            console.error('Token refresh failed:', e);
+            return false;
+        }
+    }, [scheduleTokenRefresh]);
+
+    // Internal logout without triggering state updates that could cause loops
+    const logoutInternal = useCallback(() => {
+        clearRefreshTimer();
+        localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(REFRESH_TOKEN_KEY);
+        localStorage.removeItem(USER_KEY);
+        localStorage.removeItem(TOKEN_EXPIRY_KEY);
+        setToken(null);
+        setRefreshToken(null);
+        setUser(null);
+    }, [clearRefreshTimer]);
 
     // Check for existing auth on mount
     useEffect(() => {
         const storedToken = localStorage.getItem(TOKEN_KEY);
+        const storedRefreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
         const storedUser = localStorage.getItem(USER_KEY);
+        const storedExpiry = localStorage.getItem(TOKEN_EXPIRY_KEY);
 
         if (storedToken && storedUser) {
             try {
                 const parsedUser = JSON.parse(storedUser);
                 setToken(storedToken);
+                setRefreshToken(storedRefreshToken);
                 setUser(parsedUser);
-                // Verify token is still valid
-                verifyToken(storedToken);
+
+                // Check if token is expired or about to expire
+                const expiry = storedExpiry ? parseInt(storedExpiry, 10) : 0;
+                const now = Date.now();
+
+                if (expiry && expiry < now + TOKEN_REFRESH_MARGIN_MS) {
+                    // Token expired or about to expire, try to refresh
+                    refreshAccessToken();
+                } else if (expiry) {
+                    // Schedule refresh for later
+                    const remainingTime = Math.floor((expiry - now) / 1000);
+                    scheduleTokenRefresh(remainingTime);
+                } else {
+                    // No expiry info, verify token is still valid
+                    verifyToken(storedToken);
+                }
             } catch (e) {
                 // Invalid stored data, clear it
-                localStorage.removeItem(TOKEN_KEY);
-                localStorage.removeItem(USER_KEY);
+                logoutInternal();
             }
         }
         setLoading(false);
-    }, []);
+    }, [refreshAccessToken, scheduleTokenRefresh, logoutInternal]);
+
+    // Cleanup on unmount
+    useEffect(() => {
+        return () => clearRefreshTimer();
+    }, [clearRefreshTimer]);
 
     const verifyToken = async (authToken) => {
         try {
@@ -42,8 +150,11 @@ export function AuthProvider({ children }) {
             });
 
             if (!response.ok) {
-                // Token invalid, logout
-                logout();
+                // Token invalid, try to refresh
+                const refreshed = await refreshAccessToken();
+                if (!refreshed) {
+                    logoutInternal();
+                }
             }
         } catch (e) {
             console.error('Token verification failed:', e);
@@ -64,12 +175,31 @@ export function AuthProvider({ children }) {
             const data = await response.json();
 
             if (!response.ok) {
+                // Handle specific error codes
+                if (typeof data.detail === 'object' && data.detail.code) {
+                    throw new Error(data.detail.message || data.detail.code);
+                }
                 throw new Error(data.detail || 'Login failed');
             }
 
-            // Store auth data
+            // Store auth data including refresh token
             localStorage.setItem(TOKEN_KEY, data.access_token);
             localStorage.setItem(USER_KEY, JSON.stringify(data.user));
+
+            // Store refresh token if provided
+            if (data.refresh_token) {
+                localStorage.setItem(REFRESH_TOKEN_KEY, data.refresh_token);
+                setRefreshToken(data.refresh_token);
+            }
+
+            // Store token expiry time
+            if (data.expires_in) {
+                const expiryTime = Date.now() + (data.expires_in * 1000);
+                localStorage.setItem(TOKEN_EXPIRY_KEY, String(expiryTime));
+                // Schedule automatic token refresh
+                scheduleTokenRefresh(data.expires_in);
+            }
+
             setToken(data.access_token);
             setUser(data.user);
 
@@ -125,11 +255,8 @@ export function AuthProvider({ children }) {
     };
 
     const logout = useCallback(() => {
-        localStorage.removeItem(TOKEN_KEY);
-        localStorage.removeItem(USER_KEY);
-        setToken(null);
-        setUser(null);
-    }, []);
+        logoutInternal();
+    }, [logoutInternal]);
 
     const isAuthenticated = !!token && !!user;
     const isAdmin = user?.role === 'admin';
@@ -145,6 +272,7 @@ export function AuthProvider({ children }) {
     const value = {
         user,
         token,
+        refreshToken,
         loading,
         error,
         isAuthenticated,
@@ -155,6 +283,7 @@ export function AuthProvider({ children }) {
         verifyEmail,
         logout,
         getAuthHeaders,
+        refreshAccessToken,  // Expose for manual refresh if needed
     };
 
     return (
