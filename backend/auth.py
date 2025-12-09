@@ -21,10 +21,11 @@ Usage:
 """
 
 import os
+import re
 import secrets
 import warnings
 from datetime import datetime, timedelta, date, timezone
-from typing import Optional
+from typing import Optional, Tuple
 from enum import Enum
 
 from fastapi import Depends, HTTPException, status
@@ -110,6 +111,16 @@ class UserCreate(BaseModel):
     consent_given: bool = False
     role: Role = Role.CONTRIBUTOR  # Default to contributor for registered users
 
+    @field_validator('password')
+    @classmethod
+    def validate_password(cls, v):
+        """Backend password validation - prevents bypass of frontend checks."""
+        # Import here to avoid circular dependency during class definition
+        is_valid, error_message = validate_password_strength(v)
+        if not is_valid:
+            raise ValueError(error_message)
+        return v
+
     @field_validator('consent_given')
     @classmethod
     def validate_consent(cls, v):
@@ -124,6 +135,18 @@ class UserCreate(BaseModel):
         age = today.year - v.year - ((today.month, today.day) < (v.month, v.day))
         if age < 18:
             raise ValueError('You must be at least 18 years old to create an account')
+        return v
+
+    @field_validator('username')
+    @classmethod
+    def validate_username(cls, v):
+        """Validate username format."""
+        if not v or len(v) < 3:
+            raise ValueError('Username must be at least 3 characters')
+        if len(v) > 50:
+            raise ValueError('Username must be at most 50 characters')
+        if not re.match(r'^[a-zA-Z0-9_-]+$', v):
+            raise ValueError('Username can only contain letters, numbers, underscores, and hyphens')
         return v
 
 
@@ -153,6 +176,64 @@ class UserResponse(BaseModel):
 # =============================================================================
 # PASSWORD UTILITIES
 # =============================================================================
+
+# Password validation constants
+MIN_PASSWORD_LENGTH = 8
+MAX_PASSWORD_LENGTH = 128
+
+
+def validate_password_strength(password: str) -> Tuple[bool, str]:
+    """
+    Validate password strength with multiple security checks.
+
+    Requirements:
+    - Minimum 8 characters, maximum 128
+    - At least one uppercase letter
+    - At least one lowercase letter
+    - At least one digit
+    - At least one special character
+
+    Args:
+        password: The plain text password to validate
+
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    if not password:
+        return False, "Password is required"
+
+    if len(password) < MIN_PASSWORD_LENGTH:
+        return False, f"Password must be at least {MIN_PASSWORD_LENGTH} characters"
+
+    if len(password) > MAX_PASSWORD_LENGTH:
+        return False, f"Password must be at most {MAX_PASSWORD_LENGTH} characters"
+
+    if not re.search(r'[A-Z]', password):
+        return False, "Password must contain at least one uppercase letter"
+
+    if not re.search(r'[a-z]', password):
+        return False, "Password must contain at least one lowercase letter"
+
+    if not re.search(r'\d', password):
+        return False, "Password must contain at least one digit"
+
+    if not re.search(r'[!@#$%^&*(),.?":{}|<>_\-+=\[\]\\;\'`~]', password):
+        return False, "Password must contain at least one special character (!@#$%^&*(),.?\":{}|<>)"
+
+    # Check for common weak patterns
+    common_patterns = [
+        r'(.)\1{2,}',  # Same character 3+ times in a row
+        r'(012|123|234|345|456|567|678|789|890)',  # Sequential digits
+        r'(abc|bcd|cde|def|efg|fgh|ghi|hij|ijk|jkl|klm|lmn|mno|nop|opq|pqr|qrs|rst|stu|tuv|uvw|vwx|wxy|xyz)',  # Sequential letters
+    ]
+
+    password_lower = password.lower()
+    for pattern in common_patterns:
+        if re.search(pattern, password_lower):
+            return False, "Password contains predictable patterns (sequential characters or repeated characters)"
+
+    return True, ""
+
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against its hash."""
@@ -307,24 +388,80 @@ def verify_user_email(db: Session, token: str):
     return user
 
 
-def authenticate_user(db: Session, username: str, password: str):
+# Dummy hash for constant-time comparison when user not found
+# This prevents timing attacks that could enumerate valid usernames
+_DUMMY_HASH = pwd_context.hash("dummy_password_for_timing_attack_prevention")
+
+
+class AuthenticationError(Exception):
+    """Custom exception for authentication failures with specific error codes."""
+    def __init__(self, code: str, message: str):
+        self.code = code
+        self.message = message
+        super().__init__(message)
+
+
+def authenticate_user(db: Session, username: str, password: str, require_verified_email: bool = True):
     """
     Authenticate a user by username and password.
+
+    Security features:
+    - Always performs password hash verification to prevent timing attacks
+    - Checks email verification status if required
+    - Checks account active status
 
     Args:
         db: Database session
         username: The username to authenticate
         password: The plain text password
+        require_verified_email: If True, requires email to be verified (default: True)
 
     Returns:
-        User object if authentication successful, None otherwise
+        User object if authentication successful
+
+    Raises:
+        AuthenticationError: With specific code for different failure reasons:
+            - "invalid_credentials": Username or password incorrect
+            - "email_not_verified": Email address not verified
+            - "account_disabled": Account is disabled
     """
     user = get_user_by_username(db, username)
-    if not user:
-        return None
+
+    # SECURITY: Always verify password hash to prevent timing attacks
+    # If user doesn't exist, verify against dummy hash to ensure
+    # consistent response time regardless of username validity
+    if user is None:
+        # Perform dummy verification to prevent timing-based username enumeration
+        pwd_context.verify(password, _DUMMY_HASH)
+        raise AuthenticationError("invalid_credentials", "Invalid username or password")
+
     if not verify_password(password, user.hashed_password):
-        return None
+        raise AuthenticationError("invalid_credentials", "Invalid username or password")
+
+    # Check if account is active
+    if not user.is_active:
+        raise AuthenticationError("account_disabled", "Account is disabled")
+
+    # Check email verification if required
+    if require_verified_email and not user.email_verified:
+        raise AuthenticationError(
+            "email_not_verified",
+            "Please verify your email address before logging in. Check your inbox for the verification link."
+        )
+
     return user
+
+
+def authenticate_user_simple(db: Session, username: str, password: str):
+    """
+    Simple authentication without raising exceptions (for backwards compatibility).
+
+    Returns User if successful, None otherwise.
+    """
+    try:
+        return authenticate_user(db, username, password, require_verified_email=False)
+    except AuthenticationError:
+        return None
 
 
 # =============================================================================

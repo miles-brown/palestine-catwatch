@@ -1677,3 +1677,224 @@ def get_force_statistics(
         ]
     }
 
+
+# =============================================================================
+# AUTHENTICATION ENDPOINTS
+# =============================================================================
+
+from auth import (
+    UserCreate, UserLogin, UserResponse, Token,
+    create_user, authenticate_user, create_access_token,
+    get_user_by_username, get_user_by_email, verify_user_email,
+    AuthenticationError, ACCESS_TOKEN_EXPIRE_MINUTES
+)
+from datetime import timedelta
+
+
+@app.post("/auth/register", response_model=UserResponse)
+@limiter.limit(get_rate_limit("auth_register"))
+@limiter.limit(get_rate_limit("auth_register_hourly"))
+def register_user(
+    request: Request,
+    user_data: UserCreate,
+    db: Session = Depends(get_db)
+):
+    """
+    Register a new user account.
+
+    Rate limited to prevent registration spam and abuse.
+    Requires email verification before account is active.
+    """
+    # Check if username already exists
+    existing_user = get_user_by_username(db, user_data.username)
+    if existing_user:
+        raise HTTPException(
+            status_code=400,
+            detail="Username already registered"
+        )
+
+    # Check if email already exists
+    existing_email = get_user_by_email(db, user_data.email)
+    if existing_email:
+        raise HTTPException(
+            status_code=400,
+            detail="Email already registered"
+        )
+
+    # Create user (requires email verification by default)
+    user = create_user(db, user_data, require_verification=True)
+
+    # TODO: Send verification email here
+    # For now, just return the user data
+    return UserResponse(
+        id=user.id,
+        username=user.username,
+        email=user.email,
+        role=user.role,
+        is_active=user.is_active,
+        created_at=user.created_at,
+        full_name=user.full_name,
+        city=user.city,
+        country=user.country,
+        email_verified=user.email_verified
+    )
+
+
+@app.post("/auth/login", response_model=Token)
+@limiter.limit(get_rate_limit("auth_login"))
+@limiter.limit(get_rate_limit("auth_login_hourly"))
+def login(
+    request: Request,
+    login_data: UserLogin,
+    db: Session = Depends(get_db)
+):
+    """
+    Authenticate user and return JWT token.
+
+    Rate limited to prevent brute force attacks:
+    - 5 attempts per minute
+    - 20 attempts per hour
+
+    Returns specific error codes for different failure reasons.
+    """
+    try:
+        user = authenticate_user(
+            db,
+            login_data.username,
+            login_data.password,
+            require_verified_email=True
+        )
+    except AuthenticationError as e:
+        # Map error codes to HTTP responses
+        if e.code == "invalid_credentials":
+            raise HTTPException(
+                status_code=401,
+                detail=e.message,
+                headers={"WWW-Authenticate": "Bearer"}
+            )
+        elif e.code == "email_not_verified":
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "email_not_verified",
+                    "message": e.message
+                }
+            )
+        elif e.code == "account_disabled":
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "account_disabled",
+                    "message": e.message
+                }
+            )
+        else:
+            raise HTTPException(status_code=401, detail="Authentication failed")
+
+    # Update last login timestamp
+    user.last_login = datetime.utcnow()
+    db.commit()
+
+    # Create access token
+    access_token = create_access_token(
+        data={
+            "sub": user.username,
+            "user_id": user.id,
+            "role": user.role
+        },
+        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    )
+
+    return Token(
+        access_token=access_token,
+        token_type="bearer",
+        expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        user={
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "role": user.role,
+            "full_name": user.full_name
+        }
+    )
+
+
+@app.get("/auth/verify/{token}")
+@limiter.limit(get_rate_limit("auth_verify"))
+def verify_email(
+    request: Request,
+    token: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Verify user email address using the verification token.
+    """
+    user = verify_user_email(db, token)
+
+    if not user:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid or expired verification token"
+        )
+
+    return {
+        "status": "success",
+        "message": "Email verified successfully. You can now log in.",
+        "username": user.username
+    }
+
+
+@app.get("/auth/me", response_model=UserResponse)
+@limiter.limit(get_rate_limit("default"))
+def get_current_user_info(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Get current authenticated user's information.
+    Requires valid JWT token in Authorization header.
+    """
+    from auth import get_current_user
+    from fastapi import Security
+
+    # This endpoint requires manual token validation since we can't use Depends easily here
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    token = auth_header.split(" ")[1]
+    from auth import decode_token, get_user_by_username as get_user
+
+    token_data = decode_token(token)
+    if not token_data:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid token",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    user = get_user(db, token_data.username)
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail="User not found",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    return UserResponse(
+        id=user.id,
+        username=user.username,
+        email=user.email,
+        role=user.role,
+        is_active=user.is_active,
+        created_at=user.created_at,
+        full_name=user.full_name,
+        city=user.city,
+        country=user.country,
+        email_verified=user.email_verified
+    )
+
