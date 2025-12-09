@@ -15,16 +15,30 @@ from ratelimit import limiter, setup_rate_limiting, get_rate_limit
 try:
     print("Attempting to connect to database and create tables...")
     models.Base.metadata.create_all(bind=engine)
-    
-    # --- HOTFIX FOR SCHEMA ---
-    # Drop the index on visual_id because it is too large (vector) for b-tree
+
+    # --- SCHEMA MIGRATIONS ---
     from sqlalchemy import text
     with engine.connect() as conn:
+        # Drop the index on visual_id because it is too large (vector) for b-tree
         conn.execute(text("DROP INDEX IF EXISTS ix_officers_visual_id"))
+
+        # Add missing columns to officer_appearances (idempotent - checks if column exists)
+        migrations = [
+            "ALTER TABLE officer_appearances ADD COLUMN IF NOT EXISTS confidence FLOAT",
+            "ALTER TABLE officer_appearances ADD COLUMN IF NOT EXISTS confidence_factors TEXT",
+            "ALTER TABLE officer_appearances ADD COLUMN IF NOT EXISTS verified BOOLEAN DEFAULT FALSE",
+        ]
+        for migration in migrations:
+            try:
+                conn.execute(text(migration))
+            except Exception as e:
+                # Column might already exist or other non-critical error
+                print(f"Migration note: {e}")
+
         conn.commit()
-        print("Schema Patch: Dropped ix_officers_visual_id index.")
+        print("Schema migrations applied successfully.")
     # -------------------------
-        
+
     print("Database tables created successfully.")
 except Exception as e:
     print(f"Startup Warning: Database connection failed. App will start but DB features will fail. Error: {e}")
