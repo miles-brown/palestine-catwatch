@@ -9,6 +9,32 @@ Implementation uses double-submit cookie pattern adapted for SPAs:
 2. Token is returned in both response body AND set as a cookie
 3. Frontend includes token in X-CSRF-Token header on protected requests
 4. Backend validates header matches cookie
+
+SECURITY NOTE - httpOnly=False on CSRF Cookie:
+=============================================
+The CSRF cookie intentionally has httpOnly=False. This is NOT a vulnerability but
+a deliberate design choice for the double-submit cookie pattern in SPAs:
+
+Why httpOnly=False is required:
+- Double-submit pattern requires JavaScript to read the cookie value
+- The value must be sent in both the cookie AND a custom header (X-CSRF-Token)
+- An attacker's malicious site cannot read cross-origin cookies due to Same-Origin Policy
+- Even if XSS allows reading the cookie, the attacker already has script execution
+  and can bypass CSRF anyway
+
+Why this is still secure:
+1. SameSite=Strict prevents the cookie from being sent on cross-origin requests
+2. Secure=true (in production) ensures HTTPS-only transmission
+3. The real protection comes from the header+cookie double-submit, not httpOnly
+4. XSS attacks are mitigated by CSP headers and input sanitization, not CSRF tokens
+
+Alternative considered:
+- Encrypted CSRF tokens with server-side validation (more complex, similar security)
+- Synchronizer token pattern (requires server-side session state)
+
+References:
+- OWASP Double Submit Cookie: https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html#double-submit-cookie
+- Why httpOnly doesn't help CSRF: https://security.stackexchange.com/questions/220797/
 """
 
 import secrets
@@ -35,12 +61,14 @@ def generate_csrf_token() -> str:
 
 def set_csrf_cookie(response: Response, token: str) -> None:
     """
-    Set the CSRF token as an HTTP-only cookie.
+    Set the CSRF token as a cookie for double-submit validation.
 
     The cookie is:
-    - SameSite=Strict to prevent cross-site requests
-    - Secure in production (HTTPS only)
-    - HttpOnly=False so JavaScript can read it
+    - SameSite=Strict: Prevents cross-site request inclusion
+    - Secure=True (production): HTTPS-only transmission
+    - HttpOnly=False: REQUIRED for double-submit pattern (see module docstring)
+
+    Security: httpOnly=False is intentional and documented above.
     """
     is_production = os.getenv("ENVIRONMENT", "development").lower() in ("production", "prod")
 
@@ -48,7 +76,9 @@ def set_csrf_cookie(response: Response, token: str) -> None:
         key=CSRF_COOKIE_NAME,
         value=token,
         max_age=CSRF_TOKEN_EXPIRY_HOURS * 3600,
-        httponly=False,  # Allow JS to read for double-submit
+        # httpOnly=False is REQUIRED for double-submit pattern - JS must read cookie
+        # to send in X-CSRF-Token header. See module docstring for security analysis.
+        httponly=False,
         samesite="strict",
         secure=is_production,
         path="/"
