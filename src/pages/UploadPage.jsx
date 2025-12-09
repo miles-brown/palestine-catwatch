@@ -6,12 +6,7 @@ import IngestQuestionnaire from '@/components/IngestQuestionnaire';
 import LiveAnalysis from '@/components/LiveAnalysis';
 import PasswordGate from '@/components/PasswordGate';
 import { useNavigate } from 'react-router-dom';
-
-let API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
-if (!API_BASE.startsWith("http")) {
-    const isLocal = API_BASE.includes("localhost") || API_BASE.includes("127.0.0.1");
-    API_BASE = `${isLocal ? "http" : "https"}://${API_BASE}`;
-}
+import { API_BASE, safeFetch } from '@/utils/api';
 
 // Helper to format error messages consistently
 const formatErrorMessage = (error) => {
@@ -34,12 +29,18 @@ const UploadPage = () => {
     const [bulkUrls, setBulkUrls] = useState('');
     const [bulkResults, setBulkResults] = useState(null);
 
-    // Fetch protests on mount
+    // Fetch protests on mount with proper error handling
     useEffect(() => {
-        fetch(`${API_BASE}/protests`)
-            .then(res => res.json())
-            .then(data => setProtests(data))
-            .catch(err => console.error("Failed to fetch protests", err));
+        const fetchProtests = async () => {
+            const { data, error } = await safeFetch(`${API_BASE}/protests`);
+            if (error) {
+                console.error("Failed to fetch protests:", error);
+                // Non-blocking - protests dropdown will be empty but upload still works
+            } else if (data) {
+                setProtests(data);
+            }
+        };
+        fetchProtests();
     }, []);
 
     // --- File Upload Logic ---
