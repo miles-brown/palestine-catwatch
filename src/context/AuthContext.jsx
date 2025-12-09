@@ -25,6 +25,9 @@ export function AuthProvider({ children }) {
     // Ref to store the refresh timer
     const refreshTimerRef = useRef(null);
 
+    // Ref to track if initialization has run (prevents circular dependency issues)
+    const isInitialized = useRef(false);
+
     // Fetch CSRF token for protected operations
     // SECURITY: Token is kept in React state only, NOT localStorage
     // The cookie provides persistence across page refreshes
@@ -124,41 +127,60 @@ export function AuthProvider({ children }) {
     }, [clearRefreshTimer]);
 
     // Check for existing auth on mount
+    // Uses async IIFE to properly await token refresh before setting loading=false
+    // Uses isInitialized ref to prevent re-running on dependency changes
     useEffect(() => {
-        const storedToken = localStorage.getItem(TOKEN_KEY);
-        const storedRefreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
-        const storedUser = localStorage.getItem(USER_KEY);
-        const storedExpiry = localStorage.getItem(TOKEN_EXPIRY_KEY);
-
-        if (storedToken && storedUser) {
-            try {
-                const parsedUser = JSON.parse(storedUser);
-                setToken(storedToken);
-                setRefreshToken(storedRefreshToken);
-                setUser(parsedUser);
-
-                // Check if token is expired or about to expire
-                const expiry = storedExpiry ? parseInt(storedExpiry, 10) : 0;
-                const now = Date.now();
-
-                if (expiry && expiry < now + TOKEN_REFRESH_MARGIN_MS) {
-                    // Token expired or about to expire, try to refresh
-                    refreshAccessToken();
-                } else if (expiry) {
-                    // Schedule refresh for later
-                    const remainingTime = Math.floor((expiry - now) / 1000);
-                    scheduleTokenRefresh(remainingTime);
-                } else {
-                    // No expiry info, verify token is still valid
-                    verifyToken(storedToken);
-                }
-            } catch (e) {
-                // Invalid stored data, clear it
-                logoutInternal();
-            }
+        // Prevent re-initialization (guards against circular dependency issues)
+        if (isInitialized.current) {
+            return;
         }
-        setLoading(false);
-    }, [refreshAccessToken, scheduleTokenRefresh, logoutInternal]);
+        isInitialized.current = true;
+
+        const initAuth = async () => {
+            const storedToken = localStorage.getItem(TOKEN_KEY);
+            const storedRefreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
+            const storedUser = localStorage.getItem(USER_KEY);
+            const storedExpiry = localStorage.getItem(TOKEN_EXPIRY_KEY);
+
+            if (storedToken && storedUser) {
+                try {
+                    const parsedUser = JSON.parse(storedUser);
+                    setToken(storedToken);
+                    setRefreshToken(storedRefreshToken);
+                    setUser(parsedUser);
+
+                    // Check if token is expired or about to expire
+                    const expiry = storedExpiry ? parseInt(storedExpiry, 10) : 0;
+                    const now = Date.now();
+
+                    if (expiry && expiry < now + TOKEN_REFRESH_MARGIN_MS) {
+                        // Token expired or about to expire, await refresh before continuing
+                        // This prevents race conditions where components render before refresh completes
+                        const refreshed = await refreshAccessToken();
+                        if (!refreshed) {
+                            // Refresh failed, clear auth state
+                            logoutInternal();
+                        }
+                    } else if (expiry) {
+                        // Schedule refresh for later
+                        const remainingTime = Math.floor((expiry - now) / 1000);
+                        scheduleTokenRefresh(remainingTime);
+                    } else {
+                        // No expiry info, verify token is still valid
+                        await verifyToken(storedToken);
+                    }
+                } catch (e) {
+                    // Invalid stored data, clear it
+                    logoutInternal();
+                }
+            }
+            // Only set loading false after all async operations complete
+            setLoading(false);
+        };
+
+        initAuth();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []); // Empty deps - initialization runs once only (uses isInitialized ref for safety)
 
     // Cleanup on unmount
     useEffect(() => {
