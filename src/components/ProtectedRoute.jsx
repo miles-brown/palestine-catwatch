@@ -1,5 +1,20 @@
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import AccessDenied, { AdminAccessDenied, ContributorAccessDenied } from './AccessDenied';
+
+/**
+ * Loading spinner component for auth checks
+ */
+function AuthLoading() {
+    return (
+        <div className="min-h-screen flex items-center justify-center bg-gray-50">
+            <div className="text-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto"></div>
+                <p className="mt-4 text-gray-600">Checking authentication...</p>
+            </div>
+        </div>
+    );
+}
 
 /**
  * ProtectedRoute - Wrapper component that requires authentication
@@ -18,14 +33,7 @@ export default function ProtectedRoute({
 
     // Show loading state while checking auth
     if (loading) {
-        return (
-            <div className="min-h-screen flex items-center justify-center bg-gray-50">
-                <div className="text-center">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto"></div>
-                    <p className="mt-4 text-gray-600">Checking authentication...</p>
-                </div>
-            </div>
-        );
+        return <AuthLoading />;
     }
 
     // Redirect to login if not authenticated
@@ -33,40 +41,14 @@ export default function ProtectedRoute({
         return <Navigate to="/login" state={{ from: location }} replace />;
     }
 
-    // Check admin requirement
+    // Check admin requirement - use reusable AccessDenied component
     if (requireAdmin && !isAdmin) {
-        return (
-            <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
-                <div className="text-center max-w-md">
-                    <div className="text-6xl mb-4">🔒</div>
-                    <h1 className="text-2xl font-bold text-gray-900 mb-2">Admin Access Required</h1>
-                    <p className="text-gray-600 mb-4">
-                        This page requires administrator privileges. Please contact an administrator if you need access.
-                    </p>
-                    <a href="/" className="text-green-600 hover:text-green-700 font-medium">
-                        Return to Home
-                    </a>
-                </div>
-            </div>
-        );
+        return <AdminAccessDenied />;
     }
 
-    // Check contributor requirement
+    // Check contributor requirement - use reusable AccessDenied component
     if (requireContributor && !isContributor) {
-        return (
-            <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
-                <div className="text-center max-w-md">
-                    <div className="text-6xl mb-4">📝</div>
-                    <h1 className="text-2xl font-bold text-gray-900 mb-2">Contributor Access Required</h1>
-                    <p className="text-gray-600 mb-4">
-                        This page requires contributor privileges. Your account may need to be upgraded.
-                    </p>
-                    <a href="/" className="text-green-600 hover:text-green-700 font-medium">
-                        Return to Home
-                    </a>
-                </div>
-            </div>
-        );
+        return <ContributorAccessDenied />;
     }
 
     return children;
