@@ -66,6 +66,36 @@ export const UI = {
 };
 
 /**
+ * Batch Analysis Constants
+ */
+export const BATCH_ANALYSIS = {
+  PENDING_LIMIT: 50,
+  MAX_RESULTS_SHOWN: 5,
+};
+
+/**
+ * Environment detection
+ */
+export const IS_PRODUCTION = import.meta.env.PROD;
+
+/**
+ * Production-aware logger that suppresses debug/warn messages in production.
+ * Errors are always logged.
+ */
+export const logger = {
+  error: (...args) => console.error(...args),
+  warn: (...args) => {
+    if (!IS_PRODUCTION) console.warn(...args);
+  },
+  info: (...args) => {
+    if (!IS_PRODUCTION) console.info(...args);
+  },
+  debug: (...args) => {
+    if (!IS_PRODUCTION) console.log(...args);
+  },
+};
+
+/**
  * Escalation equipment that indicates potential use of force
  */
 export const ESCALATION_EQUIPMENT = [

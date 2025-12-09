@@ -6,7 +6,7 @@ import {
   Loader2, Users, ChevronDown, ChevronUp
 } from 'lucide-react';
 import { API_BASE, fetchWithErrorHandling } from '../utils/api';
-import { UI } from '../utils/constants';
+import { UI, BATCH_ANALYSIS, logger } from '../utils/constants';
 
 // Polling configuration with exponential backoff
 const INITIAL_POLL_INTERVAL = UI.POLL_INTERVAL_MS;
@@ -33,7 +33,7 @@ const BatchAnalysis = () => {
   const fetchPending = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await fetchWithErrorHandling(`${API_BASE}/appearances/pending-analysis?limit=50`);
+      const data = await fetchWithErrorHandling(`${API_BASE}/appearances/pending-analysis?limit=${BATCH_ANALYSIS.PENDING_LIMIT}`);
       setPending(data.appearances || []);
       setError(null);
     } catch (err) {
@@ -76,7 +76,7 @@ const BatchAnalysis = () => {
           return;
         }
       } catch (err) {
-        console.error('Failed to fetch batch progress:', err);
+        logger.warn('Failed to fetch batch progress:', err);
         // Apply exponential backoff on errors
         consecutiveErrorsRef.current += 1;
         pollIntervalRef.current = Math.min(
@@ -256,7 +256,7 @@ const BatchAnalysis = () => {
                 <div className="mt-4 pt-4 border-t border-purple-200">
                   <p className="text-xs font-medium text-gray-600 mb-2">Recent Results:</p>
                   <div className="space-y-1">
-                    {batchProgress.results.slice(-5).map((result, idx) => (
+                    {batchProgress.results.slice(-BATCH_ANALYSIS.MAX_RESULTS_SHOWN).map((result, idx) => (
                       <div
                         key={idx}
                         className={`text-xs p-2 rounded ${
@@ -318,31 +318,39 @@ const BatchAnalysis = () => {
             ) : (
               <>
                 {/* Selection List */}
-                <div className="border rounded-lg divide-y max-h-64 overflow-y-auto">
-                  {pending.map((appearance) => (
-                    <label
-                      key={appearance.id}
-                      className={`flex items-center gap-3 p-3 cursor-pointer hover:bg-gray-50 ${
-                        selected.has(appearance.id) ? 'bg-purple-50' : ''
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selected.has(appearance.id)}
-                        onChange={() => handleToggleSelect(appearance.id)}
-                        className="w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium text-gray-900 text-sm">
-                          {appearance.badge_number || `Officer #${appearance.officer_id}`}
+                <div
+                  className="border rounded-lg divide-y max-h-64 overflow-y-auto"
+                  role="group"
+                  aria-label="Pending appearances for analysis"
+                >
+                  {pending.map((appearance) => {
+                    const officerName = appearance.badge_number || `Officer #${appearance.officer_id}`;
+                    return (
+                      <label
+                        key={appearance.id}
+                        className={`flex items-center gap-3 p-3 cursor-pointer hover:bg-gray-50 ${
+                          selected.has(appearance.id) ? 'bg-purple-50' : ''
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selected.has(appearance.id)}
+                          onChange={() => handleToggleSelect(appearance.id)}
+                          aria-label={`Select ${officerName} for analysis`}
+                          className="w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-gray-900 text-sm">
+                            {officerName}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            Appearance #{appearance.id} | Media #{appearance.media_id}
+                            {appearance.current_force && ` | ${appearance.current_force}`}
+                          </div>
                         </div>
-                        <div className="text-xs text-gray-500">
-                          Appearance #{appearance.id} | Media #{appearance.media_id}
-                          {appearance.current_force && ` | ${appearance.current_force}`}
-                        </div>
-                      </div>
-                    </label>
-                  ))}
+                      </label>
+                    );
+                  })}
                 </div>
 
                 {/* Action Buttons */}

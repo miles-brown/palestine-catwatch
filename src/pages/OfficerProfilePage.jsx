@@ -10,7 +10,7 @@ import {
 import UniformAnalysisCard from '@/components/UniformAnalysisCard';
 import { Skeleton } from '@/components/ui/skeleton';
 import { API_BASE, getMediaUrl, fetchWithErrorHandling } from '../utils/api';
-import { getRankColor } from '../utils/constants';
+import { getRankColor, logger } from '../utils/constants';
 import { withErrorBoundary } from '../components/ErrorBoundary';
 
 // Use centralized utility for secure path handling
@@ -134,10 +134,9 @@ const ChainOfCommandSection = ({ officerId }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch(`${API_BASE}/officers/${officerId}/chain`)
-      .then(res => res.json())
+    fetchWithErrorHandling(`${API_BASE}/officers/${officerId}/chain`)
       .then(setChainData)
-      .catch(console.error)
+      .catch(err => logger.warn('Failed to fetch chain of command:', err))
       .finally(() => setLoading(false));
   }, [officerId]);
 
@@ -445,10 +444,9 @@ const UniformSummary = ({ officerId }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch(`${API_BASE}/officers/${officerId}/uniform`)
-      .then(res => res.json())
+    fetchWithErrorHandling(`${API_BASE}/officers/${officerId}/uniform`)
       .then(setUniformData)
-      .catch(console.error)
+      .catch(err => logger.warn('Failed to fetch uniform data:', err))
       .finally(() => setLoading(false));
   }, [officerId]);
 
@@ -624,7 +622,7 @@ function OfficerProfilePage() {
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
     } catch (err) {
-      console.error('Dossier download failed:', err);
+      logger.error('Dossier download failed:', err);
     } finally {
       setDownloading(false);
     }
