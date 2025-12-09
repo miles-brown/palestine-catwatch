@@ -9,8 +9,14 @@ import { useNavigate } from 'react-router-dom';
 
 let API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 if (!API_BASE.startsWith("http")) {
-    API_BASE = `https://${API_BASE}`;
+    const isLocal = API_BASE.includes("localhost") || API_BASE.includes("127.0.0.1");
+    API_BASE = `${isLocal ? "http" : "https"}://${API_BASE}`;
 }
+
+// Helper to format error messages consistently
+const formatErrorMessage = (error) => {
+    return typeof error === 'object' ? JSON.stringify(error) : String(error);
+};
 
 const UploadPage = () => {
     // Shared State
@@ -126,10 +132,7 @@ const UploadPage = () => {
 
             if (!response.ok) {
                 const errData = await response.json().catch(() => ({}));
-                let errorMsg = errData.detail || 'Bulk ingest failed';
-                if (typeof errorMsg === 'object') {
-                    errorMsg = JSON.stringify(errorMsg);
-                }
+                const errorMsg = formatErrorMessage(errData.detail || 'Bulk ingest failed');
                 throw new Error(errorMsg);
             }
 
@@ -169,10 +172,7 @@ const UploadPage = () => {
 
             if (!response.ok) {
                 const errData = await response.json().catch(() => ({}));
-                let errorMsg = errData.detail || 'Ingest failed';
-                if (typeof errorMsg === 'object') {
-                    errorMsg = JSON.stringify(errorMsg);
-                }
+                const errorMsg = formatErrorMessage(errData.detail || 'Ingest failed');
                 throw new Error(errorMsg);
             }
             const data = await response.json();

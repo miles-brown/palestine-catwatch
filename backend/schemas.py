@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import List, Optional
 from datetime import datetime
 
@@ -24,14 +24,12 @@ class Media(MediaBase):
     processed: bool
     timestamp: datetime
     # protest will be loaded if needed, handle circular refs or separate schemas
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class Protest(ProtestBase):
     id: int
     media: List[Media] = []
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # Update Media to include Protest
 class MediaWithProtest(Media):
@@ -59,14 +57,12 @@ class OfficerAppearance(OfficerAppearanceBase):
     officer_id: int
     media_id: int
     media: Optional[Media] = None # Use Media, not MediaWithProtest to avoid deep circular recursion unless needed
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class Officer(OfficerBase):
     id: int
     appearances: List[OfficerAppearance] = []
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Equipment schemas
@@ -80,8 +76,7 @@ class EquipmentCreate(EquipmentBase):
 
 class Equipment(EquipmentBase):
     id: int
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class EquipmentWithCount(Equipment):
     detection_count: int = 0
@@ -100,8 +95,7 @@ class EquipmentDetection(EquipmentDetectionBase):
     id: int
     appearance_id: int
     equipment: Optional[Equipment] = None
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Uniform Analysis schemas
@@ -131,8 +125,7 @@ class UniformAnalysis(UniformAnalysisBase):
     analyzed_at: Optional[datetime] = None
     api_cost_tokens: Optional[int] = None
     image_hash: Optional[str] = None
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Extended appearance with uniform analysis
