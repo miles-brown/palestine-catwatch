@@ -8,16 +8,7 @@ import {
 } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { API_BASE, fetchWithErrorHandling } from '../utils/api';
-
-// Category colors
-const CATEGORY_COLORS = {
-  defensive: { bg: 'bg-blue-100', text: 'text-blue-800', border: 'border-blue-300' },
-  offensive: { bg: 'bg-red-100', text: 'text-red-800', border: 'border-red-300' },
-  restraint: { bg: 'bg-orange-100', text: 'text-orange-800', border: 'border-orange-300' },
-  identification: { bg: 'bg-green-100', text: 'text-green-800', border: 'border-green-300' },
-  communication: { bg: 'bg-purple-100', text: 'text-purple-800', border: 'border-purple-300' },
-  specialist: { bg: 'bg-gray-100', text: 'text-gray-800', border: 'border-gray-300' }
-};
+import { CATEGORY_COLORS, formatDate } from '../utils/constants';
 
 // Escalation score color
 const getEscalationColor = (score) => {
@@ -81,7 +72,7 @@ const EscalationEventCard = ({ event }) => {
             {event.date && (
               <p className="text-sm opacity-90 flex items-center gap-1 mt-1">
                 <Calendar className="h-4 w-4" />
-                {new Date(event.date).toLocaleDateString()}
+                {formatDate(event.date)}
               </p>
             )}
           </div>

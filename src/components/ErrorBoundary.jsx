@@ -119,4 +119,35 @@ class ErrorBoundary extends Component {
     }
 }
 
+/**
+ * Higher-Order Component to wrap any component with an error boundary.
+ *
+ * @param {React.Component} WrappedComponent - Component to wrap
+ * @param {string} fallbackMessage - Custom error message
+ * @returns {React.Component} - Wrapped component with error boundary
+ */
+export function withErrorBoundary(WrappedComponent, fallbackMessage) {
+    return function WithErrorBoundaryWrapper(props) {
+        return (
+            <ErrorBoundary fallbackMessage={fallbackMessage}>
+                <WrappedComponent {...props} />
+            </ErrorBoundary>
+        );
+    };
+}
+
+/**
+ * Convenience wrapper for page-level error boundaries.
+ * Use this to wrap entire page content.
+ */
+export function PageErrorBoundary({ children, pageName }) {
+    return (
+        <ErrorBoundary
+            fallbackMessage={`An error occurred while loading the ${pageName || 'page'}. Please try again.`}
+        >
+            {children}
+        </ErrorBoundary>
+    );
+}
+
 export default ErrorBoundary;

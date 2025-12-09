@@ -8,11 +8,10 @@ import {
   Filter, X, Users, Camera, TrendingUp
 } from 'lucide-react';
 import { API_BASE, fetchWithErrorHandling } from '../utils/api';
+import { withErrorBoundary } from '../components/ErrorBoundary';
+import { ESCALATION_EQUIPMENT } from '../utils/constants';
 
-// Escalation indicators
-const ESCALATION_EQUIPMENT = ['Shield', 'Long Shield', 'Baton', 'Taser', 'Ballistic Helmet'];
-
-export default function TimelinePage() {
+function TimelinePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [protests, setProtests] = useState([]);
   const [selectedProtest, setSelectedProtest] = useState(null);
@@ -476,14 +475,16 @@ export default function TimelinePage() {
   );
 }
 
+export default withErrorBoundary(TimelinePage, 'An error occurred while loading the Timeline page. Please try again.');
+
 // Individual Timeline Event Component
 function TimelineEvent({ event, index, detailed = false }) {
   const hasEscalation = event.high_escalation_equipment ||
-    event.equipment?.some(eq => ['Shield', 'Long Shield', 'Baton', 'Taser', 'Ballistic Helmet'].includes(eq.name));
+    event.equipment?.some(eq => ESCALATION_EQUIPMENT.includes(eq.name));
 
-  let API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
-  if (!API_BASE.startsWith('http')) {
-    API_BASE = `https://${API_BASE}`;
+  let apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+  if (!apiBase.startsWith('http')) {
+    apiBase = `https://${apiBase}`;
   }
 
   return (
@@ -501,7 +502,7 @@ function TimelineEvent({ event, index, detailed = false }) {
             {/* Officer Image */}
             {event.crop_url && (
               <img
-                src={event.crop_url.startsWith('http') ? event.crop_url : `${API_BASE}${event.crop_url}`}
+                src={event.crop_url.startsWith('http') ? event.crop_url : `${apiBase}${event.crop_url}`}
                 alt="Officer"
                 className="w-16 h-16 rounded-lg object-cover border border-gray-200"
               />
@@ -573,7 +574,7 @@ function TimelineEvent({ event, index, detailed = false }) {
                     <span
                       key={i}
                       className={`text-xs px-2 py-0.5 rounded ${
-                        ['Shield', 'Long Shield', 'Baton', 'Taser', 'Ballistic Helmet'].includes(eq.name)
+                        ESCALATION_EQUIPMENT.includes(eq.name)
                           ? 'bg-red-100 text-red-700'
                           : 'bg-gray-100 text-gray-600'
                       }`}

@@ -83,3 +83,69 @@ export const MOVEMENT_COLORS = [
   '#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4',
   '#3b82f6', '#8b5cf6', '#ec4899', '#f43f5e', '#14b8a6'
 ];
+
+/** Default fallback color when MOVEMENT_COLORS is empty or index invalid */
+const DEFAULT_MOVEMENT_COLOR = '#6b7280'; // gray-500
+
+/**
+ * Safely get a movement color by index with modulo wrap-around.
+ * Returns fallback if array is empty or index is invalid.
+ *
+ * @param {number} index - The index to look up
+ * @returns {string} - Hex color string
+ */
+export const getMovementColor = (index) => {
+  if (!MOVEMENT_COLORS.length || typeof index !== 'number' || !Number.isFinite(index)) {
+    return DEFAULT_MOVEMENT_COLOR;
+  }
+  return MOVEMENT_COLORS[Math.abs(index) % MOVEMENT_COLORS.length];
+};
+
+/**
+ * Safely parse and format a date string.
+ * Returns fallback text if date is invalid.
+ *
+ * @param {string|Date} dateInput - Date string or Date object
+ * @param {object} options - Intl.DateTimeFormat options
+ * @param {string} fallback - Text to show for invalid dates
+ * @returns {string} - Formatted date or fallback
+ */
+export const formatDate = (dateInput, options = {}, fallback = 'Unknown date') => {
+  if (!dateInput) return fallback;
+  try {
+    const date = dateInput instanceof Date ? dateInput : new Date(dateInput);
+    if (isNaN(date.getTime())) return fallback;
+    return date.toLocaleDateString('en-GB', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      ...options
+    });
+  } catch {
+    return fallback;
+  }
+};
+
+/**
+ * Safely parse and format a date-time string.
+ *
+ * @param {string|Date} dateInput - Date string or Date object
+ * @param {string} fallback - Text to show for invalid dates
+ * @returns {string} - Formatted date-time or fallback
+ */
+export const formatDateTime = (dateInput, fallback = 'Unknown') => {
+  if (!dateInput) return fallback;
+  try {
+    const date = dateInput instanceof Date ? dateInput : new Date(dateInput);
+    if (isNaN(date.getTime())) return fallback;
+    return date.toLocaleString('en-GB', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  } catch {
+    return fallback;
+  }
+};

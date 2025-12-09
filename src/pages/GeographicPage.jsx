@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, memo } from 'react';
 import { Link } from 'react-router-dom';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, Circle, useMap } from 'react-leaflet';
 import L from 'leaflet';
@@ -9,52 +9,81 @@ import {
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { API_BASE, fetchWithErrorHandling } from '../utils/api';
+import { withErrorBoundary } from '../components/ErrorBoundary';
+import { MOVEMENT_COLORS, getMovementColor } from '../utils/constants';
 import 'leaflet/dist/leaflet.css';
+
+// Import marker icons from local leaflet package (no CDN dependency)
+import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
+import markerIcon from 'leaflet/dist/images/marker-icon.png';
+import markerShadow from 'leaflet/dist/images/marker-shadow.png';
 
 // Fix for default marker icons in React-Leaflet
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
-  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
+  iconRetinaUrl: markerIcon2x,
+  iconUrl: markerIcon,
+  shadowUrl: markerShadow,
 });
+
+// Cluster size thresholds
+const CLUSTER_THRESHOLDS = {
+  SMALL: 5,
+  MEDIUM: 15,
+  LARGE: 30
+};
+
+// Cluster sizes (pixels)
+const CLUSTER_SIZES = {
+  SMALL: 30,
+  MEDIUM: 40,
+  LARGE: 50,
+  XLARGE: 60
+};
 
 // Custom marker icons based on officer count
 const createClusterIcon = (count) => {
-  const size = count < 5 ? 30 : count < 15 ? 40 : count < 30 ? 50 : 60;
-  const color = count < 5 ? '#22c55e' : count < 15 ? '#eab308' : count < 30 ? '#f97316' : '#ef4444';
+  // Validate and sanitize count - must be a non-negative integer
+  const safeCount = typeof count === 'number' && Number.isFinite(count) && count >= 0
+    ? Math.floor(count)
+    : 0;
+
+  const size = safeCount < CLUSTER_THRESHOLDS.SMALL ? CLUSTER_SIZES.SMALL :
+               safeCount < CLUSTER_THRESHOLDS.MEDIUM ? CLUSTER_SIZES.MEDIUM :
+               safeCount < CLUSTER_THRESHOLDS.LARGE ? CLUSTER_SIZES.LARGE :
+               CLUSTER_SIZES.XLARGE;
+
+  const color = safeCount < CLUSTER_THRESHOLDS.SMALL ? '#22c55e' :
+                safeCount < CLUSTER_THRESHOLDS.MEDIUM ? '#eab308' :
+                safeCount < CLUSTER_THRESHOLDS.LARGE ? '#f97316' :
+                '#ef4444';
+
+  // Create icon element safely without innerHTML XSS risk
+  const div = document.createElement('div');
+  div.style.cssText = `
+    width: ${size}px;
+    height: ${size}px;
+    background: ${color};
+    border: 3px solid white;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-weight: bold;
+    font-size: ${size / 2.5}px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  `;
+  div.textContent = String(safeCount);
 
   return L.divIcon({
     className: 'custom-cluster-marker',
-    html: `
-      <div style="
-        width: ${size}px;
-        height: ${size}px;
-        background: ${color};
-        border: 3px solid white;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: white;
-        font-weight: bold;
-        font-size: ${size / 2.5}px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-      ">
-        ${count}
-      </div>
-    `,
+    html: div.outerHTML,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
     popupAnchor: [0, -size / 2]
   });
 };
-
-// Movement path colors
-const MOVEMENT_COLORS = [
-  '#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4',
-  '#3b82f6', '#8b5cf6', '#ec4899', '#f43f5e', '#14b8a6'
-];
 
 // Component to fit map bounds
 const FitBounds = ({ protests }) => {
@@ -95,8 +124,8 @@ const StatsCard = ({ icon: Icon, label, value, color = 'green' }) => {
   );
 };
 
-// Officer Movement Panel
-const MovementPanel = ({ movements, selectedOfficer, onSelectOfficer }) => {
+// Officer Movement Panel - memoized to prevent re-renders on map interaction
+const MovementPanel = memo(function MovementPanel({ movements, selectedOfficer, onSelectOfficer }) {
   if (!movements || movements.length === 0) {
     return (
       <Card className="p-4">
@@ -133,7 +162,7 @@ const MovementPanel = ({ movements, selectedOfficer, onSelectOfficer }) => {
             <div className="flex items-center gap-3">
               <div
                 className="w-4 h-4 rounded-full flex-shrink-0"
-                style={{ backgroundColor: MOVEMENT_COLORS[idx % MOVEMENT_COLORS.length] }}
+                style={{ backgroundColor: getMovementColor(idx) }}
               />
               <div className="flex-1 min-w-0">
                 <div className="font-medium text-gray-900 truncate">
@@ -215,7 +244,7 @@ const ProtestPanel = ({ protests, selectedProtest, onSelectProtest }) => {
 };
 
 // Main Geographic Page
-export default function GeographicPage() {
+function GeographicPage() {
   const [geoData, setGeoData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -367,11 +396,17 @@ export default function GeographicPage() {
             {/* Map Container */}
             <div className="lg:col-span-3">
               <Card className="overflow-hidden">
-                <div className="h-[600px]">
+                <div
+                  className="h-[600px]"
+                  role="application"
+                  aria-label="Interactive map showing protest locations and officer movements across the UK"
+                >
                   <MapContainer
                     center={defaultCenter}
                     zoom={defaultZoom}
                     style={{ height: '100%', width: '100%' }}
+                    keyboard={true}
+                    scrollWheelZoom={true}
                   >
                     <TileLayer
                       attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
@@ -463,7 +498,7 @@ export default function GeographicPage() {
                           key={movement.officer_id}
                           positions={positions}
                           pathOptions={{
-                            color: MOVEMENT_COLORS[idx % MOVEMENT_COLORS.length],
+                            color: getMovementColor(idx),
                             weight: selectedOfficer === movement.officer_id ? 4 : 2,
                             opacity: selectedOfficer === movement.officer_id ? 1 : 0.6,
                             dashArray: '10, 5'
@@ -493,22 +528,30 @@ export default function GeographicPage() {
                 </div>
               </Card>
 
-              {/* Legend */}
-              <div className="mt-4 flex flex-wrap items-center gap-6 text-sm text-gray-600">
+              {/* Legend - accessible with both color and text */}
+              <div
+                className="mt-4 flex flex-wrap items-center gap-6 text-sm text-gray-600"
+                role="region"
+                aria-label="Map legend"
+              >
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-medium uppercase text-gray-500">Officer Count:</span>
-                  <div className="flex items-center gap-3">
-                    <span className="flex items-center gap-1">
-                      <div className="w-3 h-3 rounded-full bg-green-500" /> 1-4
+                  <div className="flex items-center gap-3" role="list">
+                    <span className="flex items-center gap-1" role="listitem">
+                      <div className="w-3 h-3 rounded-full bg-green-500" aria-hidden="true" />
+                      <span>1-4 <span className="sr-only">officers (green, low)</span></span>
                     </span>
-                    <span className="flex items-center gap-1">
-                      <div className="w-3 h-3 rounded-full bg-yellow-500" /> 5-14
+                    <span className="flex items-center gap-1" role="listitem">
+                      <div className="w-3 h-3 rounded-full bg-yellow-500" aria-hidden="true" />
+                      <span>5-14 <span className="sr-only">officers (yellow, medium)</span></span>
                     </span>
-                    <span className="flex items-center gap-1">
-                      <div className="w-3 h-3 rounded-full bg-orange-500" /> 15-29
+                    <span className="flex items-center gap-1" role="listitem">
+                      <div className="w-3 h-3 rounded-full bg-orange-500" aria-hidden="true" />
+                      <span>15-29 <span className="sr-only">officers (orange, high)</span></span>
                     </span>
-                    <span className="flex items-center gap-1">
-                      <div className="w-3 h-3 rounded-full bg-red-500" /> 30+
+                    <span className="flex items-center gap-1" role="listitem">
+                      <div className="w-3 h-3 rounded-full bg-red-500" aria-hidden="true" />
+                      <span>30+ <span className="sr-only">officers (red, very high)</span></span>
                     </span>
                   </div>
                 </div>
@@ -538,3 +581,5 @@ export default function GeographicPage() {
     </div>
   );
 }
+
+export default withErrorBoundary(GeographicPage, 'An error occurred while loading the Geographic Analysis page. Please try again.');

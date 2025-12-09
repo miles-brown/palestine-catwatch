@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -11,12 +11,13 @@ import UniformAnalysisCard from '@/components/UniformAnalysisCard';
 import { Skeleton } from '@/components/ui/skeleton';
 import { API_BASE, getMediaUrl } from '../utils/api';
 import { getRankColor } from '../utils/constants';
+import { withErrorBoundary } from '../components/ErrorBoundary';
 
 // Use centralized utility for secure path handling
 const getCropUrl = getMediaUrl;
 
 // Profile Header Component
-const ProfileHeader = ({ officer, network, onDownloadDossier, downloading }) => {
+const ProfileHeader = ({ officer, network, onDownloadDossier, downloading, mediaCount, verifiedCount }) => {
   const primaryAppearance = officer.appearances?.[0];
   const cropUrl = primaryAppearance?.image_crop_path
     ? getCropUrl(primaryAppearance.image_crop_path)
@@ -86,9 +87,7 @@ const ProfileHeader = ({ officer, network, onDownloadDossier, downloading }) => 
                 <div className="text-xs text-slate-400 uppercase">Appearances</div>
               </div>
               <div className="bg-white/10 rounded-lg p-3 text-center">
-                <div className="text-2xl font-bold">
-                  {new Set((officer.appearances || []).map(a => a.media_id)).size}
-                </div>
+                <div className="text-2xl font-bold">{mediaCount}</div>
                 <div className="text-xs text-slate-400 uppercase">Media Files</div>
               </div>
               <div className="bg-white/10 rounded-lg p-3 text-center">
@@ -98,9 +97,7 @@ const ProfileHeader = ({ officer, network, onDownloadDossier, downloading }) => 
                 <div className="text-xs text-slate-400 uppercase">Associates</div>
               </div>
               <div className="bg-white/10 rounded-lg p-3 text-center">
-                <div className="text-2xl font-bold">
-                  {(officer.appearances || []).filter(a => a.verified).length}
-                </div>
+                <div className="text-2xl font-bold">{verifiedCount}</div>
                 <div className="text-xs text-slate-400 uppercase">Verified</div>
               </div>
             </div>
@@ -263,7 +260,7 @@ const NetworkSection = ({ network }) => {
             to={`/officer/${assoc.officer_id}`}
             className="flex items-center gap-3 p-3 bg-purple-50 rounded-lg hover:bg-purple-100 transition-colors"
           >
-            {assoc.crop_path ? (
+            {assoc.crop_path && getCropUrl(assoc.crop_path) ? (
               <img
                 src={getCropUrl(assoc.crop_path)}
                 alt="Associate"
@@ -372,7 +369,7 @@ const AppearancesTimeline = ({ appearances }) => {
                       expandedAppearance === appearance.id ? null : appearance.id
                     )}
                   >
-                    {appearance.image_crop_path ? (
+                    {appearance.image_crop_path && getCropUrl(appearance.image_crop_path) ? (
                       <img
                         src={getCropUrl(appearance.image_crop_path)}
                         alt="Appearance"
@@ -557,7 +554,7 @@ const UniformSummary = ({ officerId }) => {
 };
 
 // Main Officer Profile Page
-export default function OfficerProfilePage() {
+function OfficerProfilePage() {
   const { officerId } = useParams();
   const [officer, setOfficer] = useState(null);
   const [network, setNetwork] = useState(null);
@@ -692,6 +689,17 @@ export default function OfficerProfilePage() {
     );
   }
 
+  // Memoize expensive calculations to prevent recreation on every render
+  const mediaCount = useMemo(() => {
+    if (!officer?.appearances) return 0;
+    return new Set(officer.appearances.map(a => a.media_id)).size;
+  }, [officer?.appearances]);
+
+  const verifiedCount = useMemo(() => {
+    if (!officer?.appearances) return 0;
+    return officer.appearances.filter(a => a.verified).length;
+  }, [officer?.appearances]);
+
   if (!officer) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -722,6 +730,8 @@ export default function OfficerProfilePage() {
             network={network}
             onDownloadDossier={handleDownloadDossier}
             downloading={downloading}
+            mediaCount={mediaCount}
+            verifiedCount={verifiedCount}
           />
         </div>
 
@@ -760,3 +770,5 @@ export default function OfficerProfilePage() {
     </div>
   );
 }
+
+export default withErrorBoundary(OfficerProfilePage, 'An error occurred while loading the Officer Profile. Please try again.');

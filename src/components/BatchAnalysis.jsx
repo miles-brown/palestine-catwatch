@@ -5,7 +5,13 @@ import {
   Shield, RefreshCw, Play, AlertTriangle, CheckCircle, XCircle,
   Loader2, Users, ChevronDown, ChevronUp
 } from 'lucide-react';
-import { API_BASE, fetchWithErrorHandling, POLL_INTERVAL_MS } from '../utils/api';
+import { API_BASE, fetchWithErrorHandling } from '../utils/api';
+import { UI } from '../utils/constants';
+
+// Polling configuration with exponential backoff
+const INITIAL_POLL_INTERVAL = UI.POLL_INTERVAL_MS;
+const MAX_POLL_INTERVAL = 10000; // 10 seconds max
+const BACKOFF_MULTIPLIER = 1.5;
 
 const BatchAnalysis = () => {
   const [pending, setPending] = useState([]);
@@ -18,6 +24,10 @@ const BatchAnalysis = () => {
 
   // Ref to track if batch is still in progress (avoids stale closure in interval)
   const batchInProgressRef = useRef(false);
+  // Ref to track current poll interval for backoff
+  const pollIntervalRef = useRef(INITIAL_POLL_INTERVAL);
+  // Ref to track consecutive errors for backoff
+  const consecutiveErrorsRef = useRef(0);
 
   // Fetch pending appearances
   const fetchPending = useCallback(async () => {
@@ -37,12 +47,15 @@ const BatchAnalysis = () => {
     fetchPending();
   }, [fetchPending]);
 
-  // Poll for batch progress - fixed race condition
-  // The interval is created once when batchId is set, and checks progress inside the callback
+  // Poll for batch progress with exponential backoff
+  // Uses setTimeout chain instead of setInterval for dynamic intervals
   useEffect(() => {
     if (!batchId) return;
 
     batchInProgressRef.current = true;
+    pollIntervalRef.current = INITIAL_POLL_INTERVAL;
+    consecutiveErrorsRef.current = 0;
+    let timeoutId = null;
 
     const pollProgress = async () => {
       // Check ref instead of state to avoid stale closure
@@ -52,25 +65,37 @@ const BatchAnalysis = () => {
         const data = await fetchWithErrorHandling(`${API_BASE}/appearances/batch-status/${batchId}`);
         setBatchProgress(data);
 
+        // Reset backoff on success
+        consecutiveErrorsRef.current = 0;
+        pollIntervalRef.current = INITIAL_POLL_INTERVAL;
+
         if (!data.in_progress) {
           // Batch complete - stop polling and refresh pending list
           batchInProgressRef.current = false;
           fetchPending();
+          return;
         }
       } catch (err) {
         console.error('Failed to fetch batch progress:', err);
-        // Don't stop polling on transient errors
+        // Apply exponential backoff on errors
+        consecutiveErrorsRef.current += 1;
+        pollIntervalRef.current = Math.min(
+          pollIntervalRef.current * BACKOFF_MULTIPLIER,
+          MAX_POLL_INTERVAL
+        );
+      }
+
+      // Schedule next poll with current interval (may have been increased by backoff)
+      if (batchInProgressRef.current) {
+        timeoutId = setTimeout(pollProgress, pollIntervalRef.current);
       }
     };
 
     // Initial poll
     pollProgress();
 
-    // Set up interval - no dependency on batchProgress state
-    const interval = setInterval(pollProgress, POLL_INTERVAL_MS);
-
     return () => {
-      clearInterval(interval);
+      if (timeoutId) clearTimeout(timeoutId);
       batchInProgressRef.current = false;
     };
   }, [batchId, fetchPending]);
