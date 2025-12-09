@@ -1,9 +1,8 @@
 import { useState, useEffect } from 'react';
 import OfficerCard from './OfficerCard';
 import OfficerProfile from './OfficerProfile';
-// import { officers } from '../data/officers'; // Deprecated
 import MapView from './MapView';
-import { Heart, Camera, Megaphone, AlertTriangle, Users, Eye, Map, Grid } from 'lucide-react';
+import { Heart, Camera, Megaphone, AlertTriangle, Users, Eye, Map, Grid, Filter, X, ChevronDown } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 
 let API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
@@ -11,16 +10,41 @@ if (!API_BASE.startsWith("http")) {
   API_BASE = `https://${API_BASE}`;
 }
 
+const ITEMS_PER_PAGE = 20;
+
 const HomePage = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedOfficer, setSelectedOfficer] = useState(null);
   const [officers, setOfficers] = useState([]);
   const [viewMode, setViewMode] = useState('grid'); // 'grid' or 'map'
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalOfficers, setTotalOfficers] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Advanced filters
+  const [showFilters, setShowFilters] = useState(false);
+  const [forceFilter, setForceFilter] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [minAppearances, setMinAppearances] = useState(0);
+  const [availableForces, setAvailableForces] = useState([]);
 
   useEffect(() => {
     const fetchOfficers = async () => {
+      setIsLoading(true);
       try {
-        const response = await fetch(`${API_BASE}/officers`);
+        // Build query params with filters
+        const skip = (currentPage - 1) * ITEMS_PER_PAGE;
+        const params = new URLSearchParams({
+          skip: skip.toString(),
+          limit: ITEMS_PER_PAGE.toString()
+        });
+
+        if (forceFilter) params.append('force', forceFilter);
+        if (dateFrom) params.append('date_from', dateFrom);
+        if (dateTo) params.append('date_to', dateTo);
+
+        const response = await fetch(`${API_BASE}/officers?${params}`);
         const data = await response.json();
 
         const mappedOfficers = data.map(off => {
@@ -58,13 +82,47 @@ const HomePage = () => {
           };
         });
         setOfficers(mappedOfficers);
+
+        // Extract unique forces for filter dropdown
+        const forces = [...new Set(data.map(o => o.force).filter(Boolean))];
+        if (forces.length > 0) {
+          setAvailableForces(prev => {
+            const combined = [...new Set([...prev, ...forces])];
+            return combined.sort();
+          });
+        }
       } catch (error) {
         console.error("Failed to fetch officers:", error);
+      } finally {
+        setIsLoading(false);
       }
     };
 
     fetchOfficers();
+  }, [currentPage, forceFilter, dateFrom, dateTo]);
+
+  // Fetch total count using dedicated count endpoint
+  useEffect(() => {
+    const fetchTotalCount = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/officers/count`);
+        const data = await response.json();
+        setTotalOfficers(data.count || 0);
+      } catch (error) {
+        console.error("Failed to fetch total count:", error);
+      }
+    };
+    fetchTotalCount();
   }, []);
+
+  const totalPages = Math.ceil(totalOfficers / ITEMS_PER_PAGE);
+
+  const handlePageChange = (newPage) => {
+    if (newPage >= 1 && newPage <= totalPages) {
+      setCurrentPage(newPage);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
 
   const handleOfficerClick = (officer) => {
     setSelectedOfficer(officer);
@@ -164,9 +222,9 @@ const HomePage = () => {
         {/* Search and Filters */}
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mb-8">
           <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-            <div className="flex gap-4 items-end">
+            <div className="flex flex-wrap gap-4 items-end">
               {/* Text Search */}
-              <div className="flex-1">
+              <div className="flex-1 min-w-[200px]">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Search Officials</label>
                 <input
                   type="text"
@@ -177,9 +235,29 @@ const HomePage = () => {
                 />
               </div>
 
+              {/* Advanced Filters Toggle */}
+              <div>
+                <button
+                  onClick={() => setShowFilters(!showFilters)}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-md border ${
+                    showFilters || forceFilter || dateFrom || dateTo
+                      ? 'bg-green-50 border-green-300 text-green-700'
+                      : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  <Filter className="h-4 w-4" />
+                  Filters
+                  {(forceFilter || dateFrom || dateTo) && (
+                    <span className="ml-1 px-1.5 py-0.5 text-xs bg-green-100 text-green-800 rounded-full">
+                      {[forceFilter, dateFrom, dateTo].filter(Boolean).length}
+                    </span>
+                  )}
+                  <ChevronDown className={`h-4 w-4 transition-transform ${showFilters ? 'rotate-180' : ''}`} />
+                </button>
+              </div>
+
               {/* View Toggle */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">View</label>
                 <div className="flex bg-gray-100 p-1 rounded-md border border-gray-200">
                   <button
                     onClick={() => setViewMode('grid')}
@@ -198,6 +276,85 @@ const HomePage = () => {
                 </div>
               </div>
             </div>
+
+            {/* Advanced Filters Panel */}
+            {showFilters && (
+              <div className="mt-4 pt-4 border-t border-gray-200">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {/* Force Filter */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Force</label>
+                    <select
+                      value={forceFilter}
+                      onChange={(e) => { setForceFilter(e.target.value); setCurrentPage(1); }}
+                      className="w-full p-2 border border-gray-300 rounded-md focus:ring-green-500 focus:border-green-500"
+                    >
+                      <option value="">All Forces</option>
+                      {availableForces.map(force => (
+                        <option key={force} value={force}>{force}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Date From */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Date From</label>
+                    <input
+                      type="date"
+                      value={dateFrom}
+                      onChange={(e) => { setDateFrom(e.target.value); setCurrentPage(1); }}
+                      className="w-full p-2 border border-gray-300 rounded-md focus:ring-green-500 focus:border-green-500"
+                    />
+                  </div>
+
+                  {/* Date To */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Date To</label>
+                    <input
+                      type="date"
+                      value={dateTo}
+                      onChange={(e) => { setDateTo(e.target.value); setCurrentPage(1); }}
+                      className="w-full p-2 border border-gray-300 rounded-md focus:ring-green-500 focus:border-green-500"
+                    />
+                  </div>
+
+                  {/* Min Appearances */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Min Appearances</label>
+                    <select
+                      value={minAppearances}
+                      onChange={(e) => { setMinAppearances(parseInt(e.target.value)); setCurrentPage(1); }}
+                      className="w-full p-2 border border-gray-300 rounded-md focus:ring-green-500 focus:border-green-500"
+                    >
+                      <option value={0}>Any</option>
+                      <option value={2}>2+</option>
+                      <option value={3}>3+</option>
+                      <option value={5}>5+</option>
+                      <option value={10}>10+</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Clear Filters */}
+                {(forceFilter || dateFrom || dateTo || minAppearances > 0) && (
+                  <div className="mt-4 flex justify-end">
+                    <button
+                      onClick={() => {
+                        setForceFilter('');
+                        setDateFrom('');
+                        setDateTo('');
+                        setMinAppearances(0);
+                        setCurrentPage(1);
+                      }}
+                      className="flex items-center gap-2 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 rounded-md"
+                    >
+                      <X className="h-4 w-4" />
+                      Clear All Filters
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -218,32 +375,90 @@ const HomePage = () => {
             />
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-            {officers
-              .filter(officer => {
-                if (!searchQuery) return true;
-                const query = searchQuery.toLowerCase();
-                return (
-                  (officer.badgeNumber && officer.badgeNumber.toLowerCase().includes(query)) ||
-                  (officer.notes && officer.notes.toLowerCase().includes(query)) ||
-                  (officer.role && officer.role.toLowerCase().includes(query))
-                );
-              })
-              .map((officer) => (
-                <OfficerCard
-                  key={officer.id}
-                  officer={officer}
-                  onClick={handleOfficerClick}
-                />
-              ))}
-          </div>
+          <>
+          {isLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600"></div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+              {officers
+                .filter(officer => {
+                  // Text search filter
+                  if (searchQuery) {
+                    const query = searchQuery.toLowerCase();
+                    const matchesSearch = (
+                      (officer.badgeNumber && officer.badgeNumber.toLowerCase().includes(query)) ||
+                      (officer.notes && officer.notes.toLowerCase().includes(query)) ||
+                      (officer.role && officer.role.toLowerCase().includes(query)) ||
+                      (officer.force && officer.force.toLowerCase().includes(query))
+                    );
+                    if (!matchesSearch) return false;
+                  }
+
+                  // Min appearances filter (client-side)
+                  if (minAppearances > 0 && officer.sources.length < minAppearances) {
+                    return false;
+                  }
+
+                  return true;
+                })
+                .map((officer) => (
+                  <OfficerCard
+                    key={officer.id}
+                    officer={officer}
+                    onClick={handleOfficerClick}
+                  />
+                ))}
+            </div>
+          )}
+
+          {/* Pagination Controls */}
+          {totalPages > 1 && !searchQuery && (
+            <div className="flex items-center justify-center gap-2 mt-8">
+              <button
+                onClick={() => handlePageChange(1)}
+                disabled={currentPage === 1}
+                className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                First
+              </button>
+              <button
+                onClick={() => handlePageChange(currentPage - 1)}
+                disabled={currentPage === 1}
+                className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Previous
+              </button>
+
+              <span className="px-4 py-2 text-sm font-medium text-gray-700">
+                Page {currentPage} of {totalPages}
+              </span>
+
+              <button
+                onClick={() => handlePageChange(currentPage + 1)}
+                disabled={currentPage === totalPages}
+                className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Next
+              </button>
+              <button
+                onClick={() => handlePageChange(totalPages)}
+                disabled={currentPage === totalPages}
+                className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Last
+              </button>
+            </div>
+          )}
+          </>
         )}
 
         {/* Stats section */}
         <div className="mt-16 grid grid-cols-1 md:grid-cols-3 gap-8 text-center">
           <Card className="p-6 border-2 border-green-200">
             <div className="text-3xl font-bold text-green-700 mb-2">
-              {officers.length}
+              {totalOfficers || officers.length}
             </div>
             <div className="text-gray-600">State Agents Documented</div>
             <div className="text-xs text-gray-500 mt-1">Suppressing Palestine solidarity</div>

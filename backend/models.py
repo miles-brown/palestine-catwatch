@@ -35,7 +35,7 @@ class Officer(Base):
     id = Column(Integer, primary_key=True, index=True)
     badge_number = Column(String, index=True, nullable=True) # OCR findings
     force = Column(String, nullable=True) # e.g. Met Police
-    visual_id = Column(String, index=True, nullable=True) # Face encoding hash or similar ID
+    visual_id = Column(String, index=False, nullable=True) # Face encoding hash - DO NOT INDEX (Too large for B-Tree)
     notes = Column(Text, nullable=True)
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
@@ -48,12 +48,82 @@ class OfficerAppearance(Base):
     id = Column(Integer, primary_key=True, index=True)
     officer_id = Column(Integer, ForeignKey("officers.id"))
     media_id = Column(Integer, ForeignKey("media.id"))
-    
+
     timestamp_in_video = Column(String, nullable=True) # e.g. "00:12:34"
     image_crop_path = Column(String, nullable=True) # Path to the cropped face/body image
-    
+
     role = Column(String, nullable=True) # e.g. "Medic", "Commander"
     action = Column(Text, nullable=True) # AI described action: "Kettling", "Arresting"
-    
+
+    # Confidence calibration fields
+    confidence = Column(Float, nullable=True, default=None)  # 0-100 confidence score
+    confidence_factors = Column(Text, nullable=True)  # JSON string with breakdown: face_quality, ocr_quality, etc.
+    verified = Column(Boolean, default=False)  # Manual verification flag
+
     officer = relationship("Officer", back_populates="appearances")
     media = relationship("Media", back_populates="appearances")
+    equipment_detections = relationship("EquipmentDetection", back_populates="appearance", cascade="all, delete-orphan")
+    uniform_analysis = relationship("UniformAnalysis", back_populates="appearance", uselist=False, cascade="all, delete-orphan")
+
+
+class Equipment(Base):
+    """Reference table for police equipment types"""
+    __tablename__ = "equipment"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)  # "Long Shield", "NATO Helmet"
+    category = Column(String, index=True)  # "defensive", "offensive", "identification", "restraint", "communication"
+    description = Column(Text, nullable=True)
+
+    detections = relationship("EquipmentDetection", back_populates="equipment")
+
+
+class EquipmentDetection(Base):
+    """Junction table linking detected equipment to officer appearances"""
+    __tablename__ = "equipment_detections"
+
+    id = Column(Integer, primary_key=True, index=True)
+    appearance_id = Column(Integer, ForeignKey("officer_appearances.id"), index=True)
+    equipment_id = Column(Integer, ForeignKey("equipment.id"), index=True)
+    confidence = Column(Float, nullable=True)  # 0-1 confidence score
+    bounding_box = Column(String, nullable=True)  # JSON: {"x": 0, "y": 0, "width": 100, "height": 100}
+
+    appearance = relationship("OfficerAppearance", back_populates="equipment_detections")
+    equipment = relationship("Equipment", back_populates="detections")
+
+
+class UniformAnalysis(Base):
+    """Stores Claude Vision analysis results for officer uniforms"""
+    __tablename__ = "uniform_analyses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    appearance_id = Column(Integer, ForeignKey("officer_appearances.id"), unique=True, index=True)
+
+    # Force detection
+    detected_force = Column(String, nullable=True)  # "Metropolitan Police Service", "City of London Police"
+    force_confidence = Column(Float, nullable=True)
+    force_indicators = Column(Text, nullable=True)  # JSON array of indicators
+
+    # Unit type detection
+    unit_type = Column(String, nullable=True)  # "TSG", "FIT", "Level 2 PSU", "Standard"
+    unit_confidence = Column(Float, nullable=True)
+
+    # Rank detection
+    detected_rank = Column(String, nullable=True)  # "Constable", "Sergeant", "Inspector"
+    rank_confidence = Column(Float, nullable=True)
+    rank_indicators = Column(Text, nullable=True)  # JSON: {"chevrons": 3, "pips": 0}
+
+    # Shoulder number
+    shoulder_number = Column(String, nullable=True)  # e.g., "U1234"
+    shoulder_number_confidence = Column(Float, nullable=True)
+
+    # Uniform classification
+    uniform_type = Column(String, nullable=True)  # "hi_vis", "dark_operational", "riot_gear", "ceremonial"
+
+    # Analysis metadata
+    raw_analysis = Column(Text, nullable=True)  # Full Claude JSON response
+    analyzed_at = Column(DateTime, default=datetime.utcnow)
+    api_cost_tokens = Column(Integer, nullable=True)  # Track API usage
+    image_hash = Column(String, nullable=True, index=True)  # SHA256 for caching
+
+    appearance = relationship("OfficerAppearance", back_populates="uniform_analysis")

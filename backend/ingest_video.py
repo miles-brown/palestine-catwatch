@@ -11,16 +11,111 @@ from ingest import ingest_media # Reuse logic if possible, or replicate for flex
 DOWNLOAD_DIR = "data/downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-def download_video(url, protest_id=None):
+def download_video(url, protest_id=None, status_callback=None):
     """
     Downloads video using yt-dlp.
     Returns: file_path, info_dict
     """
+    from tqdm import tqdm
+    
+    # Progress bar state
+    pbar = None
+    last_socket_percent = -1
+    
+    def progress_hook(d):
+        nonlocal pbar, last_socket_percent
+        
+        if d['status'] == 'downloading':
+            # 1. Initialize TQDM if needed
+            total_bytes = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
+            downloaded = d.get('downloaded_bytes', 0)
+            
+            if pbar is None and total_bytes > 0:
+                pbar = tqdm(total=total_bytes, unit='B', unit_scale=True, unit_divisor=1024, desc="Downloading")
+            
+            # 2. Update TQDM (Terminal)
+            if pbar:
+                pbar.n = downloaded
+                pbar.refresh()
+            
+            # 3. Update Frontend (Throttle to ~10%)
+            if status_callback:
+                # Parse percent string " 45.3%" -> 45.3
+                try:
+                    percent_str = d.get('_percent_str', '0%').strip().replace('%','')
+                    current_percent = float(percent_str)
+                    
+                    # Update only if we crossed a 10% threshold or it's 100%
+                    if current_percent >= 100 or (current_percent - last_socket_percent >= 10):
+                        size_mb = total_bytes / (1024 * 1024)
+                        status_callback("log", f"Downloading: {current_percent:.1f}% of {size_mb:.1f}MB")
+                        last_socket_percent = current_percent
+                        
+                        if current_percent >= 100:
+                            status_callback("status_update", "Extracting")
+                except ValueError:
+                    pass
+
+        elif d['status'] == 'finished':
+            if pbar:
+                pbar.close()
+            if status_callback:
+                status_callback("log", "Download complete.")
+
+    # Cookie file path (optional - export from browser for best results)
+    cookie_file = os.path.join(os.path.dirname(__file__), 'cookies.txt')
+
     ydl_opts = {
-        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        # More robust format selection - fallback chain for compatibility
+        'format': 'best[ext=mp4]/best[ext=webm]/best',
         'outtmpl': f'{DOWNLOAD_DIR}/%(id)s.%(ext)s',
         'quiet': True,
         'no_warnings': True,
+        'progress_hooks': [progress_hook],
+
+        # === BOT DETECTION BYPASS OPTIONS ===
+
+        # 1. Player client rotation - try multiple clients if one fails
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['ios', 'android', 'web'],  # iOS client often works best
+                'player_skip': ['webpage', 'configs'],  # Skip slow webpage parsing
+            }
+        },
+
+        # 2. Browser-like headers
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Sec-Fetch-Mode': 'navigate',
+        },
+
+        # 3. Retry logic
+        'retries': 5,
+        'fragment_retries': 5,
+        'file_access_retries': 3,
+
+        # 4. Rate limiting - be polite to avoid blocks
+        'sleep_interval': 1,
+        'max_sleep_interval': 5,
+        'sleep_interval_requests': 1,
+
+        # 5. Age-gate bypass (for age-restricted videos)
+        'age_limit': None,
+
+        # 6. Force IPv4 (some hosts block IPv6)
+        'source_address': '0.0.0.0',
+
+        # 7. Socket timeout
+        'socket_timeout': 30,
+
+        # 8. Use cookies if available (most reliable method)
+        **(({'cookiefile': cookie_file} if os.path.exists(cookie_file) else {})),
+
+        # 9. Geo bypass
+        'geo_bypass': True,
+        'geo_bypass_country': 'GB',  # UK-based content
     }
     
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -71,14 +166,54 @@ def process_video_workflow(url, answers, user_provided_protest_id=None, status_c
     print(f"Starting workflow for {url}")
     if status_callback: status_callback("log", f"Starting workflow for {url}")
     
+    # 0. Smart Routing (Heuristic)
+    # If the URL is likely a news article (text/images) and NOT a dedicated video site, capture content first.
+    IS_VIDEO_SITE = False
+    video_domains = ["youtube.com", "youtu.be", "vimeo.com", "dailymotion.com", "twitch.tv", "tiktok.com", "instagram.com", "facebook.com", "twitter.com", "x.com"]
+    
+    for domain in video_domains:
+        if domain in url.lower():
+            IS_VIDEO_SITE = True
+            break
+            
+    # If it is NOT a known video site, it's likely a news article (e.g. dailymail, bbc news text)
+    # Strategy: Try to scrape article content/images FIRST.
+    # If we find a video embedded later, we can process that too (future work), but photos are priority for articles.
+    if not IS_VIDEO_SITE:
+        print(f"URL {url} identified as Article/Page. Routing to Image Scraper first.")
+        if status_callback: status_callback("log", "URL identified as Article/Page. Priority: Scrape Images & Text.")
+        
+        try:
+             from ingest_images import scrape_images_from_url
+             scrape_images_from_url(url, user_provided_protest_id, status_callback)
+             # Should we also try to find video? Maybe. For now, if scraper succeeds, we are good.
+             return
+        except Exception as e:
+             print(f"Scraper failed: {e}. Falling back to Video Downloader just in case...")
+    
+    # ... Fallthrough to Video Logic if it IS a video site, OR if scraper failed ...
+    
     # 1. Download
     try:
-        if status_callback: status_callback("log", "Downloading video... (this may take a moment)")
-        file_path, info = download_video(url)
-        if status_callback: status_callback("log", "Download complete.")
+        if status_callback: status_callback("log", "Processing Video content...")
+        file_path, info = download_video(url, status_callback=status_callback)
+        if status_callback: status_callback("log", "Video download complete.")
     except Exception as e:
-        print(f"Download failed: {e}")
-        if status_callback: status_callback("log", f"Error: Download failed - {e}")
+        # Only log error if we were sure it was a video site.
+        # If it was an article and we fell back here, it implies it had no video either.
+        print(f"Video process failed: {e}")
+        
+        if IS_VIDEO_SITE:
+            if status_callback: status_callback("log", f"Error: Video download failed - {e}")
+            # Try scraper as last resort even for video sites (maybe it's a page with a video that failed, but headers work)
+            try:
+                from ingest_images import scrape_images_from_url
+                scrape_images_from_url(url, user_provided_protest_id, status_callback)
+            except:
+                pass
+        else:
+             if status_callback: status_callback("log", "No video found on page either.")
+        
         return
 
     # 2. Metadata / Protest Association
@@ -129,6 +264,7 @@ def process_video_workflow(url, answers, user_provided_protest_id=None, status_c
         
         media_id = new_media.id
         if status_callback: status_callback("log", f"Media record created ID: {media_id}")
+        if status_callback: status_callback("media_created", {"media_id": media_id})
         
     finally:
         db.close()
@@ -139,4 +275,6 @@ def process_video_workflow(url, answers, user_provided_protest_id=None, status_c
     if status_callback: status_callback("log", "Starting AI Analysis...")
     process_media(media_id, status_callback)
     print(f"Workflow complete for {url}")
-    if status_callback: status_callback("complete", "Analysis Workflow Complete.")
+    # Ensure media_id is sent one last time for robustness
+    if status_callback: status_callback("media_created", {"media_id": media_id})
+    if status_callback: status_callback("complete", {"message": "Analysis Workflow Complete.", "media_id": media_id})

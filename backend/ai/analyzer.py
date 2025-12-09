@@ -11,15 +11,24 @@ except AttributeError:
 else:
     ssl._create_default_https_context = _create_unverified_https_context
 
-# buffer
-# Initialize EasyOCR
-# CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-# EASYOCR_MODELS_DIR = os.path.join(CURRENT_DIR, "easyocr_models")
-# try:
-#     reader = easyocr.Reader(['en'], gpu=False, model_storage_directory=EASYOCR_MODELS_DIR)
-# except Exception as e:
-#     print(f"Warning: OCR Init failed: {e}")
+# Initialize EasyOCR lazily (downloads models on first use)
 reader = None
+_ocr_initialized = False
+
+def _get_ocr_reader():
+    """Lazy initialization of EasyOCR reader to avoid blocking startup."""
+    global reader, _ocr_initialized
+    if _ocr_initialized:
+        return reader
+    _ocr_initialized = True
+    try:
+        print("Initializing EasyOCR (this may download models on first use)...")
+        reader = easyocr.Reader(['en'], gpu=False)
+        print("EasyOCR initialized successfully.")
+    except Exception as e:
+        print(f"Warning: OCR Init failed: {e}")
+        reader = None
+    return reader
 
 # Face Detection
 # Load Face Detector
@@ -55,8 +64,6 @@ try:
     
 except ImportError:
     print("Warning: facenet-pytorch not installed. Re-ID disabled.")
-except Exception as e:
-    print(f"Warning: Failed to load Re-ID model: {e}")
 except Exception as e:
     print(f"Warning: Failed to load Re-ID model: {e}")
 
@@ -147,20 +154,29 @@ def generate_embedding(image_path, face_box=None):
 def detect_objects(image_path):
     """
     Detects objects using YOLOv8.
-    Returns a list of class names found (e.g., ['person', 'baseball bat']).
+    Returns list of dicts: {'label': str, 'box': [x,y,w,h], 'confidence': float}
     """
     if yolo_model is None:
         return []
         
     try:
         results = yolo_model(image_path, verbose=False)
-        detected_classes = []
+        detections = []
         for r in results:
-            for c in r.boxes.cls:
-                class_name = yolo_model.names[int(c)]
-                detected_classes.append(class_name)
+            for box in r.boxes:
+                # YOLO boxes are [x1, y1, x2, y2]
+                x1, y1, x2, y2 = box.xyxy[0].tolist()
+                cls = int(box.cls[0])
+                conf = float(box.conf[0])
+                label = yolo_model.names[cls]
+                
+                detections.append({
+                    'label': label,
+                    'box': [int(x1), int(y1), int(x2-x1), int(y2-y1)],
+                    'confidence': conf
+                })
         
-        return list(set(detected_classes)) # Unique items
+        return detections
     except Exception as e:
         print(f"Object Detection Error: {e}")
         return []
@@ -169,12 +185,13 @@ def extract_text(image_input):
     """
     Extracts text from the image (path or numpy array) using EasyOCR.
     """
-    if reader is None:
+    ocr_reader = _get_ocr_reader()
+    if ocr_reader is None:
         return []
-        
+
     try:
         # reader.readtext accepts file path or numpy array
-        results = reader.readtext(image_input)
+        results = ocr_reader.readtext(image_input)
         # Filter for text with reasonable confidence
         texts = [res[1] for res in results if res[2] > 0.3]
         return texts
@@ -217,47 +234,60 @@ def filter_badge_number(texts):
         if digit_count >= 2 and len(clean) <= 8:
             candidates.append(clean)
             
-    # Return the best candidate (longest digit sequence? or just all joined?)
-    # For transparency, let's return all likely candidates joined
     return ", ".join(candidates) if candidates else None
+
+def calculate_blur(image):
+    """
+    Computes the Laplacian variance of the image.
+    Lower variance = fewer edges = blurrier.
+    Typical threshold is 100.
+    """
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    return cv2.Laplacian(gray, cv2.CV_64F).var()
 
 def process_image_ai(image_path, output_dir):
     """
     Runs full analysis pipeline on an image.
+    1. Detects Objects (YOLO) - Generic scene analysis & Person detection (fallback)
+    2. Detects Faces (SSD) - Specific officer identification
     """
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
         
     print(f"Analyzing {image_path}...")
     
-    detections = detect_faces(image_path)
-    
     analyzed_data = []
     
     img = cv2.imread(image_path)
     if img is None: 
         return []
+    
+    h_img, w_img = img.shape[:2]
 
-    for i, det in enumerate(detections):
+    # 1. Face Detection (Primary)
+    face_detections = detect_faces(image_path)
+    
+    # Track covered areas to avoid duplicates if we add YOLO detections later
+    # (Simplified: just track center points of faces)
+    face_centers = []
+    
+    for i, det in enumerate(face_detections):
         x, y, w, h = det['box']
         
-        # Clamp coordinates
-        h_img, w_img = img.shape[:2]
-        x = max(0, x)
-        y = max(0, y)
-        w = min(w, w_img - x)
-        h = min(h, h_img - y)
+        # Clamp
+        x = max(0, x); y = max(0, y)
+        w = min(w, w_img - x); h = min(h, h_img - y)
+        if w <= 0 or h <= 0: continue
         
-        if w <= 0 or h <= 0:
-            continue
+        face_centers.append((x + w/2, y + h/2))
             
         face_img = img[y:y+h, x:x+w]
         
-        # 1. Quality Check
+        # Quality
         blur_score = calculate_blur(face_img)
-        is_blurry = blur_score < 100 # Threshold
+        is_blurry = blur_score < 100 
         
-        # 2. Focused OCR on Body
+        # Body OCR
         body_crop = get_body_roi(img, (x, y, w, h))
         badge_text = None
         if body_crop is not None and body_crop.size > 0:
@@ -270,15 +300,55 @@ def process_image_ai(image_path, output_dir):
         
         analyzed_data.append({
             "crop_path": face_path,
+            "confidence": det['confidence'],  # Include detection confidence
             "role": "Officer",
-            "action": "Detected", 
-            "badge": badge_text, # Result from focused OCR
+            "action": "Detected (Face)",
+            "badge": badge_text,
             "encoding": None,
-            "quality": {
-                "blur_score": float(blur_score),
-                "is_blurry": is_blurry,
-                "resolution": f"{w}x{h}"
-            }
+            "quality": {"blur_score": float(blur_score), "is_blurry": is_blurry, "resolution": f"{w}x{h}"}
+        })
+
+    # 2. Object Detection (YOLO) - Scene Context & Person Fallback
+    yolo_detections = detect_objects(image_path)
+    objects_found = list(set([d['label'] for d in yolo_detections]))
+    
+    # Fallback: If no faces found, or to augment, crop 'person' detections
+    # Only if they don't overlap with existing faces? 
+    # For now: If 0 faces found, crop ALL detected persons.
+    if len(face_detections) == 0:
+        person_count = 0
+        for det in yolo_detections:
+            if det['label'] == 'person' and det['confidence'] > 0.4:
+                x, y, w, h = det['box']
+                # Validate size (ignore tiny people in background)
+                if w < 50 or h < 50: continue
+                
+                # Clamp
+                x = max(0, x); y = max(0, y)
+                w = min(w, w_img - x); h = min(h, h_img - y)
+                
+                person_img = img[y:y+h, x:x+w]
+                person_filename = f"person_{os.path.basename(image_path)}_{person_count}.jpg"
+                person_path = os.path.join(output_dir, person_filename)
+                cv2.imwrite(person_path, person_img)
+                
+                analyzed_data.append({
+                    "crop_path": person_path,
+                    "confidence": det['confidence'],  # Include detection confidence
+                    "role": "Officer (Unidentified)",
+                    "action": "Detected (Body)",
+                    "badge": None,
+                    "encoding": None,
+                    "quality": {"blur_score": 0.0, "is_blurry": False, "resolution": f"{w}x{h}"}
+                })
+                person_count += 1
+
+    # Add scene summary if we have objects but no crops at all
+    if len(analyzed_data) == 0 and len(objects_found) > 0:
+        analyzed_data.append({
+            "is_scene_summary": True,
+            "objects": objects_found,
+            "message": f"Detected objects: {', '.join(objects_found)}"
         })
         
     return analyzed_data

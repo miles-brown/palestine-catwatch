@@ -52,3 +52,8 @@ data/
 backend/ai/*.caffemodel
 backend/ai/*.prototxt
 backend/ai/easyocr_models/
+backend/.env
+
+# YouTube cookies (contains session tokens - security sensitive)
+backend/cookies.txt
+cookies.txt
