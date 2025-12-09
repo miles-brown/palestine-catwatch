@@ -63,11 +63,17 @@ def download_video(url, protest_id=None, status_callback=None):
                 status_callback("log", "Download complete.")
 
     ydl_opts = {
-        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        # More robust format selection - fallback chain for compatibility
+        'format': 'best[ext=mp4]/best[ext=webm]/best',
         'outtmpl': f'{DOWNLOAD_DIR}/%(id)s.%(ext)s',
         'quiet': True,
         'no_warnings': True,
         'progress_hooks': [progress_hook],
+        # Workarounds for YouTube changes
+        'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        },
     }
     
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:

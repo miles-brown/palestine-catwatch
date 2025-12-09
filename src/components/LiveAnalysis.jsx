@@ -1,13 +1,16 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { io } from 'socket.io-client';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Terminal, Cpu, Shield, AlertTriangle, Check, X, Server, Activity, ZoomIn } from 'lucide-react';
+import { Terminal, Cpu, Shield, AlertTriangle, Check, X, Server, Activity, ZoomIn, RefreshCw, WifiOff } from 'lucide-react';
 
 let API_URL = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 if (!API_URL.startsWith("http")) {
     API_URL = `https://${API_URL}`;
 }
+
+const MAX_RECONNECT_ATTEMPTS = 3;
+const CONNECTION_TIMEOUT = 15000; // 15 seconds
 
 export default function LiveAnalysis({ taskId, onComplete }) {
     const [logs, setLogs] = useState([]);
@@ -15,6 +18,8 @@ export default function LiveAnalysis({ taskId, onComplete }) {
     const [scrapedMedia, setScrapedMedia] = useState([]);
     const [status, setStatus] = useState('connecting'); // connecting, active, complete, error
     const [stats, setStats] = useState({ faces: 0, objects: 0, confidence_avg: 0 });
+    const [errorMessage, setErrorMessage] = useState(null);
+    const [reconnectAttempts, setReconnectAttempts] = useState(0);
     const logEndRef = useRef(null);
     const socketRef = useRef(null);
 
@@ -22,23 +27,79 @@ export default function LiveAnalysis({ taskId, onComplete }) {
     const [reconData, setReconData] = useState(null);
     const [mediaId, setMediaId] = useState(null);
     const frameTimeoutRef = useRef(null);
+    const connectionTimeoutRef = useRef(null);
 
-    useEffect(() => {
+    const addLog = useCallback((source, message) => {
+        setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), source, message }]);
+    }, []);
+
+    const connectSocket = useCallback(() => {
+        // Clear any existing connection timeout
+        if (connectionTimeoutRef.current) {
+            clearTimeout(connectionTimeoutRef.current);
+        }
+
+        // Set connection timeout
+        connectionTimeoutRef.current = setTimeout(() => {
+            if (status === 'connecting') {
+                addLog('Error', 'Connection timeout - server not responding');
+                setStatus('error');
+                setErrorMessage('Connection timeout. The server may be unavailable.');
+            }
+        }, CONNECTION_TIMEOUT);
+
         // Connect to WebSocket
         const socket = io(API_URL, {
             path: '/socket.io',
-            transports: ['websocket'],
+            transports: ['websocket', 'polling'], // Allow fallback to polling
+            timeout: CONNECTION_TIMEOUT,
+            reconnection: true,
+            reconnectionAttempts: MAX_RECONNECT_ATTEMPTS,
+            reconnectionDelay: 1000,
         });
         socketRef.current = socket;
 
         socket.on('connect', () => {
+            clearTimeout(connectionTimeoutRef.current);
+            setReconnectAttempts(0);
+            setErrorMessage(null);
             addLog('System', 'Connected to analysis server.');
             setStatus('active');
             socket.emit('join_task', taskId);
         });
 
-        socket.on('disconnect', () => {
-            addLog('System', 'Disconnected from server.');
+        socket.on('connect_error', (error) => {
+            clearTimeout(connectionTimeoutRef.current);
+            addLog('Error', `Connection failed: ${error.message}`);
+            setReconnectAttempts(prev => prev + 1);
+
+            if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS - 1) {
+                setStatus('error');
+                setErrorMessage(`Failed to connect after ${MAX_RECONNECT_ATTEMPTS} attempts. Check if the backend server is running.`);
+            }
+        });
+
+        socket.on('disconnect', (reason) => {
+            addLog('System', `Disconnected: ${reason}`);
+            if (reason === 'io server disconnect' || reason === 'transport close') {
+                // Server closed connection or transport failed
+                if (status !== 'complete' && status !== 'error') {
+                    setStatus('error');
+                    setErrorMessage('Lost connection to server.');
+                }
+            }
+        });
+
+        socket.on('reconnect', (attemptNumber) => {
+            addLog('System', `Reconnected after ${attemptNumber} attempts`);
+            setErrorMessage(null);
+            setStatus('active');
+            socket.emit('join_task', taskId);
+        });
+
+        socket.on('reconnect_failed', () => {
+            setStatus('error');
+            setErrorMessage('Failed to reconnect. Please try again.');
         });
 
         socket.on('log_message', (data) => {
@@ -48,6 +109,13 @@ export default function LiveAnalysis({ taskId, onComplete }) {
         // Custom events from backend
         socket.on('log', (msg) => {
             addLog('Info', msg);
+        });
+
+        // Handle backend errors
+        socket.on('Error', (msg) => {
+            addLog('Error', msg);
+            setErrorMessage(`Processing error: ${msg}`);
+            // Don't set status to error - processing might continue
         });
 
         socket.on('analyzing_frame', (data) => {
@@ -73,9 +141,11 @@ export default function LiveAnalysis({ taskId, onComplete }) {
         });
 
         socket.on('status_update', (newStatus) => {
-            setStatus(newStatus);
+            // Don't override error status unless it's complete
+            if (status !== 'error' || newStatus === 'complete') {
+                setStatus(newStatus);
+            }
         });
-
 
         socket.on('candidate_officer', (data) => {
             addLog('AI', `Candidate detected with ${(data.confidence * 100).toFixed(1)}% confidence.`);
@@ -92,74 +162,127 @@ export default function LiveAnalysis({ taskId, onComplete }) {
                     addLog('System', `Finalized Media ID: ${data.media_id}`);
                 }
             }
-            addLog('System', msg);
+            addLog('System', msg || 'Processing complete');
             setStatus('complete');
             setCurrentFrame(null);
+            setErrorMessage(null);
         });
+
+        return socket;
+    }, [taskId, addLog, status, reconnectAttempts]);
+
+    const handleRetry = useCallback(() => {
+        setStatus('connecting');
+        setErrorMessage(null);
+        setReconnectAttempts(0);
+        if (socketRef.current) {
+            socketRef.current.disconnect();
+        }
+        connectSocket();
+    }, [connectSocket]);
+
+    useEffect(() => {
+        const socket = connectSocket();
 
         return () => {
             socket.disconnect();
             if (frameTimeoutRef.current) clearTimeout(frameTimeoutRef.current);
+            if (connectionTimeoutRef.current) clearTimeout(connectionTimeoutRef.current);
         };
-    }, [taskId]);
+    }, [taskId]); // Only reconnect if taskId changes
 
     // Auto-scroll logs
     useEffect(() => {
         logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [logs]);
 
-    const addLog = (source, message) => {
-        setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), source, message }]);
-    };
-
-    const handledecision = (id, decision) => {
+    const handleDecision = (id, decision) => {
         // In a real app, send API call to update DB
         console.log(`User decision for ${id}: ${decision}`);
         setCandidates(prev => prev.map(c => c.id === id ? { ...c, reviewed: true, decision } : c));
     };
 
+    // Get status display properties
+    const getStatusDisplay = () => {
+        switch (status) {
+            case 'connecting':
+                return { text: 'CONNECTING', color: 'text-yellow-400', bgColor: 'bg-yellow-500/10' };
+            case 'active':
+                return { text: 'ACTIVE', color: 'text-green-400', bgColor: 'bg-green-500/10' };
+            case 'complete':
+                return { text: 'COMPLETE', color: 'text-blue-400', bgColor: 'bg-blue-500/10' };
+            case 'error':
+                return { text: 'ERROR', color: 'text-red-400', bgColor: 'bg-red-500/10' };
+            default:
+                return { text: status.toUpperCase(), color: 'text-blue-400', bgColor: 'bg-blue-500/10' };
+        }
+    };
+
+    const statusDisplay = getStatusDisplay();
+
     return (
-        <div className="min-h-screen bg-slate-950 text-slate-200 p-6 font-mono">
-            {/* Header / HUD */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-                <Card className="bg-slate-900 border-slate-800 p-4 flex items-center gap-4">
-                    <div className="p-3 bg-blue-500/10 rounded-full text-blue-400">
-                        <Activity className="h-6 w-6 animate-pulse" />
+        <div className="min-h-screen bg-slate-950 text-slate-200 p-3 sm:p-6 font-mono">
+            {/* Error Banner */}
+            {errorMessage && (
+                <div className="mb-6 p-4 bg-red-900/30 border border-red-500/50 rounded-lg flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <WifiOff className="h-5 w-5 text-red-400" />
+                        <div>
+                            <p className="text-red-400 font-bold">Connection Error</p>
+                            <p className="text-red-300 text-sm">{errorMessage}</p>
+                        </div>
                     </div>
-                    <div>
-                        <p className="text-xs text-slate-500 uppercase tracking-wider">Status</p>
-                        <p className="font-bold text-lg text-blue-400">
-                            {status.toUpperCase()}
+                    <Button onClick={handleRetry} variant="outline" className="border-red-500/50 text-red-400 hover:bg-red-500/20">
+                        <RefreshCw className="h-4 w-4 mr-2" />
+                        Retry
+                    </Button>
+                </div>
+            )}
+
+            {/* Header / HUD */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-4 mb-4 sm:mb-6">
+                <Card className="bg-slate-900 border-slate-800 p-3 sm:p-4 flex items-center gap-2 sm:gap-4">
+                    <div className={`p-3 ${statusDisplay.bgColor} rounded-full ${statusDisplay.color}`}>
+                        {status === 'error' ? (
+                            <AlertTriangle className="h-6 w-6" />
+                        ) : (
+                            <Activity className={`h-6 w-6 ${status === 'active' || status === 'connecting' ? 'animate-pulse' : ''}`} />
+                        )}
+                    </div>
+                    <div className="min-w-0">
+                        <p className="text-[10px] sm:text-xs text-slate-500 uppercase tracking-wider">Status</p>
+                        <p className={`font-bold text-sm sm:text-lg ${statusDisplay.color} truncate`}>
+                            {statusDisplay.text}
                         </p>
                     </div>
                 </Card>
 
-                <Card className="bg-slate-900 border-slate-800 p-4 flex items-center gap-4">
-                    <div className="p-3 bg-green-500/10 rounded-full text-green-400">
-                        <Shield className="h-6 w-6" />
+                <Card className="bg-slate-900 border-slate-800 p-3 sm:p-4 flex items-center gap-2 sm:gap-4">
+                    <div className="p-2 sm:p-3 bg-green-500/10 rounded-full text-green-400">
+                        <Shield className="h-4 w-4 sm:h-6 sm:w-6" />
                     </div>
-                    <div>
-                        <p className="text-xs text-slate-500 uppercase tracking-wider">Officers Found</p>
-                        <p className="font-bold text-lg text-slate-100">{stats.faces}</p>
-                    </div>
-                </Card>
-
-                <Card className="bg-slate-900 border-slate-800 p-4 flex items-center gap-4">
-                    <div className="p-3 bg-purple-500/10 rounded-full text-purple-400">
-                        <Cpu className="h-6 w-6" />
-                    </div>
-                    <div>
-                        <p className="text-xs text-slate-500 uppercase tracking-wider">Avg Confidence</p>
-                        <p className="font-bold text-lg text-slate-100">{(stats.confidence_avg * 100).toFixed(1)}%</p>
+                    <div className="min-w-0">
+                        <p className="text-[10px] sm:text-xs text-slate-500 uppercase tracking-wider">Officers</p>
+                        <p className="font-bold text-sm sm:text-lg text-slate-100">{stats.faces}</p>
                     </div>
                 </Card>
 
-                <Card className="bg-slate-900 border-slate-800 p-4 flex items-center gap-4">
-                    <div className="p-3 bg-indigo-500/10 rounded-full text-indigo-400">
-                        <ZoomIn className="h-6 w-6" />
+                <Card className="bg-slate-900 border-slate-800 p-3 sm:p-4 flex items-center gap-2 sm:gap-4">
+                    <div className="p-2 sm:p-3 bg-purple-500/10 rounded-full text-purple-400">
+                        <Cpu className="h-4 w-4 sm:h-6 sm:w-6" />
                     </div>
-                    <div>
-                        <p className="text-xs text-slate-500 uppercase tracking-wider">AI Recon</p>
+                    <div className="min-w-0">
+                        <p className="text-[10px] sm:text-xs text-slate-500 uppercase tracking-wider">Confidence</p>
+                        <p className="font-bold text-sm sm:text-lg text-slate-100">{(stats.confidence_avg * 100).toFixed(1)}%</p>
+                    </div>
+                </Card>
+
+                <Card className="bg-slate-900 border-slate-800 p-3 sm:p-4 flex items-center gap-2 sm:gap-4">
+                    <div className="p-2 sm:p-3 bg-indigo-500/10 rounded-full text-indigo-400">
+                        <ZoomIn className="h-4 w-4 sm:h-6 sm:w-6" />
+                    </div>
+                    <div className="min-w-0">
+                        <p className="text-[10px] sm:text-xs text-slate-500 uppercase tracking-wider">AI Recon</p>
                         {reconData ? (
                             <div className="flex flex-col">
                                 <span className={`font-bold text-lg ${reconData.score > 50 ? 'text-green-400' : 'text-yellow-400'}`}>
@@ -174,7 +297,7 @@ export default function LiveAnalysis({ taskId, onComplete }) {
                 </Card>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[700px]">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 min-h-[500px] lg:h-[700px]">
                 {/* Terminal Log */}
                 <Card className="bg-slate-900 border-slate-800 col-span-1 flex flex-col h-full overflow-hidden shadow-2xl shadow-blue-900/5">
                     <div className="p-3 border-b border-slate-800 bg-slate-950 flex items-center gap-2">
@@ -316,11 +439,11 @@ export default function LiveAnalysis({ taskId, onComplete }) {
                                         {/* Actions */}
                                         {!c.reviewed ? (
                                             <div className="flex gap-2 pt-1">
-                                                <Button size="sm" onClick={() => handledecision(c.id, 'no')} variant="outline" className="flex-1 border-red-900/30 hover:bg-red-900/20 text-red-400 hover:text-red-300 h-8 text-xs">
+                                                <Button size="sm" onClick={() => handleDecision(c.id, 'no')} variant="outline" className="flex-1 border-red-900/30 hover:bg-red-900/20 text-red-400 hover:text-red-300 h-8 text-xs">
                                                     <X className="h-3 w-3 mr-1" />
                                                     Discard
                                                 </Button>
-                                                <Button size="sm" onClick={() => handledecision(c.id, 'yes')} className="flex-1 bg-green-600/20 hover:bg-green-600/30 text-green-400 border border-green-600/30 h-8 text-xs">
+                                                <Button size="sm" onClick={() => handleDecision(c.id, 'yes')} className="flex-1 bg-green-600/20 hover:bg-green-600/30 text-green-400 border border-green-600/30 h-8 text-xs">
                                                     <Check className="h-3 w-3 mr-1" />
                                                     Confirm
                                                 </Button>

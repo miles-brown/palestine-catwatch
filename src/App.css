@@ -107,3 +107,165 @@
         }
     }
 }
+
+/* Video Player Styles */
+.video-player-container {
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.video-player-container:fullscreen {
+    background: black;
+}
+
+.video-player-container:fullscreen .aspect-video {
+    height: calc(100vh - 120px);
+}
+
+/* Timeline marker pulse animation */
+@keyframes marker-pulse {
+    0%, 100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+    50% {
+        transform: scale(1.3);
+        opacity: 0.8;
+    }
+}
+
+.timeline-marker-active {
+    animation: marker-pulse 1s ease-in-out infinite;
+}
+
+/* Smooth seeking animation */
+.progress-bar-handle {
+    transition: left 0.1s ease-out;
+}
+
+/* Volume slider styling */
+input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    height: 4px;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    background: white;
+    border-radius: 50%;
+    cursor: pointer;
+}
+
+input[type="range"]::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    background: white;
+    border-radius: 50%;
+    cursor: pointer;
+    border: none;
+}
+
+/* Animate in utilities for marker overlays */
+@keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes slide-in-from-right {
+    from {
+        opacity: 0;
+        transform: translateX(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+.animate-in {
+    animation-duration: 300ms;
+    animation-fill-mode: forwards;
+}
+
+.fade-in {
+    animation-name: fade-in;
+}
+
+.slide-in-from-right {
+    animation-name: slide-in-from-right;
+}
+
+/* Print styles for report */
+@media print {
+    .video-player-container {
+        display: none !important;
+    }
+
+    .print\\:hidden {
+        display: none !important;
+    }
+
+    .print\\:block {
+        display: block !important;
+    }
+}
+
+/* Mobile-specific styles */
+@layer utilities {
+    /* Safe area padding for notched devices */
+    .pb-safe {
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+
+    .pt-safe {
+        padding-top: env(safe-area-inset-top, 0px);
+    }
+
+    /* Touch-friendly targets */
+    .touch-target {
+        min-height: 44px;
+        min-width: 44px;
+    }
+}
+
+/* Mobile navigation active indicator */
+@media (max-width: 767px) {
+    /* Increase tap targets on mobile */
+    button, a, [role="button"] {
+        min-height: 44px;
+    }
+
+    /* Better text readability on mobile */
+    input, select, textarea {
+        font-size: 16px; /* Prevents iOS zoom on focus */
+    }
+
+    /* Hide scrollbars on mobile for cleaner look */
+    .hide-scrollbar::-webkit-scrollbar {
+        display: none;
+    }
+
+    .hide-scrollbar {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+    }
+}
+
+/* Swipe gesture support hint */
+@keyframes swipe-hint {
+    0%, 100% {
+        transform: translateX(0);
+    }
+    50% {
+        transform: translateX(-10px);
+    }
+}
+
+.swipe-hint {
+    animation: swipe-hint 1.5s ease-in-out 3;
+}

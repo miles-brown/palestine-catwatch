@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -8,6 +8,9 @@ import models, schemas
 from database import get_db, engine
 from datetime import datetime
 import asyncio
+
+# Rate limiting
+from ratelimit import limiter, setup_rate_limiting, get_rate_limit
 
 try:
     print("Attempting to connect to database and create tables...")
@@ -26,14 +29,79 @@ try:
 except Exception as e:
     print(f"Startup Warning: Database connection failed. App will start but DB features will fail. Error: {e}")
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator, HttpUrl
+from urllib.parse import urlparse
+import re
+
 class IngestURLRequest(BaseModel):
     url: str
     protest_id: Optional[int] = None
     answers: dict = {}
 
+    @field_validator('url')
+    @classmethod
+    def validate_url(cls, v):
+        return validate_single_url(v)
+
+
+class BulkIngestRequest(BaseModel):
+    urls: List[str]
+    protest_id: Optional[int] = None
+    answers: dict = {}
+
+
+# =============================================================================
+# CONFIGURATION CONSTANTS
+# =============================================================================
+MAX_URL_LENGTH = 2048
+MAX_PAGINATION_LIMIT = 500
+DEFAULT_PAGINATION_LIMIT = 100
+
+
+def validate_single_url(v):
+    """Validate a single URL."""
+    # Basic URL validation
+    if not v or not isinstance(v, str):
+        raise ValueError('URL is required')
+
+    v = v.strip()
+
+    # Check URL length (#19)
+    if len(v) > MAX_URL_LENGTH:
+        raise ValueError(f'URL too long (max {MAX_URL_LENGTH} characters)')
+
+    # Must start with http:// or https://
+    if not v.startswith(('http://', 'https://')):
+        raise ValueError('URL must start with http:// or https://')
+
+    # Parse and validate structure
+    try:
+        parsed = urlparse(v)
+        if not parsed.netloc:
+            raise ValueError('Invalid URL: no domain found')
+
+        # Check for suspicious patterns (path traversal, etc.)
+        suspicious_patterns = ['../', '..\\', '<script', 'javascript:', 'data:']
+        for pattern in suspicious_patterns:
+            if pattern.lower() in v.lower():
+                raise ValueError(f'URL contains suspicious pattern: {pattern}')
+
+        # Basic domain validation (must have at least one dot)
+        if '.' not in parsed.netloc:
+            raise ValueError('Invalid domain in URL')
+
+    except Exception as e:
+        if 'Invalid' in str(e) or 'URL' in str(e):
+            raise
+        raise ValueError(f'Invalid URL format: {str(e)}')
+
+    return v
+
 
 app = FastAPI(title="Palestine Catwatch API")
+
+# Setup rate limiting
+setup_rate_limiting(app)
 
 # Configure CORS
 app.add_middleware(
@@ -45,7 +113,7 @@ app.add_middleware(
 )
 
 # Mount Socket.IO
-from sio import sio_app, sio_server
+from sio import sio_app, sio_server, mark_room_complete
 app.mount("/socket.io", sio_app)
 
 # Mount data directory to serve images
@@ -59,25 +127,296 @@ def read_root():
     return {"message": "Palestine Catwatch Backend Operational"}
 
 @app.get("/officers", response_model=List[schemas.Officer])
+@limiter.limit(get_rate_limit("officers_list"))
 def get_officers(
-    skip: int = 0, 
-    limit: int = 100, 
+    request: Request,
+    skip: int = 0,
+    limit: int = DEFAULT_PAGINATION_LIMIT,
     badge_number: str = None,
     force: str = None,
+    date_from: str = None,  # Format: YYYY-MM-DD
+    date_to: str = None,    # Format: YYYY-MM-DD
+    min_confidence: float = None,  # Minimum confidence score (0-100)
+    verified_only: bool = False,  # Only show verified detections
     db: Session = Depends(get_db)
 ):
+    # Enforce pagination limits (#12)
+    if limit > MAX_PAGINATION_LIMIT:
+        limit = MAX_PAGINATION_LIMIT
+    if limit < 1:
+        limit = 1
+    if skip < 0:
+        skip = 0
+
     query = db.query(models.Officer)
-    
+
     if badge_number:
         query = query.filter(models.Officer.badge_number.contains(badge_number))
     if force:
         query = query.filter(models.Officer.force == force)
-        
+
+    # Confidence and verification filters
+    needs_appearance_join = date_from or date_to or min_confidence is not None or verified_only
+
+    if needs_appearance_join:
+        # Join with appearances to filter
+        if not (date_from or date_to):
+            query = query.join(models.OfficerAppearance)
+
+    # Date range filter - filter by appearances
+    if date_from or date_to:
+        # Join with appearances to filter by date
+        query = query.join(models.OfficerAppearance).join(models.Media)
+
+        if date_from:
+            try:
+                from_date = datetime.strptime(date_from, "%Y-%m-%d")
+                query = query.filter(models.Media.timestamp >= from_date)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid date_from format. Use YYYY-MM-DD")
+
+        if date_to:
+            try:
+                to_date = datetime.strptime(date_to, "%Y-%m-%d")
+                # Add one day to include the entire end date
+                to_date = to_date.replace(hour=23, minute=59, second=59)
+                query = query.filter(models.Media.timestamp <= to_date)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid date_to format. Use YYYY-MM-DD")
+
+    # Confidence filter
+    if min_confidence is not None:
+        if min_confidence < 0 or min_confidence > 100:
+            raise HTTPException(status_code=400, detail="min_confidence must be between 0 and 100")
+        query = query.filter(models.OfficerAppearance.confidence >= min_confidence)
+
+    # Verified only filter
+    if verified_only:
+        query = query.filter(models.OfficerAppearance.verified == True)
+
+    if needs_appearance_join:
+        query = query.distinct()
+
     officers = query.offset(skip).limit(limit).all()
     return officers
 
+
+@app.get("/officers/count")
+@limiter.limit(get_rate_limit("officers_list"))
+def get_officers_count(
+    request: Request,
+    badge_number: str = None,
+    force: str = None,
+    db: Session = Depends(get_db)
+):
+    """Get total count of officers (efficient for pagination)."""
+    query = db.query(models.Officer)
+
+    if badge_number:
+        query = query.filter(models.Officer.badge_number.contains(badge_number))
+    if force:
+        query = query.filter(models.Officer.force == force)
+
+    return {"count": query.count()}
+
+
+@app.get("/officers/repeat")
+@limiter.limit(get_rate_limit("officers_list"))
+def get_repeat_officers(
+    request: Request,
+    min_appearances: int = 2,
+    min_events: int = 2,
+    skip: int = 0,
+    limit: int = 50,
+    db: Session = Depends(get_db)
+):
+    """
+    Get officers who appear multiple times across different protests/events.
+    These are 'repeat offenders' - officers seen at multiple demonstrations.
+    """
+    from sqlalchemy import func, distinct
+
+    # Subquery to count appearances and distinct events per officer
+    subq = (
+        db.query(
+            models.OfficerAppearance.officer_id,
+            func.count(models.OfficerAppearance.id).label('appearance_count'),
+            func.count(distinct(models.Media.protest_id)).label('event_count')
+        )
+        .join(models.Media)
+        .group_by(models.OfficerAppearance.officer_id)
+        .having(func.count(models.OfficerAppearance.id) >= min_appearances)
+        .having(func.count(distinct(models.Media.protest_id)) >= min_events)
+        .subquery()
+    )
+
+    # Get officers matching criteria
+    results = (
+        db.query(
+            models.Officer,
+            subq.c.appearance_count,
+            subq.c.event_count
+        )
+        .join(subq, models.Officer.id == subq.c.officer_id)
+        .order_by(subq.c.event_count.desc(), subq.c.appearance_count.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+
+    repeat_officers = []
+    for officer, app_count, evt_count in results:
+        # Get first appearance image for display
+        first_app = db.query(models.OfficerAppearance).filter(
+            models.OfficerAppearance.officer_id == officer.id,
+            models.OfficerAppearance.image_crop_path.isnot(None)
+        ).first()
+
+        repeat_officers.append({
+            "id": officer.id,
+            "badge_number": officer.badge_number,
+            "force": officer.force,
+            "notes": officer.notes,
+            "total_appearances": app_count,
+            "distinct_events": evt_count,
+            "crop_path": first_app.image_crop_path if first_app else None
+        })
+
+    return {
+        "officers": repeat_officers,
+        "total": len(repeat_officers)
+    }
+
+
+@app.get("/officers/{officer_id}/network")
+@limiter.limit(get_rate_limit("officers_detail"))
+def get_officer_network(
+    request: Request,
+    officer_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Get officers who frequently appear with this officer.
+    Useful for identifying units/squads that work together.
+    """
+    from sqlalchemy import func
+
+    officer = db.query(models.Officer).filter(models.Officer.id == officer_id).first()
+    if not officer:
+        raise HTTPException(status_code=404, detail="Officer not found")
+
+    # Get all media IDs where this officer appears
+    officer_media_ids = (
+        db.query(models.OfficerAppearance.media_id)
+        .filter(models.OfficerAppearance.officer_id == officer_id)
+        .distinct()
+        .all()
+    )
+    media_ids = [m[0] for m in officer_media_ids]
+
+    if not media_ids:
+        return {"officer_id": officer_id, "connections": [], "total_shared_media": 0}
+
+    # Find other officers who appear in the same media
+    co_appearances = (
+        db.query(
+            models.OfficerAppearance.officer_id,
+            func.count(models.OfficerAppearance.id).label('shared_count')
+        )
+        .filter(
+            models.OfficerAppearance.media_id.in_(media_ids),
+            models.OfficerAppearance.officer_id != officer_id
+        )
+        .group_by(models.OfficerAppearance.officer_id)
+        .order_by(func.count(models.OfficerAppearance.id).desc())
+        .limit(20)
+        .all()
+    )
+
+    connections = []
+    for co_officer_id, shared_count in co_appearances:
+        co_officer = db.query(models.Officer).filter(models.Officer.id == co_officer_id).first()
+        if co_officer:
+            first_app = db.query(models.OfficerAppearance).filter(
+                models.OfficerAppearance.officer_id == co_officer_id,
+                models.OfficerAppearance.image_crop_path.isnot(None)
+            ).first()
+
+            connections.append({
+                "id": co_officer.id,
+                "badge_number": co_officer.badge_number,
+                "force": co_officer.force,
+                "shared_appearances": shared_count,
+                "crop_path": first_app.image_crop_path if first_app else None
+            })
+
+    return {
+        "officer_id": officer_id,
+        "connections": connections,
+        "total_shared_media": len(media_ids)
+    }
+
+
+@app.get("/stats/overview")
+@limiter.limit(get_rate_limit("officers_list"))
+def get_stats_overview(request: Request, db: Session = Depends(get_db)):
+    """
+    Get overall statistics for the dashboard.
+    """
+    from sqlalchemy import func, distinct
+
+    total_officers = db.query(models.Officer).count()
+    total_appearances = db.query(models.OfficerAppearance).count()
+    total_media = db.query(models.Media).count()
+    total_protests = db.query(models.Protest).count()
+
+    # Officers with multiple appearances
+    repeat_count = (
+        db.query(models.OfficerAppearance.officer_id)
+        .group_by(models.OfficerAppearance.officer_id)
+        .having(func.count(models.OfficerAppearance.id) >= 2)
+        .count()
+    )
+
+    # Officers across multiple events
+    multi_event_count = (
+        db.query(models.OfficerAppearance.officer_id)
+        .join(models.Media)
+        .group_by(models.OfficerAppearance.officer_id)
+        .having(func.count(distinct(models.Media.protest_id)) >= 2)
+        .count()
+    )
+
+    # Most recent media processed
+    recent_media = (
+        db.query(models.Media)
+        .filter(models.Media.processed == True)
+        .order_by(models.Media.timestamp.desc())
+        .limit(5)
+        .all()
+    )
+
+    return {
+        "total_officers": total_officers,
+        "total_appearances": total_appearances,
+        "total_media": total_media,
+        "total_protests": total_protests,
+        "repeat_officers": repeat_count,
+        "multi_event_officers": multi_event_count,
+        "recent_media": [
+            {
+                "id": m.id,
+                "url": m.url,
+                "type": m.type,
+                "timestamp": m.timestamp.isoformat() if m.timestamp else None
+            }
+            for m in recent_media
+        ]
+    }
+
 @app.get("/officers/{officer_id}", response_model=schemas.Officer)
-def get_officer(officer_id: int, db: Session = Depends(get_db)):
+@limiter.limit(get_rate_limit("officers_detail"))
+def get_officer(request: Request, officer_id: int, db: Session = Depends(get_db)):
     officer = db.query(models.Officer).filter(models.Officer.id == officer_id).first()
     if officer is None:
         raise HTTPException(status_code=404, detail="Officer not found")
@@ -102,44 +441,88 @@ def get_officer_dossier(officer_id: int, db: Session = Depends(get_db)):
     )
 
 @app.get("/media/{media_id}/report")
-def get_media_report(media_id: int, db: Session = Depends(get_db)):
+@limiter.limit(get_rate_limit("report"))
+def get_media_report(request: Request, media_id: int, db: Session = Depends(get_db)):
     """
     Returns aggregated data for the 'Webpage Report' of a specific media item.
+    Includes timeline data with all appearance timestamps for video scrubbing.
     """
     media = db.query(models.Media).filter(models.Media.id == media_id).first()
     if not media:
         raise HTTPException(status_code=404, detail="Media not found")
-        
+
     # Get Protest
     protest = media.protest
-    
+
     # Get Officer Appearances
     appearances = db.query(models.OfficerAppearance).filter(models.OfficerAppearance.media_id == media_id).all()
-    
-    # Aggregate Officers
-    # We want a list of unique officers found in this video
-    officer_ids = set(app.officer_id for app in appearances)
+
+    # Aggregate Officers with all their appearances
+    officer_ids = set(appearance.officer_id for appearance in appearances)
     officers = []
-    
+    timeline_markers = []  # All timestamps for video scrubbing
+
     for oid in officer_ids:
         officer = db.query(models.Officer).filter(models.Officer.id == oid).first()
         if officer:
-            # Find the best crop (first one for now)
-            first_app = next((a for a in appearances if a.officer_id == oid and a.image_crop_path), None)
-            
+            # Get ALL appearances for this officer in this video
+            officer_appearances = [a for a in appearances if a.officer_id == oid]
+
+            # Find the best crop (first one with an image)
+            first_app = next((a for a in officer_appearances if a.image_crop_path), None)
+
+            # Collect all timestamps for this officer
+            officer_timestamps = []
+            for app in officer_appearances:
+                if app.timestamp_in_video:
+                    timestamp_data = {
+                        "timestamp": app.timestamp_in_video,
+                        "crop_path": app.image_crop_path,
+                        "action": app.action,
+                        "role": app.role
+                    }
+                    officer_timestamps.append(timestamp_data)
+                    # Also add to global timeline
+                    timeline_markers.append({
+                        "officer_id": officer.id,
+                        "badge": officer.badge_number,
+                        "timestamp": app.timestamp_in_video,
+                        "action": app.action,
+                        "crop_path": app.image_crop_path
+                    })
+
             officers.append({
                 "id": officer.id,
                 "badge": officer.badge_number,
                 "force": officer.force,
-                "role": first_app.role if first_app else None, # Role is on Appearance, not Officer
+                "role": first_app.role if first_app else None,
                 "crop_path": first_app.image_crop_path if first_app else None,
-                "total_appearances_in_video": sum(1 for a in appearances if a.officer_id == oid)
+                "total_appearances_in_video": len(officer_appearances),
+                "timestamps": officer_timestamps  # All timestamps for this officer
             })
-            
+
+    # Sort timeline markers by timestamp
+    def parse_timestamp(ts):
+        """Convert HH:MM:SS or MM:SS to seconds for sorting."""
+        if not ts:
+            return 0
+        parts = ts.split(':')
+        try:
+            if len(parts) == 3:
+                return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+            elif len(parts) == 2:
+                return int(parts[0]) * 60 + float(parts[1])
+            else:
+                return float(parts[0])
+        except (ValueError, IndexError):
+            return 0
+
+    timeline_markers.sort(key=lambda x: parse_timestamp(x.get('timestamp', '')))
+
     return {
         "media": {
             "id": media.id,
-            "url": media.url, # This might be local path
+            "url": media.url,
             "type": media.type,
             "timestamp": media.timestamp
         },
@@ -152,14 +535,17 @@ def get_media_report(media_id: int, db: Session = Depends(get_db)):
             "total_officers": len(officers),
             "total_appearances": len(appearances)
         },
-        "officers": officers
+        "officers": officers,
+        "timeline": timeline_markers  # All markers for video timeline
     }
 
 @app.post("/ingest/url")
-async def ingest_media_url(request: IngestURLRequest, background_tasks: BackgroundTasks):
+@limiter.limit(get_rate_limit("ingest"))
+async def ingest_media_url(request: Request, body: IngestURLRequest, background_tasks: BackgroundTasks):
     """
     Ingest a URL (YouTube, web).
     Triggers background download and analysis.
+    Rate limited to prevent abuse of expensive AI processing.
     """
     # Create a unique Task ID and room
     task_id = f"task_{int(datetime.utcnow().timestamp())}"
@@ -215,27 +601,633 @@ async def ingest_media_url(request: IngestURLRequest, background_tasks: Backgrou
             print(error_msg)
             status_callback("log", error_msg)
             status_callback("Error", str(e))
+        finally:
+            # Schedule room cleanup regardless of success/failure
+            asyncio.run_coroutine_threadsafe(
+                mark_room_complete(room_id),
+                event_loop
+            )
 
-    background_tasks.add_task(background_wrapper, request.url, request.answers, request.protest_id, task_id, loop)
+    background_tasks.add_task(background_wrapper, body.url, body.answers, body.protest_id, task_id, loop)
     
     return {"status": "processing_started", "message": "Video queued for analysis.", "task_id": task_id}
 
+
+@app.post("/ingest/bulk")
+@limiter.limit("2/minute")  # Stricter limit for bulk operations
+async def bulk_ingest_urls(request: Request, body: BulkIngestRequest, background_tasks: BackgroundTasks):
+    """
+    Ingest multiple URLs at once.
+    Creates a separate task for each URL.
+    """
+    if not body.urls:
+        raise HTTPException(status_code=400, detail="No URLs provided")
+
+    if len(body.urls) > 10:
+        raise HTTPException(status_code=400, detail="Maximum 10 URLs per bulk request")
+
+    # Validate all URLs first
+    valid_urls = []
+    errors = []
+    for i, url in enumerate(body.urls):
+        try:
+            validated = validate_single_url(url)
+            valid_urls.append(validated)
+        except ValueError as e:
+            errors.append({"index": i, "url": url, "error": str(e)})
+
+    if not valid_urls:
+        raise HTTPException(status_code=400, detail={"message": "No valid URLs", "errors": errors})
+
+    # Create tasks for each valid URL
+    task_ids = []
+    loop = asyncio.get_running_loop()
+
+    # Capture body values before the loop to avoid closure issues
+    answers = body.answers
+    protest_id = body.protest_id
+
+    for url in valid_urls:
+        task_id = f"task_{int(datetime.utcnow().timestamp())}_{hash(url) % 10000}"
+        task_ids.append({"url": url, "task_id": task_id})
+
+        # Define wrapper for this URL
+        def create_wrapper(url_to_process, room_id, event_loop, ans, pid):
+            def wrapper():
+                def status_callback(event, data):
+                    asyncio.run_coroutine_threadsafe(
+                        sio_server.emit(event, data, room=room_id),
+                        event_loop
+                    )
+
+                try:
+                    from ingest_video import process_video_workflow
+                    process_video_workflow(url_to_process, ans, pid, status_callback=status_callback)
+                except Exception as e:
+                    status_callback("Error", str(e))
+                finally:
+                    asyncio.run_coroutine_threadsafe(
+                        mark_room_complete(room_id),
+                        event_loop
+                    )
+            return wrapper
+
+        background_tasks.add_task(create_wrapper(url, task_id, loop, answers, protest_id))
+
+    return {
+        "status": "processing_started",
+        "message": f"Queued {len(valid_urls)} URLs for processing",
+        "tasks": task_ids,
+        "errors": errors if errors else None
+    }
+
+
 @app.get("/protests")
-def get_protests(db: Session = Depends(get_db)):
+@limiter.limit(get_rate_limit("protests"))
+def get_protests(request: Request, db: Session = Depends(get_db)):
     return db.query(models.Protest).all()
 
+@app.post("/officers/merge")
+@limiter.limit(get_rate_limit("default"))
+def merge_officers(
+    request: Request,
+    primary_id: int,
+    secondary_ids: List[int],
+    db: Session = Depends(get_db)
+):
+    """
+    Merge multiple officers into one primary officer.
+    All appearances from secondary officers are transferred to the primary.
+    Secondary officers are deleted after merge.
+    """
+    # Get primary officer
+    primary = db.query(models.Officer).filter(models.Officer.id == primary_id).first()
+    if not primary:
+        raise HTTPException(status_code=404, detail="Primary officer not found")
+
+    merged_count = 0
+    for sec_id in secondary_ids:
+        if sec_id == primary_id:
+            continue  # Skip if same as primary
+
+        secondary = db.query(models.Officer).filter(models.Officer.id == sec_id).first()
+        if not secondary:
+            continue
+
+        # Transfer all appearances from secondary to primary
+        appearances = db.query(models.OfficerAppearance).filter(
+            models.OfficerAppearance.officer_id == sec_id
+        ).all()
+
+        for app in appearances:
+            app.officer_id = primary_id
+
+        # Merge badge number if primary doesn't have one
+        if not primary.badge_number and secondary.badge_number:
+            primary.badge_number = secondary.badge_number
+
+        # Merge force if primary doesn't have one
+        if not primary.force and secondary.force:
+            primary.force = secondary.force
+
+        # Append notes
+        if secondary.notes:
+            if primary.notes:
+                primary.notes += f"\n[Merged from Officer #{sec_id}]: {secondary.notes}"
+            else:
+                primary.notes = f"[Merged from Officer #{sec_id}]: {secondary.notes}"
+
+        # Delete secondary officer
+        db.delete(secondary)
+        merged_count += 1
+
+    db.commit()
+
+    return {
+        "status": "success",
+        "message": f"Merged {merged_count} officers into Officer #{primary_id}",
+        "primary_id": primary_id
+    }
+
+@app.patch("/officers/{officer_id}")
+@limiter.limit(get_rate_limit("default"))
+def update_officer(
+    request: Request,
+    officer_id: int,
+    badge_number: Optional[str] = None,
+    force: Optional[str] = None,
+    notes: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Update officer details (badge number, force, notes).
+    """
+    officer = db.query(models.Officer).filter(models.Officer.id == officer_id).first()
+    if not officer:
+        raise HTTPException(status_code=404, detail="Officer not found")
+
+    if badge_number is not None:
+        officer.badge_number = badge_number
+    if force is not None:
+        officer.force = force
+    if notes is not None:
+        officer.notes = notes
+
+    db.commit()
+    db.refresh(officer)
+
+    return {"status": "success", "officer": officer}
+
+
+@app.delete("/officers/{officer_id}")
+@limiter.limit(get_rate_limit("default"))
+def delete_officer(
+    request: Request,
+    officer_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Delete an officer and all their appearances.
+    """
+    officer = db.query(models.Officer).filter(models.Officer.id == officer_id).first()
+    if not officer:
+        raise HTTPException(status_code=404, detail="Officer not found")
+
+    # Delete all appearances first (foreign key constraint)
+    db.query(models.OfficerAppearance).filter(
+        models.OfficerAppearance.officer_id == officer_id
+    ).delete()
+
+    # Delete the officer
+    db.delete(officer)
+    db.commit()
+
+    return {"status": "success", "message": f"Officer #{officer_id} deleted"}
+
+
+# =============================================================================
+# CONFIDENCE CALIBRATION ENDPOINTS
+# =============================================================================
+
+class AppearanceVerifyRequest(BaseModel):
+    verified: bool
+    confidence: Optional[float] = None
+
+
+@app.patch("/appearances/{appearance_id}/verify")
+@limiter.limit(get_rate_limit("default"))
+def verify_appearance(
+    request: Request,
+    appearance_id: int,
+    body: AppearanceVerifyRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Mark an officer appearance as verified/unverified and optionally update confidence.
+    """
+    appearance = db.query(models.OfficerAppearance).filter(
+        models.OfficerAppearance.id == appearance_id
+    ).first()
+
+    if not appearance:
+        raise HTTPException(status_code=404, detail="Appearance not found")
+
+    appearance.verified = body.verified
+
+    if body.confidence is not None:
+        if body.confidence < 0 or body.confidence > 100:
+            raise HTTPException(status_code=400, detail="Confidence must be between 0 and 100")
+        appearance.confidence = body.confidence
+
+    db.commit()
+    db.refresh(appearance)
+
+    return {
+        "status": "success",
+        "appearance_id": appearance_id,
+        "verified": appearance.verified,
+        "confidence": appearance.confidence
+    }
+
+
+@app.get("/appearances/unverified")
+@limiter.limit(get_rate_limit("default"))
+def get_unverified_appearances(
+    request: Request,
+    skip: int = 0,
+    limit: int = 50,
+    min_confidence: float = None,
+    max_confidence: float = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Get unverified appearances for review, optionally filtered by confidence range.
+    """
+    query = db.query(models.OfficerAppearance).filter(
+        models.OfficerAppearance.verified == False
+    )
+
+    if min_confidence is not None:
+        query = query.filter(models.OfficerAppearance.confidence >= min_confidence)
+    if max_confidence is not None:
+        query = query.filter(models.OfficerAppearance.confidence <= max_confidence)
+
+    # Order by confidence ascending (lowest confidence first for review)
+    query = query.order_by(models.OfficerAppearance.confidence.asc().nullsfirst())
+
+    total = query.count()
+    appearances = query.offset(skip).limit(limit).all()
+
+    result = []
+    for app in appearances:
+        officer = db.query(models.Officer).filter(models.Officer.id == app.officer_id).first()
+        media = db.query(models.Media).filter(models.Media.id == app.media_id).first()
+
+        result.append({
+            "id": app.id,
+            "officer_id": app.officer_id,
+            "media_id": app.media_id,
+            "badge_number": officer.badge_number if officer else None,
+            "force": officer.force if officer else None,
+            "timestamp_in_video": app.timestamp_in_video,
+            "image_crop_path": app.image_crop_path,
+            "role": app.role,
+            "action": app.action,
+            "confidence": app.confidence,
+            "confidence_factors": app.confidence_factors,
+            "verified": app.verified,
+            "media_type": media.type if media else None,
+            "media_url": media.url if media else None
+        })
+
+    return {
+        "total": total,
+        "appearances": result
+    }
+
+
+@app.get("/confidence/stats")
+@limiter.limit(get_rate_limit("default"))
+def get_confidence_stats(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Get statistics about confidence levels across all appearances.
+    """
+    from sqlalchemy import func
+
+    total = db.query(models.OfficerAppearance).count()
+    verified = db.query(models.OfficerAppearance).filter(
+        models.OfficerAppearance.verified == True
+    ).count()
+    unverified = total - verified
+
+    # Confidence distribution
+    high_confidence = db.query(models.OfficerAppearance).filter(
+        models.OfficerAppearance.confidence >= 80
+    ).count()
+    medium_confidence = db.query(models.OfficerAppearance).filter(
+        models.OfficerAppearance.confidence >= 50,
+        models.OfficerAppearance.confidence < 80
+    ).count()
+    low_confidence = db.query(models.OfficerAppearance).filter(
+        models.OfficerAppearance.confidence < 50,
+        models.OfficerAppearance.confidence.isnot(None)
+    ).count()
+    no_confidence = db.query(models.OfficerAppearance).filter(
+        models.OfficerAppearance.confidence.is_(None)
+    ).count()
+
+    # Average confidence
+    avg_confidence = db.query(func.avg(models.OfficerAppearance.confidence)).scalar()
+
+    return {
+        "total_appearances": total,
+        "verified_count": verified,
+        "unverified_count": unverified,
+        "verification_rate": round((verified / total * 100) if total > 0 else 0, 1),
+        "confidence_distribution": {
+            "high": high_confidence,
+            "medium": medium_confidence,
+            "low": low_confidence,
+            "unknown": no_confidence
+        },
+        "average_confidence": round(avg_confidence, 1) if avg_confidence else None
+    }
+
+
+@app.get("/export/officers/csv")
+@limiter.limit(get_rate_limit("default"))
+def export_officers_csv(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Export all officers as CSV.
+    """
+    import csv
+    import io
+
+    officers = db.query(models.Officer).all()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    # Header row
+    writer.writerow(['ID', 'Badge Number', 'Force', 'Notes', 'Total Appearances', 'Created At'])
+
+    for officer in officers:
+        appearances_count = db.query(models.OfficerAppearance).filter(
+            models.OfficerAppearance.officer_id == officer.id
+        ).count()
+
+        writer.writerow([
+            officer.id,
+            officer.badge_number or '',
+            officer.force or '',
+            officer.notes or '',
+            appearances_count,
+            officer.created_at.isoformat() if hasattr(officer, 'created_at') and officer.created_at else ''
+        ])
+
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=officers_export.csv"}
+    )
+
+
+@app.get("/export/officers/json")
+@limiter.limit(get_rate_limit("default"))
+def export_officers_json(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Export all officers as JSON.
+    """
+    import json
+
+    officers = db.query(models.Officer).all()
+    export_data = []
+
+    for officer in officers:
+        appearances = db.query(models.OfficerAppearance).filter(
+            models.OfficerAppearance.officer_id == officer.id
+        ).all()
+
+        officer_data = {
+            "id": officer.id,
+            "badge_number": officer.badge_number,
+            "force": officer.force,
+            "notes": officer.notes,
+            "appearances": [
+                {
+                    "id": app.id,
+                    "media_id": app.media_id,
+                    "timestamp_in_video": app.timestamp_in_video,
+                    "role": app.role,
+                    "action": app.action
+                }
+                for app in appearances
+            ]
+        }
+        export_data.append(officer_data)
+
+    json_str = json.dumps(export_data, indent=2)
+
+    return StreamingResponse(
+        iter([json_str]),
+        media_type="application/json",
+        headers={"Content-Disposition": "attachment; filename=officers_export.json"}
+    )
+
+
+@app.get("/export/report/{media_id}/csv")
+@limiter.limit(get_rate_limit("default"))
+def export_report_csv(
+    request: Request,
+    media_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Export a media report as CSV.
+    """
+    import csv
+    import io
+
+    media = db.query(models.Media).filter(models.Media.id == media_id).first()
+    if not media:
+        raise HTTPException(status_code=404, detail="Media not found")
+
+    appearances = db.query(models.OfficerAppearance).filter(
+        models.OfficerAppearance.media_id == media_id
+    ).all()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    # Header
+    writer.writerow(['Officer ID', 'Badge Number', 'Force', 'Timestamp', 'Role', 'Action'])
+
+    for app in appearances:
+        officer = db.query(models.Officer).filter(models.Officer.id == app.officer_id).first()
+        writer.writerow([
+            app.officer_id,
+            officer.badge_number if officer else '',
+            officer.force if officer else '',
+            app.timestamp_in_video or '',
+            app.role or '',
+            app.action or ''
+        ])
+
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=report_{media_id}_export.csv"}
+    )
+
+
+@app.post("/search/face")
+@limiter.limit(get_rate_limit("upload"))
+async def search_by_face(
+    request: Request,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """
+    Upload an image to search for matching officers by face.
+    Returns officers sorted by similarity score.
+    """
+    import os
+    import uuid
+    import json
+    from process import calculate_face_similarity
+
+    # Validate file type
+    filename = file.filename or ""
+    ext = os.path.splitext(filename)[1].lower()
+
+    if ext not in {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'}:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid image file type. Allowed: jpg, jpeg, png, gif, webp, bmp"
+        )
+
+    # Save uploaded file temporarily
+    temp_dir = "data/temp"
+    os.makedirs(temp_dir, exist_ok=True)
+    temp_path = os.path.join(temp_dir, f"search_{uuid.uuid4().hex}{ext}")
+
+    try:
+        content = await file.read()
+        with open(temp_path, "wb") as f:
+            f.write(content)
+
+        # Generate embedding for uploaded face
+        from ai import analyzer
+        embedding = analyzer.generate_embedding(temp_path)
+
+        if embedding is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Could not detect a face in the uploaded image. Please try a clearer image."
+            )
+
+        # Search for matching officers
+        officers_with_embeddings = db.query(models.Officer).filter(
+            models.Officer.visual_id.isnot(None)
+        ).all()
+
+        matches = []
+        for officer in officers_with_embeddings:
+            try:
+                officer_embedding = json.loads(officer.visual_id)
+                is_match, confidence, dist_euc, sim_cos = calculate_face_similarity(
+                    embedding, officer_embedding
+                )
+
+                if confidence > 0.3:  # Include potential matches
+                    # Get first appearance for image
+                    first_app = db.query(models.OfficerAppearance).filter(
+                        models.OfficerAppearance.officer_id == officer.id,
+                        models.OfficerAppearance.image_crop_path.isnot(None)
+                    ).first()
+
+                    matches.append({
+                        "id": officer.id,
+                        "badge_number": officer.badge_number,
+                        "force": officer.force,
+                        "confidence": round(confidence * 100, 1),
+                        "is_strong_match": is_match,
+                        "crop_path": first_app.image_crop_path if first_app else None
+                    })
+            except (json.JSONDecodeError, Exception) as e:
+                continue
+
+        # Sort by confidence
+        matches.sort(key=lambda x: x['confidence'], reverse=True)
+
+        return {
+            "status": "success",
+            "total_matches": len(matches),
+            "matches": matches[:20]  # Return top 20 matches
+        }
+
+    finally:
+        # Clean up temp file
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+# Allowed file extensions by type
+ALLOWED_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'}
+ALLOWED_VIDEO_EXTENSIONS = {'.mp4', '.webm', '.mov', '.avi', '.mkv', '.m4v'}
+MAX_UPLOAD_SIZE_BYTES = 500 * 1024 * 1024  # 500MB
+
+
 @app.post("/upload")
+@limiter.limit(get_rate_limit("upload"))
 async def upload_file(
-    file: UploadFile = File(...), 
+    request: Request,
+    file: UploadFile = File(...),
     protest_id: Optional[int] = Form(None),
     type: str = Form(...),
     db: Session = Depends(get_db)
 ):
     from ingest import save_upload
-    
+    import os
+
     # Validate type
     if type not in ["image", "video"]:
          raise HTTPException(status_code=400, detail="Invalid media type. Must be 'image' or 'video'.")
+
+    # Validate file extension matches declared type (#11)
+    filename = file.filename or ""
+    ext = os.path.splitext(filename)[1].lower()
+
+    if type == "image":
+        if ext not in ALLOWED_IMAGE_EXTENSIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid image file type. Allowed: {', '.join(ALLOWED_IMAGE_EXTENSIONS)}"
+            )
+    elif type == "video":
+        if ext not in ALLOWED_VIDEO_EXTENSIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid video file type. Allowed: {', '.join(ALLOWED_VIDEO_EXTENSIONS)}"
+            )
+
+    # Validate content type header matches
+    content_type = file.content_type or ""
+    if type == "image" and not content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="File content type doesn't match declared image type")
+    if type == "video" and not content_type.startswith("video/"):
+        raise HTTPException(status_code=400, detail="File content type doesn't match declared video type")
 
     media = save_upload(file.file, file.filename, protest_id, type, db)
     
@@ -247,4 +1239,421 @@ async def upload_file(
     process_media(media.id)
     
     return {"status": "uploaded", "media_id": media.id, "filename": file.filename}
+
+
+# =============================================================================
+# UNIFORM RECOGNITION ENDPOINTS
+# =============================================================================
+
+@app.get("/equipment")
+@limiter.limit(get_rate_limit("officers_list"))
+def get_equipment(
+    request: Request,
+    category: str = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Get all equipment types, optionally filtered by category.
+    Includes detection count for each equipment type.
+    """
+    from sqlalchemy import func
+
+    query = db.query(
+        models.Equipment,
+        func.count(models.EquipmentDetection.id).label('detection_count')
+    ).outerjoin(models.EquipmentDetection)
+
+    if category:
+        query = query.filter(models.Equipment.category == category)
+
+    query = query.group_by(models.Equipment.id).order_by(models.Equipment.category, models.Equipment.name)
+    results = query.all()
+
+    equipment_list = []
+    for equip, count in results:
+        equipment_list.append({
+            "id": equip.id,
+            "name": equip.name,
+            "category": equip.category,
+            "description": equip.description,
+            "detection_count": count
+        })
+
+    # Get categories for filtering
+    categories = db.query(models.Equipment.category).distinct().all()
+
+    return {
+        "equipment": equipment_list,
+        "categories": [c[0] for c in categories],
+        "total": len(equipment_list)
+    }
+
+
+@app.get("/equipment/{equipment_id}/detections")
+@limiter.limit(get_rate_limit("officers_list"))
+def get_equipment_detections(
+    request: Request,
+    equipment_id: int,
+    skip: int = 0,
+    limit: int = 50,
+    db: Session = Depends(get_db)
+):
+    """
+    Get all detections of a specific equipment type.
+    Returns appearance details where this equipment was detected.
+    """
+    equipment = db.query(models.Equipment).filter(models.Equipment.id == equipment_id).first()
+    if not equipment:
+        raise HTTPException(status_code=404, detail="Equipment not found")
+
+    detections = (
+        db.query(models.EquipmentDetection)
+        .filter(models.EquipmentDetection.equipment_id == equipment_id)
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+
+    total = db.query(models.EquipmentDetection).filter(
+        models.EquipmentDetection.equipment_id == equipment_id
+    ).count()
+
+    result = []
+    for det in detections:
+        appearance = db.query(models.OfficerAppearance).filter(
+            models.OfficerAppearance.id == det.appearance_id
+        ).first()
+        officer = db.query(models.Officer).filter(
+            models.Officer.id == appearance.officer_id
+        ).first() if appearance else None
+
+        result.append({
+            "detection_id": det.id,
+            "confidence": det.confidence,
+            "bounding_box": det.bounding_box,
+            "appearance_id": det.appearance_id,
+            "officer_id": officer.id if officer else None,
+            "badge_number": officer.badge_number if officer else None,
+            "force": officer.force if officer else None,
+            "crop_path": appearance.image_crop_path if appearance else None,
+            "timestamp": appearance.timestamp_in_video if appearance else None
+        })
+
+    return {
+        "equipment": {
+            "id": equipment.id,
+            "name": equipment.name,
+            "category": equipment.category,
+            "description": equipment.description
+        },
+        "total_detections": total,
+        "detections": result
+    }
+
+
+@app.get("/officers/{officer_id}/uniform")
+@limiter.limit(get_rate_limit("officers_detail"))
+def get_officer_uniform_analysis(
+    request: Request,
+    officer_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Get all uniform analyses for an officer across all their appearances.
+    """
+    import json
+
+    officer = db.query(models.Officer).filter(models.Officer.id == officer_id).first()
+    if not officer:
+        raise HTTPException(status_code=404, detail="Officer not found")
+
+    # Get all appearances with uniform analysis
+    appearances = db.query(models.OfficerAppearance).filter(
+        models.OfficerAppearance.officer_id == officer_id
+    ).all()
+
+    analyses = []
+    for app in appearances:
+        # Check if analysis exists
+        analysis = db.query(models.UniformAnalysis).filter(
+            models.UniformAnalysis.appearance_id == app.id
+        ).first()
+
+        if analysis:
+            # Get equipment detections
+            equipment = db.query(models.EquipmentDetection).filter(
+                models.EquipmentDetection.appearance_id == app.id
+            ).all()
+
+            equipment_list = []
+            for eq_det in equipment:
+                eq = db.query(models.Equipment).filter(models.Equipment.id == eq_det.equipment_id).first()
+                if eq:
+                    equipment_list.append({
+                        "name": eq.name,
+                        "category": eq.category,
+                        "confidence": eq_det.confidence
+                    })
+
+            analyses.append({
+                "appearance_id": app.id,
+                "timestamp_in_video": app.timestamp_in_video,
+                "crop_path": app.image_crop_path,
+                "analysis": {
+                    "detected_force": analysis.detected_force,
+                    "force_confidence": analysis.force_confidence,
+                    "force_indicators": json.loads(analysis.force_indicators) if analysis.force_indicators else [],
+                    "unit_type": analysis.unit_type,
+                    "unit_confidence": analysis.unit_confidence,
+                    "detected_rank": analysis.detected_rank,
+                    "rank_confidence": analysis.rank_confidence,
+                    "shoulder_number": analysis.shoulder_number,
+                    "shoulder_number_confidence": analysis.shoulder_number_confidence,
+                    "uniform_type": analysis.uniform_type,
+                    "analyzed_at": analysis.analyzed_at.isoformat() if analysis.analyzed_at else None
+                },
+                "equipment": equipment_list
+            })
+
+    # Calculate consensus (most common values across analyses)
+    forces = [a["analysis"]["detected_force"] for a in analyses if a["analysis"]["detected_force"]]
+    units = [a["analysis"]["unit_type"] for a in analyses if a["analysis"]["unit_type"]]
+    ranks = [a["analysis"]["detected_rank"] for a in analyses if a["analysis"]["detected_rank"]]
+
+    from collections import Counter
+    consensus = {
+        "force": Counter(forces).most_common(1)[0][0] if forces else None,
+        "unit": Counter(units).most_common(1)[0][0] if units else None,
+        "rank": Counter(ranks).most_common(1)[0][0] if ranks else None
+    }
+
+    return {
+        "officer_id": officer_id,
+        "badge_number": officer.badge_number,
+        "force": officer.force,
+        "total_appearances": len(appearances),
+        "analyzed_appearances": len(analyses),
+        "consensus": consensus,
+        "analyses": analyses
+    }
+
+
+@app.post("/appearances/{appearance_id}/analyze")
+@limiter.limit("5/minute")  # Strict limit due to API costs
+async def analyze_appearance_uniform(
+    request: Request,
+    appearance_id: int,
+    background_tasks: BackgroundTasks,
+    force_reanalyze: bool = False,
+    db: Session = Depends(get_db)
+):
+    """
+    Trigger Claude Vision analysis for an officer appearance.
+    Runs as a background task to avoid blocking.
+    """
+    import os
+    import json
+
+    appearance = db.query(models.OfficerAppearance).filter(
+        models.OfficerAppearance.id == appearance_id
+    ).first()
+
+    if not appearance:
+        raise HTTPException(status_code=404, detail="Appearance not found")
+
+    if not appearance.image_crop_path:
+        raise HTTPException(status_code=400, detail="No image available for this appearance")
+
+    # Check if already analyzed
+    existing = db.query(models.UniformAnalysis).filter(
+        models.UniformAnalysis.appearance_id == appearance_id
+    ).first()
+
+    if existing and not force_reanalyze:
+        return {
+            "status": "already_analyzed",
+            "analysis_id": existing.id,
+            "analyzed_at": existing.analyzed_at.isoformat() if existing.analyzed_at else None,
+            "message": "Use force_reanalyze=true to re-analyze"
+        }
+
+    # Get full image path
+    image_path = os.path.join("data", appearance.image_crop_path.lstrip("/data/"))
+    if not os.path.exists(image_path):
+        raise HTTPException(status_code=400, detail=f"Image file not found: {appearance.image_crop_path}")
+
+    # Background task for analysis
+    def run_analysis(app_id: int, img_path: str, force: bool):
+        from database import SessionLocal
+        from ai.uniform_analyzer import UniformAnalyzer
+
+        db_session = SessionLocal()
+        try:
+            # Check for API key
+            api_key = os.environ.get("ANTHROPIC_API_KEY")
+            if not api_key:
+                print("Warning: ANTHROPIC_API_KEY not set, skipping uniform analysis")
+                return
+
+            analyzer = UniformAnalyzer(api_key=api_key)
+            result = analyzer.analyze_uniform_sync(img_path, force_reanalyze=force)
+
+            if not result.get("success"):
+                print(f"Uniform analysis failed: {result.get('error')}")
+                return
+
+            # Parse to DB format
+            db_data = analyzer.parse_to_db_format(result, app_id)
+            if not db_data:
+                return
+
+            # Check if analysis exists
+            existing_analysis = db_session.query(models.UniformAnalysis).filter(
+                models.UniformAnalysis.appearance_id == app_id
+            ).first()
+
+            if existing_analysis:
+                # Update existing
+                for key, value in db_data.items():
+                    if key != "appearance_id":
+                        setattr(existing_analysis, key, value)
+            else:
+                # Create new
+                analysis = models.UniformAnalysis(**db_data)
+                db_session.add(analysis)
+
+            # Save equipment detections
+            equipment_items = analyzer.extract_equipment(result)
+            for eq_item in equipment_items:
+                # Find or skip equipment
+                equip = db_session.query(models.Equipment).filter(
+                    models.Equipment.name == eq_item["name"]
+                ).first()
+
+                if equip:
+                    # Check if detection exists
+                    existing_det = db_session.query(models.EquipmentDetection).filter(
+                        models.EquipmentDetection.appearance_id == app_id,
+                        models.EquipmentDetection.equipment_id == equip.id
+                    ).first()
+
+                    if not existing_det:
+                        detection = models.EquipmentDetection(
+                            appearance_id=app_id,
+                            equipment_id=equip.id,
+                            confidence=eq_item.get("confidence")
+                        )
+                        db_session.add(detection)
+
+            # Update officer force if high confidence
+            analysis_data = result.get("analysis", {})
+            force_info = analysis_data.get("force", {})
+            if force_info.get("confidence", 0) >= 0.8 and force_info.get("name"):
+                appearance = db_session.query(models.OfficerAppearance).filter(
+                    models.OfficerAppearance.id == app_id
+                ).first()
+                if appearance:
+                    officer = db_session.query(models.Officer).filter(
+                        models.Officer.id == appearance.officer_id
+                    ).first()
+                    if officer and not officer.force:
+                        officer.force = force_info["name"]
+
+            db_session.commit()
+            print(f"Uniform analysis saved for appearance {app_id}")
+
+        except Exception as e:
+            print(f"Error in uniform analysis background task: {e}")
+            db_session.rollback()
+        finally:
+            db_session.close()
+
+    background_tasks.add_task(run_analysis, appearance_id, image_path, force_reanalyze)
+
+    return {
+        "status": "analysis_started",
+        "appearance_id": appearance_id,
+        "message": "Analysis running in background. Check /officers/{id}/uniform for results."
+    }
+
+
+@app.get("/stats/forces")
+@limiter.limit(get_rate_limit("officers_list"))
+def get_force_statistics(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Get statistics on detected police forces from uniform analysis.
+    """
+    from sqlalchemy import func
+
+    # Force counts from UniformAnalysis
+    force_stats = (
+        db.query(
+            models.UniformAnalysis.detected_force,
+            func.count(models.UniformAnalysis.id).label('count'),
+            func.avg(models.UniformAnalysis.force_confidence).label('avg_confidence')
+        )
+        .filter(models.UniformAnalysis.detected_force.isnot(None))
+        .group_by(models.UniformAnalysis.detected_force)
+        .order_by(func.count(models.UniformAnalysis.id).desc())
+        .all()
+    )
+
+    # Unit type counts
+    unit_stats = (
+        db.query(
+            models.UniformAnalysis.unit_type,
+            func.count(models.UniformAnalysis.id).label('count'),
+            func.avg(models.UniformAnalysis.unit_confidence).label('avg_confidence')
+        )
+        .filter(models.UniformAnalysis.unit_type.isnot(None))
+        .group_by(models.UniformAnalysis.unit_type)
+        .order_by(func.count(models.UniformAnalysis.id).desc())
+        .all()
+    )
+
+    # Rank distribution
+    rank_stats = (
+        db.query(
+            models.UniformAnalysis.detected_rank,
+            func.count(models.UniformAnalysis.id).label('count')
+        )
+        .filter(models.UniformAnalysis.detected_rank.isnot(None))
+        .group_by(models.UniformAnalysis.detected_rank)
+        .order_by(func.count(models.UniformAnalysis.id).desc())
+        .all()
+    )
+
+    # Total analyses
+    total_analyses = db.query(models.UniformAnalysis).count()
+    total_with_force = db.query(models.UniformAnalysis).filter(
+        models.UniformAnalysis.detected_force.isnot(None)
+    ).count()
+
+    return {
+        "total_analyses": total_analyses,
+        "analyses_with_force": total_with_force,
+        "forces": [
+            {
+                "force": f[0],
+                "count": f[1],
+                "avg_confidence": round(f[2], 2) if f[2] else None
+            }
+            for f in force_stats
+        ],
+        "units": [
+            {
+                "unit": u[0],
+                "count": u[1],
+                "avg_confidence": round(u[2], 2) if u[2] else None
+            }
+            for u in unit_stats
+        ],
+        "ranks": [
+            {"rank": r[0], "count": r[1]}
+            for r in rank_stats
+        ]
+    }
 

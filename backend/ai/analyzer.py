@@ -11,15 +11,24 @@ except AttributeError:
 else:
     ssl._create_default_https_context = _create_unverified_https_context
 
-# buffer
-# Initialize EasyOCR
-# CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-# EASYOCR_MODELS_DIR = os.path.join(CURRENT_DIR, "easyocr_models")
-# try:
-#     reader = easyocr.Reader(['en'], gpu=False, model_storage_directory=EASYOCR_MODELS_DIR)
-# except Exception as e:
-#     print(f"Warning: OCR Init failed: {e}")
+# Initialize EasyOCR lazily (downloads models on first use)
 reader = None
+_ocr_initialized = False
+
+def _get_ocr_reader():
+    """Lazy initialization of EasyOCR reader to avoid blocking startup."""
+    global reader, _ocr_initialized
+    if _ocr_initialized:
+        return reader
+    _ocr_initialized = True
+    try:
+        print("Initializing EasyOCR (this may download models on first use)...")
+        reader = easyocr.Reader(['en'], gpu=False)
+        print("EasyOCR initialized successfully.")
+    except Exception as e:
+        print(f"Warning: OCR Init failed: {e}")
+        reader = None
+    return reader
 
 # Face Detection
 # Load Face Detector
@@ -55,8 +64,6 @@ try:
     
 except ImportError:
     print("Warning: facenet-pytorch not installed. Re-ID disabled.")
-except Exception as e:
-    print(f"Warning: Failed to load Re-ID model: {e}")
 except Exception as e:
     print(f"Warning: Failed to load Re-ID model: {e}")
 
@@ -178,12 +185,13 @@ def extract_text(image_input):
     """
     Extracts text from the image (path or numpy array) using EasyOCR.
     """
-    if reader is None:
+    ocr_reader = _get_ocr_reader()
+    if ocr_reader is None:
         return []
-        
+
     try:
         # reader.readtext accepts file path or numpy array
-        results = reader.readtext(image_input)
+        results = ocr_reader.readtext(image_input)
         # Filter for text with reasonable confidence
         texts = [res[1] for res in results if res[2] > 0.3]
         return texts

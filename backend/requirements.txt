@@ -20,3 +20,6 @@ ultralytics
 python-socketio
 beautifulsoup4
 cloudscraper
+slowapi
+# Optional: Uniform analysis with Claude Vision API
+anthropic
