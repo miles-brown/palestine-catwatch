@@ -2,6 +2,8 @@
  * API utility functions for secure data handling
  */
 
+import { IS_PRODUCTION, logger } from './constants';
+
 // Configure API base URL
 let API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 if (!API_BASE.startsWith("http")) {
@@ -55,7 +57,45 @@ export const getMediaUrl = (path) => {
 };
 
 /**
+ * Generic user-friendly error messages by HTTP status code.
+ * Used in production to avoid exposing internal details.
+ */
+const GENERIC_ERROR_MESSAGES = {
+  400: 'Invalid request. Please check your input.',
+  401: 'Authentication required. Please log in.',
+  403: 'Access denied. You do not have permission.',
+  404: 'The requested resource was not found.',
+  409: 'Conflict. The resource may have been modified.',
+  422: 'Invalid data provided.',
+  429: 'Too many requests. Please try again later.',
+  500: 'Server error. Please try again later.',
+  502: 'Service temporarily unavailable.',
+  503: 'Service temporarily unavailable.',
+  504: 'Request timed out. Please try again.',
+};
+
+/**
+ * Sanitize error message for user display.
+ * In production, returns generic messages to avoid leaking internal details.
+ * In development, returns the actual error for debugging.
+ *
+ * @param {number} status - HTTP status code
+ * @param {string} rawMessage - Raw error message from server
+ * @returns {string} - Sanitized error message
+ */
+const sanitizeErrorMessage = (status, rawMessage) => {
+  if (!IS_PRODUCTION) {
+    // In development, show full error for debugging
+    return rawMessage;
+  }
+
+  // In production, use generic messages
+  return GENERIC_ERROR_MESSAGES[status] || 'An unexpected error occurred.';
+};
+
+/**
  * Fetch wrapper with proper error handling.
+ * Sanitizes error messages in production to prevent information leakage.
  *
  * @param {string} url - The URL to fetch
  * @param {object} options - Fetch options
@@ -67,14 +107,20 @@ export const fetchWithErrorHandling = async (url, options = {}) => {
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => 'Unknown error');
-    let errorMessage;
+    let rawMessage;
     try {
       const errorJson = JSON.parse(errorText);
-      errorMessage = errorJson.detail || errorJson.message || errorText;
+      rawMessage = errorJson.detail || errorJson.message || errorText;
     } catch {
-      errorMessage = errorText;
+      rawMessage = errorText;
     }
-    throw new Error(`HTTP ${response.status}: ${errorMessage}`);
+
+    // Log full error in development for debugging
+    logger.debug(`API Error [${response.status}]:`, rawMessage);
+
+    // Sanitize message for user display
+    const userMessage = sanitizeErrorMessage(response.status, rawMessage);
+    throw new Error(`HTTP ${response.status}: ${userMessage}`);
   }
 
   return response.json();
