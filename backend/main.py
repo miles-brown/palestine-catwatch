@@ -43,14 +43,14 @@ try:
 except Exception as e:
     print(f"Startup Warning: Database connection failed. App will start but DB features will fail. Error: {e}")
 
-from pydantic import BaseModel, field_validator, HttpUrl
+from pydantic import BaseModel, field_validator, HttpUrl, Field
 from urllib.parse import urlparse
 import re
 
 class IngestURLRequest(BaseModel):
     url: str
     protest_id: Optional[int] = None
-    answers: dict = {}
+    answers: dict = Field(default_factory=dict)  # Avoid mutable default argument
 
     @field_validator('url')
     @classmethod
@@ -61,7 +61,7 @@ class IngestURLRequest(BaseModel):
 class BulkIngestRequest(BaseModel):
     urls: List[str]
     protest_id: Optional[int] = None
-    answers: dict = {}
+    answers: dict = Field(default_factory=dict)  # Avoid mutable default argument
 
 
 # =============================================================================
@@ -555,12 +555,18 @@ def get_media_report(request: Request, media_id: int, db: Session = Depends(get_
 
 @app.post("/ingest/url")
 @limiter.limit(get_rate_limit("ingest"))
-async def ingest_media_url(request: Request, body: IngestURLRequest, background_tasks: BackgroundTasks):
+async def ingest_media_url(request: Request, body: IngestURLRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """
     Ingest a URL (YouTube, web).
     Triggers background download and analysis.
     Rate limited to prevent abuse of expensive AI processing.
     """
+    # Validate protest_id if provided
+    if body.protest_id is not None:
+        protest = db.query(models.Protest).filter(models.Protest.id == body.protest_id).first()
+        if not protest:
+            raise HTTPException(status_code=404, detail=f"Protest with ID {body.protest_id} not found")
+
     # Create a unique Task ID and room
     task_id = f"task_{int(datetime.utcnow().timestamp())}"
 

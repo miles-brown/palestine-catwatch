@@ -148,12 +148,21 @@ const UploadPage = () => {
     const handleUrlSubmit = async (answers) => {
         setSubmitStatus('loading');
         try {
+            // Validate protest_id if provided
+            let protestId = null;
+            if (answers.protestId) {
+                protestId = parseInt(answers.protestId, 10);
+                if (isNaN(protestId)) {
+                    throw new Error('Invalid protest ID');
+                }
+            }
+
             const response = await fetch(`${API_BASE}/ingest/url`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     url: answers.url,
-                    protest_id: answers.protestId ? parseInt(answers.protestId) : null,
+                    protest_id: protestId,
                     answers: answers
                 }),
             });
@@ -178,7 +187,9 @@ const UploadPage = () => {
 
         } catch (error) {
             setSubmitStatus('error');
-            setMessage(`${error.message || 'Failed'}. (Target: ${API_BASE})`);
+            // Only show API target URL in development mode for security
+            const debugInfo = import.meta.env.DEV ? ` (Target: ${API_BASE})` : '';
+            setMessage(`${error.message || 'Failed'}${debugInfo}`);
         }
     };
 
