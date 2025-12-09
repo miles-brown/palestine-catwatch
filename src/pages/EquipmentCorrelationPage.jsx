@@ -8,16 +8,7 @@ import {
 } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { API_BASE, fetchWithErrorHandling } from '../utils/api';
-import { CATEGORY_COLORS, formatDate } from '../utils/constants';
-
-// Escalation score color
-const getEscalationColor = (score) => {
-  if (score >= 12) return { bg: 'bg-red-600', text: 'text-white', label: 'Critical' };
-  if (score >= 8) return { bg: 'bg-red-500', text: 'text-white', label: 'High' };
-  if (score >= 5) return { bg: 'bg-orange-500', text: 'text-white', label: 'Elevated' };
-  if (score >= 3) return { bg: 'bg-yellow-500', text: 'text-black', label: 'Moderate' };
-  return { bg: 'bg-green-500', text: 'text-white', label: 'Low' };
-};
+import { CATEGORY_COLORS, formatDate, getEscalationStyle } from '../utils/constants';
 
 // Stats Card
 const StatCard = ({ icon: Icon, label, value, subtext, color = 'blue' }) => {
@@ -60,7 +51,7 @@ const CoOccurrenceCard = ({ item1, item2, count }) => {
 
 // Escalation Event Card
 const EscalationEventCard = ({ event }) => {
-  const escalationStyle = getEscalationColor(event.escalation_score);
+  const escalationStyle = getEscalationStyle(event.escalation_score);
 
   return (
     <Card className="overflow-hidden">

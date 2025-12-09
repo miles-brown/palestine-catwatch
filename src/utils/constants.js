@@ -149,3 +149,43 @@ export const formatDateTime = (dateInput, fallback = 'Unknown') => {
     return fallback;
   }
 };
+
+/**
+ * Escalation score thresholds for equipment analysis
+ * Determines risk level based on aggregate equipment scores
+ */
+export const ESCALATION_THRESHOLDS = {
+  CRITICAL: 12,  // Red - highest risk
+  HIGH: 8,       // Red - high risk
+  ELEVATED: 5,   // Orange - elevated risk
+  MODERATE: 3,   // Yellow - moderate risk
+  LOW: 0         // Green - low risk
+};
+
+/**
+ * Escalation level styles with colors and labels
+ */
+export const ESCALATION_STYLES = {
+  CRITICAL: { bg: 'bg-red-600', text: 'text-white', label: 'Critical' },
+  HIGH: { bg: 'bg-red-500', text: 'text-white', label: 'High' },
+  ELEVATED: { bg: 'bg-orange-500', text: 'text-white', label: 'Elevated' },
+  MODERATE: { bg: 'bg-yellow-500', text: 'text-black', label: 'Moderate' },
+  LOW: { bg: 'bg-green-500', text: 'text-white', label: 'Low' }
+};
+
+/**
+ * Get escalation style based on score
+ *
+ * @param {number} score - The escalation score
+ * @returns {object} - { bg, text, label } style object
+ */
+export const getEscalationStyle = (score) => {
+  if (typeof score !== 'number' || !Number.isFinite(score)) {
+    return ESCALATION_STYLES.LOW;
+  }
+  if (score >= ESCALATION_THRESHOLDS.CRITICAL) return ESCALATION_STYLES.CRITICAL;
+  if (score >= ESCALATION_THRESHOLDS.HIGH) return ESCALATION_STYLES.HIGH;
+  if (score >= ESCALATION_THRESHOLDS.ELEVATED) return ESCALATION_STYLES.ELEVATED;
+  if (score >= ESCALATION_THRESHOLDS.MODERATE) return ESCALATION_STYLES.MODERATE;
+  return ESCALATION_STYLES.LOW;
+};

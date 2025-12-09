@@ -12,10 +12,22 @@ import { fetchWithErrorHandling } from '../utils/api';
  * @param {string} url - The URL to fetch
  * @param {object} options - Fetch options
  * @param {boolean} options.immediate - Whether to fetch immediately (default: true)
- * @param {any[]} options.deps - Dependencies that trigger refetch
  * @returns {object} - { data, loading, error, refetch }
+ *
+ * @example
+ * // Basic usage - fetches immediately when url changes
+ * const { data, loading, error } = useFetch('/api/data');
+ *
+ * @example
+ * // Manual fetching - use refetch() to trigger
+ * const { data, refetch } = useFetch('/api/data', { immediate: false });
+ * // Later: refetch();
+ *
+ * @note For dependent fetches (e.g., when other state changes), call refetch()
+ * manually instead of passing deps. This avoids potential infinite loops
+ * from object/array dependencies.
  */
-export function useFetch(url, { immediate = true, deps = [] } = {}) {
+export function useFetch(url, { immediate = true } = {}) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(immediate);
   const [error, setError] = useState(null);
@@ -68,7 +80,7 @@ export function useFetch(url, { immediate = true, deps = [] } = {}) {
         abortControllerRef.current.abort();
       }
     };
-  }, [url, immediate, fetchData, ...deps]);
+  }, [url, immediate, fetchData]);
 
   return { data, loading, error, refetch: fetchData };
 }

@@ -253,13 +253,22 @@ function GeographicPage() {
   const [showMovements, setShowMovements] = useState(true);
   const [showMarkers, setShowMarkers] = useState(true);
 
-  const fetchGeoData = useCallback(async () => {
+  // Ref for abort controller to prevent memory leaks on unmount
+  const abortControllerRef = useRef(null);
+
+  const fetchGeoData = useCallback(async (signal) => {
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchWithErrorHandling(`${API_BASE}/stats/geographic`);
+      const response = await fetch(`${API_BASE}/stats/geographic`, { signal });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      const data = await response.json();
       setGeoData(data);
     } catch (err) {
+      // Ignore abort errors
+      if (err.name === 'AbortError') return;
       setError(err.message);
     } finally {
       setLoading(false);
@@ -267,7 +276,30 @@ function GeographicPage() {
   }, []);
 
   useEffect(() => {
-    fetchGeoData();
+    // Abort previous request if any
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    // Create new abort controller
+    abortControllerRef.current = new AbortController();
+    fetchGeoData(abortControllerRef.current.signal);
+
+    // Cleanup: abort on unmount
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, [fetchGeoData]);
+
+  // Manual refresh handler - creates new abort controller
+  const handleRefresh = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+    fetchGeoData(abortControllerRef.current.signal);
   }, [fetchGeoData]);
 
   // Filter movements based on selected officer
@@ -301,7 +333,7 @@ function GeographicPage() {
           <AlertTriangle className="h-12 w-12 text-red-500 mx-auto mb-4" />
           <h2 className="text-xl font-bold text-gray-900 mb-2">Error Loading Data</h2>
           <p className="text-red-500 mb-4">{error}</p>
-          <Button onClick={fetchGeoData}>Try Again</Button>
+          <Button onClick={handleRefresh}>Try Again</Button>
         </div>
       </div>
     );
@@ -342,7 +374,7 @@ function GeographicPage() {
                 <MapPin className="h-4 w-4 mr-2" />
                 Markers
               </Button>
-              <Button variant="outline" size="sm" onClick={fetchGeoData}>
+              <Button variant="outline" size="sm" onClick={handleRefresh}>
                 <RefreshCw className="h-4 w-4 mr-2" />
                 Refresh
               </Button>
