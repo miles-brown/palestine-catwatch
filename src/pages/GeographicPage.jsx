@@ -41,12 +41,20 @@ const CLUSTER_SIZES = {
   XLARGE: 60
 };
 
-// Custom marker icons based on officer count
+// Cache for cluster icons to avoid recreating identical icons
+const clusterIconCache = new Map();
+
+// Custom marker icons based on officer count (memoized)
 const createClusterIcon = (count) => {
   // Validate and sanitize count - must be a non-negative integer
   const safeCount = typeof count === 'number' && Number.isFinite(count) && count >= 0
     ? Math.floor(count)
     : 0;
+
+  // Return cached icon if available
+  if (clusterIconCache.has(safeCount)) {
+    return clusterIconCache.get(safeCount);
+  }
 
   const size = safeCount < CLUSTER_THRESHOLDS.SMALL ? CLUSTER_SIZES.SMALL :
                safeCount < CLUSTER_THRESHOLDS.MEDIUM ? CLUSTER_SIZES.MEDIUM :
@@ -76,13 +84,18 @@ const createClusterIcon = (count) => {
   `;
   div.textContent = String(safeCount);
 
-  return L.divIcon({
+  const icon = L.divIcon({
     className: 'custom-cluster-marker',
     html: div.outerHTML,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
     popupAnchor: [0, -size / 2]
   });
+
+  // Cache the icon for future use
+  clusterIconCache.set(safeCount, icon);
+
+  return icon;
 };
 
 // Component to fit map bounds

@@ -134,10 +134,21 @@ const ChainOfCommandSection = ({ officerId }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchWithErrorHandling(`${API_BASE}/officers/${officerId}/chain`)
+    const controller = new AbortController();
+
+    fetchWithErrorHandling(`${API_BASE}/officers/${officerId}/chain`, {
+      signal: controller.signal
+    })
       .then(setChainData)
-      .catch(err => logger.warn('Failed to fetch chain of command:', err))
+      .catch(err => {
+        // Ignore abort errors - component unmounted
+        if (err.name !== 'AbortError') {
+          logger.warn('Failed to fetch chain of command:', err);
+        }
+      })
       .finally(() => setLoading(false));
+
+    return () => controller.abort();
   }, [officerId]);
 
   if (loading) {
@@ -444,10 +455,21 @@ const UniformSummary = ({ officerId }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchWithErrorHandling(`${API_BASE}/officers/${officerId}/uniform`)
+    const controller = new AbortController();
+
+    fetchWithErrorHandling(`${API_BASE}/officers/${officerId}/uniform`, {
+      signal: controller.signal
+    })
       .then(setUniformData)
-      .catch(err => logger.warn('Failed to fetch uniform data:', err))
+      .catch(err => {
+        // Ignore abort errors - component unmounted
+        if (err.name !== 'AbortError') {
+          logger.warn('Failed to fetch uniform data:', err);
+        }
+      })
       .finally(() => setLoading(false));
+
+    return () => controller.abort();
   }, [officerId]);
 
   if (loading) {
