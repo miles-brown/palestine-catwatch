@@ -10,6 +10,8 @@ if (!API_BASE.startsWith("http")) {
     API_BASE = `https://${API_BASE}`;
 }
 
+import { useNavigate } from 'react-router-dom';
+
 const UploadPage = () => {
     // Shared State
     const [activeTab, setActiveTab] = useState('upload'); // 'upload' | 'link'
@@ -123,14 +125,23 @@ const UploadPage = () => {
         }
     };
 
+    const navigate = useNavigate();
+
     if (liveTaskId) {
         return (
             <LiveAnalysis
                 taskId={liveTaskId}
-                onComplete={() => {
-                    setLiveTaskId(null);
-                    setStatus('idle');
-                    setMessage('');
+                onComplete={(mediaId) => {
+                    if (mediaId) {
+                        setLiveTaskId(null);
+                        setStatus('idle');
+                        setMessage('');
+                        navigate(`/report/${mediaId}`);
+                    } else {
+                        console.error("Report Generation Error: No Media ID returned.");
+                        alert("Error: Analysis completed but no Report could be generated (Missing Media ID).");
+                        setLiveTaskId(null);
+                    }
                 }}
             />
         );

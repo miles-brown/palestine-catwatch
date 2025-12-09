@@ -20,6 +20,7 @@ export default function LiveAnalysis({ taskId, onComplete }) {
 
     const [currentFrame, setCurrentFrame] = useState(null);
     const [reconData, setReconData] = useState(null);
+    const [mediaId, setMediaId] = useState(null);
     const frameTimeoutRef = useRef(null);
 
     useEffect(() => {
@@ -60,6 +61,13 @@ export default function LiveAnalysis({ taskId, onComplete }) {
             setReconData(data);
         });
 
+        socket.on('media_created', (data) => {
+            if (data && data.media_id) {
+                setMediaId(data.media_id);
+                addLog('System', `Media ID confirmed: ${data.media_id}`);
+            }
+        });
+
         socket.on('scraped_image', (data) => {
             setScrapedMedia(prev => [...prev, data]);
         });
@@ -75,7 +83,15 @@ export default function LiveAnalysis({ taskId, onComplete }) {
             setStats(s => ({ ...s, faces: s.faces + 1, confidence_avg: (s.confidence_avg + data.confidence) / 2 }));
         });
 
-        socket.on('complete', (msg) => {
+        socket.on('complete', (data) => {
+            let msg = data;
+            if (typeof data === 'object') {
+                msg = data.message;
+                if (data.media_id) {
+                    setMediaId(data.media_id);
+                    addLog('System', `Finalized Media ID: ${data.media_id}`);
+                }
+            }
             addLog('System', msg);
             setStatus('complete');
             setCurrentFrame(null);
@@ -324,7 +340,7 @@ export default function LiveAnalysis({ taskId, onComplete }) {
 
             {status === 'complete' && (
                 <div className="mt-6 flex justify-end">
-                    <Button onClick={onComplete} className="bg-blue-600 hover:bg-blue-500">
+                    <Button onClick={() => onComplete(mediaId)} className="bg-blue-600 hover:bg-blue-500">
                         Generate Report & Return
                     </Button>
                 </div>

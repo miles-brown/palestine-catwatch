@@ -101,6 +101,60 @@ def get_officer_dossier(officer_id: int, db: Session = Depends(get_db)):
         headers={"Content-Disposition": f"attachment; filename=officer_{officer_id}_dossier.pdf"}
     )
 
+@app.get("/media/{media_id}/report")
+def get_media_report(media_id: int, db: Session = Depends(get_db)):
+    """
+    Returns aggregated data for the 'Webpage Report' of a specific media item.
+    """
+    media = db.query(models.Media).filter(models.Media.id == media_id).first()
+    if not media:
+        raise HTTPException(status_code=404, detail="Media not found")
+        
+    # Get Protest
+    protest = media.protest
+    
+    # Get Officer Appearances
+    appearances = db.query(models.OfficerAppearance).filter(models.OfficerAppearance.media_id == media_id).all()
+    
+    # Aggregate Officers
+    # We want a list of unique officers found in this video
+    officer_ids = set(app.officer_id for app in appearances)
+    officers = []
+    
+    for oid in officer_ids:
+        officer = db.query(models.Officer).filter(models.Officer.id == oid).first()
+        if officer:
+            # Find the best crop (first one for now)
+            first_app = next((a for a in appearances if a.officer_id == oid and a.image_crop_path), None)
+            
+            officers.append({
+                "id": officer.id,
+                "badge": officer.badge_number,
+                "force": officer.force,
+                "role": first_app.role if first_app else None, # Role is on Appearance, not Officer
+                "crop_path": first_app.image_crop_path if first_app else None,
+                "total_appearances_in_video": sum(1 for a in appearances if a.officer_id == oid)
+            })
+            
+    return {
+        "media": {
+            "id": media.id,
+            "url": media.url, # This might be local path
+            "type": media.type,
+            "timestamp": media.timestamp
+        },
+        "protest": {
+            "name": protest.name if protest else "Unknown Event",
+            "location": protest.location if protest else "Unknown Location",
+            "date": protest.date if protest else None
+        },
+        "stats": {
+            "total_officers": len(officers),
+            "total_appearances": len(appearances)
+        },
+        "officers": officers
+    }
+
 @app.post("/ingest/url")
 async def ingest_media_url(request: IngestURLRequest, background_tasks: BackgroundTasks):
     """

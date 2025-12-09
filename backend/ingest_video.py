@@ -216,6 +216,7 @@ def process_video_workflow(url, answers, user_provided_protest_id=None, status_c
         
         media_id = new_media.id
         if status_callback: status_callback("log", f"Media record created ID: {media_id}")
+        if status_callback: status_callback("media_created", {"media_id": media_id})
         
     finally:
         db.close()
@@ -226,4 +227,6 @@ def process_video_workflow(url, answers, user_provided_protest_id=None, status_c
     if status_callback: status_callback("log", "Starting AI Analysis...")
     process_media(media_id, status_callback)
     print(f"Workflow complete for {url}")
-    if status_callback: status_callback("complete", "Analysis Workflow Complete.")
+    # Ensure media_id is sent one last time for robustness
+    if status_callback: status_callback("media_created", {"media_id": media_id})
+    if status_callback: status_callback("complete", {"message": "Analysis Workflow Complete.", "media_id": media_id})
