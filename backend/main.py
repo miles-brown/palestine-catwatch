@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Request
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Request, Response
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -28,6 +28,8 @@ try:
             "ALTER TABLE officer_appearances ADD COLUMN IF NOT EXISTS confidence FLOAT",
             "ALTER TABLE officer_appearances ADD COLUMN IF NOT EXISTS confidence_factors TEXT",
             "ALTER TABLE officer_appearances ADD COLUMN IF NOT EXISTS verified BOOLEAN DEFAULT FALSE",
+            # Token revocation support
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER DEFAULT 0",
         ]
         for migration in migrations:
             try:
@@ -117,6 +119,10 @@ app = FastAPI(title="Palestine Catwatch API")
 
 # Setup rate limiting
 setup_rate_limiting(app)
+
+# Setup standardized error handling
+from errors import setup_error_handlers
+setup_error_handlers(app)
 
 # Configure CORS
 app.add_middleware(
@@ -1680,6 +1686,36 @@ def get_force_statistics(
 
 
 # =============================================================================
+# CSRF PROTECTION
+# =============================================================================
+
+from csrf import generate_csrf_token, set_csrf_cookie, require_csrf, CSRF_ENABLED
+
+
+@app.get("/csrf/token")
+@limiter.limit("30/minute")
+def get_csrf_token(request: Request, response: Response):
+    """
+    Get a CSRF token for protected form submissions.
+
+    The token is returned in both:
+    1. Response body (for SPA to read)
+    2. Cookie (for double-submit validation)
+
+    Frontend should include this token in X-CSRF-Token header
+    when making protected requests (registration, etc.).
+    """
+    token = generate_csrf_token()
+    set_csrf_cookie(response, token)
+
+    return {
+        "csrf_token": token,
+        "expires_in": 24 * 3600,  # 24 hours in seconds
+        "header_name": "X-CSRF-Token"
+    }
+
+
+# =============================================================================
 # AUTHENTICATION ENDPOINTS
 # =============================================================================
 
@@ -1688,7 +1724,7 @@ from auth import (
     create_user, authenticate_user, create_access_token, create_refresh_token,
     decode_refresh_token, get_user_by_username, get_user_by_email, verify_user_email,
     AuthenticationError, ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS,
-    log_security_event
+    log_security_event, revoke_user_tokens, get_current_user, require_admin
 )
 from datetime import timedelta
 
@@ -1704,7 +1740,8 @@ REQUIRE_EMAIL_VERIFICATION = os.getenv("REQUIRE_EMAIL_VERIFICATION", "true").low
 def register_user(
     request: Request,
     user_data: UserCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _csrf = Depends(require_csrf)  # CSRF protection for registration
 ):
     """
     Register a new user account.
@@ -1832,11 +1869,12 @@ def login(
     user.last_login = datetime.now(timezone.utc)
     db.commit()
 
-    # Token payload
+    # Token payload (include token_version for revocation support)
     token_data = {
         "sub": user.username,
         "user_id": user.id,
-        "role": user.role
+        "role": user.role,
+        "token_version": user.token_version or 0
     }
 
     # Create access token (short-lived: 30 minutes)
@@ -1986,6 +2024,17 @@ def refresh_access_token(
             detail="Account is disabled"
         )
 
+    # Validate token version for revocation support
+    user_token_version = user.token_version or 0
+    token_version = token_data.token_version or 0
+    if token_version < user_token_version:
+        # Refresh token was issued before tokens were revoked
+        raise HTTPException(
+            status_code=401,
+            detail="Token has been revoked. Please log in again.",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
     # Log the token refresh
     log_security_event(
         "TOKEN_REFRESH",
@@ -1994,11 +2043,12 @@ def refresh_access_token(
         ip_address=client_ip
     )
 
-    # Create new access token
+    # Create new access token (include current token_version)
     new_token_data = {
         "sub": user.username,
         "user_id": user.id,
-        "role": user.role
+        "role": user.role,
+        "token_version": user_token_version
     }
 
     access_token = create_access_token(
@@ -2010,4 +2060,64 @@ def refresh_access_token(
         "access_token": access_token,
         "token_type": "bearer",
         "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    }
+
+
+@app.post("/auth/revoke/{user_id}")
+@limiter.limit("10/minute")
+async def revoke_user_tokens_endpoint(
+    request: Request,
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_admin)
+):
+    """
+    Revoke all tokens for a specific user (admin only).
+
+    This invalidates all existing access and refresh tokens for the user,
+    forcing them to re-authenticate. Useful for:
+    - Security incidents
+    - Account compromises
+    - Admin forcing logout
+    """
+    from auth import get_user_by_id
+
+    target_user = get_user_by_id(db, user_id)
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Prevent revoking own tokens through this endpoint
+    if target_user.id == current_user.id:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot revoke your own tokens. Use /auth/logout instead."
+        )
+
+    revoke_user_tokens(db, target_user)
+
+    return {
+        "status": "success",
+        "message": f"All tokens revoked for user {target_user.username}",
+        "user_id": user_id,
+        "new_token_version": target_user.token_version
+    }
+
+
+@app.post("/auth/logout")
+@limiter.limit("10/minute")
+async def logout_user(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """
+    Logout the current user by revoking all their tokens.
+
+    This invalidates all access and refresh tokens, requiring re-authentication.
+    """
+    revoke_user_tokens(db, current_user)
+
+    return {
+        "status": "success",
+        "message": "Logged out successfully. All tokens have been revoked."
     }

@@ -35,6 +35,9 @@ class User(Base):
     locked_until = Column(DateTime, nullable=True)  # Account locked until this time
     last_failed_login = Column(DateTime, nullable=True)  # Time of last failed login
 
+    # Token versioning for revocation
+    token_version = Column(Integer, default=0)  # Increment to invalidate all existing tokens
+
     # Track user actions for audit
     uploads = relationship("Media", back_populates="uploaded_by_user", foreign_keys="Media.uploaded_by")
 

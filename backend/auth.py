@@ -115,27 +115,44 @@ def sanitize_name(value: str) -> str:
 
 # Secret key for JWT signing - MUST be set in environment for production
 _DEFAULT_SECRET = "dev-secret-key-change-in-production-INSECURE"
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", _DEFAULT_SECRET)
+_DEFAULT_REFRESH_SECRET = "dev-refresh-secret-key-change-in-production-INSECURE"
 
-# Refresh token secret (should be different from access token secret)
-REFRESH_SECRET_KEY = os.getenv("JWT_REFRESH_SECRET_KEY", SECRET_KEY + "_refresh")
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", _DEFAULT_SECRET)
+REFRESH_SECRET_KEY = os.getenv("JWT_REFRESH_SECRET_KEY", _DEFAULT_REFRESH_SECRET)
 
 # Account lockout settings
 MAX_FAILED_LOGIN_ATTEMPTS = int(os.getenv("MAX_FAILED_LOGIN_ATTEMPTS", "5"))
 LOCKOUT_DURATION_MINUTES = int(os.getenv("LOCKOUT_DURATION_MINUTES", "15"))
 FAILED_LOGIN_RESET_MINUTES = int(os.getenv("FAILED_LOGIN_RESET_MINUTES", "30"))
 
-# Warn loudly if using default secret in production
-if SECRET_KEY == _DEFAULT_SECRET:
-    _env = os.getenv("ENVIRONMENT", "development").lower()
-    if _env in ("production", "prod", "staging"):
+# Validate secrets in production - require BOTH to be set
+_env = os.getenv("ENVIRONMENT", "development").lower()
+if _env in ("production", "prod", "staging"):
+    if SECRET_KEY == _DEFAULT_SECRET:
         raise RuntimeError(
             "CRITICAL: JWT_SECRET_KEY environment variable must be set in production! "
             "Generate a secure key with: python -c \"import secrets; print(secrets.token_hex(32))\""
         )
-    else:
+    if REFRESH_SECRET_KEY == _DEFAULT_REFRESH_SECRET:
+        raise RuntimeError(
+            "CRITICAL: JWT_REFRESH_SECRET_KEY environment variable must be set in production! "
+            "This MUST be different from JWT_SECRET_KEY. "
+            "Generate a secure key with: python -c \"import secrets; print(secrets.token_hex(32))\""
+        )
+    if SECRET_KEY == REFRESH_SECRET_KEY:
+        raise RuntimeError(
+            "CRITICAL: JWT_SECRET_KEY and JWT_REFRESH_SECRET_KEY must be different! "
+            "Using the same key for both tokens reduces security."
+        )
+else:
+    if SECRET_KEY == _DEFAULT_SECRET:
         warnings.warn(
             "WARNING: Using default JWT secret key. Set JWT_SECRET_KEY in production!",
+            UserWarning
+        )
+    if REFRESH_SECRET_KEY == _DEFAULT_REFRESH_SECRET:
+        warnings.warn(
+            "WARNING: Using default refresh secret key. Set JWT_REFRESH_SECRET_KEY in production!",
             UserWarning
         )
 
@@ -172,6 +189,7 @@ class TokenData(BaseModel):
     username: Optional[str] = None
     user_id: Optional[int] = None
     role: Optional[str] = None
+    token_version: Optional[int] = None  # For token revocation
 
 
 class Token(BaseModel):
@@ -424,11 +442,12 @@ def decode_refresh_token(token: str) -> Optional[TokenData]:
         username: str = payload.get("sub")
         user_id: int = payload.get("user_id")
         role: str = payload.get("role")
+        token_version: int = payload.get("token_version", 0)
 
         if username is None:
             return None
 
-        return TokenData(username=username, user_id=user_id, role=role)
+        return TokenData(username=username, user_id=user_id, role=role, token_version=token_version)
     except JWTError:
         return None
 
@@ -448,11 +467,12 @@ def decode_token(token: str) -> Optional[TokenData]:
         username: str = payload.get("sub")
         user_id: int = payload.get("user_id")
         role: str = payload.get("role")
+        token_version: int = payload.get("token_version", 0)
 
         if username is None:
             return None
 
-        return TokenData(username=username, user_id=user_id, role=role)
+        return TokenData(username=username, user_id=user_id, role=role, token_version=token_version)
     except JWTError:
         return None
 
@@ -549,7 +569,7 @@ def verify_user_email(db: Session, token: str):
 
 # Dummy hash for constant-time comparison when user not found
 # This prevents timing attacks that could enumerate valid usernames
-_DUMMY_HASH = pwd_context.hash("dummy_password_for_timing_attack_prevention")
+_DUMMY_HASH = pwd_context.hash("DummyP@ss123!")
 
 
 # =============================================================================
@@ -843,6 +863,13 @@ async def get_current_user(
     if user is None:
         raise credentials_exception
 
+    # Validate token version for revocation support
+    user_token_version = getattr(user, 'token_version', 0) or 0
+    token_version = token_data.token_version or 0
+    if token_version < user_token_version:
+        # Token was issued before the user's tokens were revoked
+        raise credentials_exception
+
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -872,7 +899,35 @@ async def get_current_user_optional(
     if user is None or not user.is_active:
         return None
 
+    # Validate token version for revocation support
+    user_token_version = getattr(user, 'token_version', 0) or 0
+    token_version = token_data.token_version or 0
+    if token_version < user_token_version:
+        return None
+
     return user
+
+
+def revoke_user_tokens(db: Session, user) -> None:
+    """
+    Revoke all existing tokens for a user by incrementing their token version.
+
+    All tokens issued with an older version will be rejected.
+    This is useful when:
+    - User changes password
+    - User is deactivated
+    - Admin needs to force logout a user
+    - Security incident detected
+    """
+    user.token_version = (user.token_version or 0) + 1
+    db.commit()
+
+    log_security_event(
+        "TOKENS_REVOKED",
+        username=user.username,
+        user_id=user.id,
+        details={"new_token_version": user.token_version}
+    )
 
 
 def require_role(required_role: Role):

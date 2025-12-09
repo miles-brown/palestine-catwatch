@@ -3,7 +3,7 @@ import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Lock, Eye, EyeOff, AlertCircle, CheckCircle } from 'lucide-react';
+import { Lock, Eye, EyeOff, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
 
 export default function LoginPage() {
     const navigate = useNavigate();
@@ -124,9 +124,10 @@ export default function LoginPage() {
 
                     <Button
                         type="submit"
-                        className="w-full bg-green-600 hover:bg-green-700 text-white py-3"
+                        className="w-full bg-green-600 hover:bg-green-700 text-white py-3 flex items-center justify-center gap-2"
                         disabled={loading || !formData.username || !formData.password}
                     >
+                        {loading && <Loader2 className="h-4 w-4 animate-spin" />}
                         {loading ? 'Signing in...' : 'Sign In'}
                     </Button>
                 </form>

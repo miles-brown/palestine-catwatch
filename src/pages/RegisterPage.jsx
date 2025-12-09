@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import config from '../config/environment';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
@@ -10,7 +11,7 @@ import {
     FormCheckbox,
     FormSection,
 } from '@/components/ui/FormInput';
-import { UserPlus, AlertCircle, CheckCircle, Info } from 'lucide-react';
+import { UserPlus, AlertCircle, CheckCircle, Info, Loader2 } from 'lucide-react';
 
 // ============================================================================
 // Constants
@@ -263,7 +264,7 @@ export default function RegisterPage() {
     const handleVerify = async () => {
         if (!verificationToken) return;
 
-        const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+        const API_URL = config.apiUrl;
         try {
             const response = await fetch(`${API_URL}/auth/verify-email/${verificationToken}`);
             if (response.ok) {
@@ -398,9 +399,10 @@ export default function RegisterPage() {
                     {/* Submit Button */}
                     <Button
                         type="submit"
-                        className="w-full bg-green-600 hover:bg-green-700 text-white py-3"
+                        className="w-full bg-green-600 hover:bg-green-700 text-white py-3 flex items-center justify-center gap-2"
                         disabled={loading}
                     >
+                        {loading && <Loader2 className="h-4 w-4 animate-spin" />}
                         {loading ? 'Creating Account...' : 'Create Account'}
                     </Button>
                 </form>

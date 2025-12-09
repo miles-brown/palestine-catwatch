@@ -1,12 +1,14 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import config from '../config/environment';
 
 const AuthContext = createContext(null);
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_URL = config.apiUrl;
 const TOKEN_KEY = 'catwatch_auth_token';
 const REFRESH_TOKEN_KEY = 'catwatch_refresh_token';
 const USER_KEY = 'catwatch_auth_user';
 const TOKEN_EXPIRY_KEY = 'catwatch_token_expiry';
+const CSRF_TOKEN_KEY = 'catwatch_csrf_token';
 
 // Refresh token 2 minutes before expiry to prevent unexpected logouts
 const TOKEN_REFRESH_MARGIN_MS = 2 * 60 * 1000;
@@ -17,9 +19,28 @@ export function AuthProvider({ children }) {
     const [refreshToken, setRefreshToken] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [csrfToken, setCsrfToken] = useState(null);
 
     // Ref to store the refresh timer
     const refreshTimerRef = useRef(null);
+
+    // Fetch CSRF token for protected operations
+    const fetchCsrfToken = useCallback(async () => {
+        try {
+            const response = await fetch(`${API_URL}/csrf/token`, {
+                credentials: 'include', // Include cookies
+            });
+            if (response.ok) {
+                const data = await response.json();
+                setCsrfToken(data.csrf_token);
+                localStorage.setItem(CSRF_TOKEN_KEY, data.csrf_token);
+                return data.csrf_token;
+            }
+        } catch (e) {
+            console.error('Failed to fetch CSRF token:', e);
+        }
+        return null;
+    }, []);
 
     // Clear refresh timer
     const clearRefreshTimer = useCallback(() => {
@@ -213,17 +234,54 @@ export function AuthProvider({ children }) {
     const register = async (userData) => {
         setError(null);
         try {
+            // Get CSRF token first (or use cached one)
+            let currentCsrfToken = csrfToken || localStorage.getItem(CSRF_TOKEN_KEY);
+            if (!currentCsrfToken) {
+                currentCsrfToken = await fetchCsrfToken();
+            }
+
+            const headers = {
+                'Content-Type': 'application/json',
+            };
+
+            // Add CSRF token if available
+            if (currentCsrfToken) {
+                headers['X-CSRF-Token'] = currentCsrfToken;
+            }
+
             const response = await fetch(`${API_URL}/auth/register`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
+                headers,
+                credentials: 'include', // Include cookies for CSRF
                 body: JSON.stringify(userData),
             });
 
             const data = await response.json();
 
             if (!response.ok) {
+                // If CSRF validation failed, refresh token and retry once
+                if (response.status === 403 && data.detail?.code === 'csrf_validation_failed') {
+                    currentCsrfToken = await fetchCsrfToken();
+                    if (currentCsrfToken) {
+                        headers['X-CSRF-Token'] = currentCsrfToken;
+                        const retryResponse = await fetch(`${API_URL}/auth/register`, {
+                            method: 'POST',
+                            headers,
+                            credentials: 'include',
+                            body: JSON.stringify(userData),
+                        });
+                        const retryData = await retryResponse.json();
+                        if (!retryResponse.ok) {
+                            throw new Error(retryData.detail || 'Registration failed');
+                        }
+                        return {
+                            success: true,
+                            message: retryData.message,
+                            verificationRequired: retryData.verification_required,
+                            verificationToken: retryData.verification_token
+                        };
+                    }
+                }
                 throw new Error(data.detail || 'Registration failed');
             }
 
@@ -273,6 +331,7 @@ export function AuthProvider({ children }) {
         user,
         token,
         refreshToken,
+        csrfToken,
         loading,
         error,
         isAuthenticated,
@@ -284,6 +343,7 @@ export function AuthProvider({ children }) {
         logout,
         getAuthHeaders,
         refreshAccessToken,  // Expose for manual refresh if needed
+        fetchCsrfToken,      // For components that need fresh CSRF tokens
     };
 
     return (
