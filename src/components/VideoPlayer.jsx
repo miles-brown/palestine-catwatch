@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, forwardRef, useImperativeHandle } from 'react';
 import ReactPlayer from 'react-player';
 import { Play, Pause, Volume2, VolumeX, Maximize, SkipBack, SkipForward, Clock, User } from 'lucide-react';
 
@@ -39,8 +39,11 @@ const formatTime = (seconds) => {
  * - timeline: Array of timeline markers with officer appearances
  * - onMarkerClick: Callback when a marker is clicked
  * - apiBase: API base URL for serving local files
+ *
+ * Ref methods:
+ * - seekTo(timestamp): Seek to timestamp string (e.g., "00:01:30")
  */
-export default function VideoPlayer({ url, timeline = [], onMarkerClick, apiBase }) {
+const VideoPlayer = forwardRef(function VideoPlayer({ url, timeline = [], onMarkerClick, apiBase }, ref) {
   const playerRef = useRef(null);
   const progressBarRef = useRef(null);
   const [playing, setPlaying] = useState(false);
@@ -128,6 +131,17 @@ export default function VideoPlayer({ url, timeline = [], onMarkerClick, apiBase
       setPlaying(true);
     }
   }, [duration]);
+
+  // Expose seekTo method via ref for external control
+  useImperativeHandle(ref, () => ({
+    seekTo: (timestamp) => {
+      seekToTimestamp(timestamp);
+    },
+    getCurrentTime: () => played * duration,
+    getDuration: () => duration,
+    play: () => setPlaying(true),
+    pause: () => setPlaying(false)
+  }), [seekToTimestamp, played, duration]);
 
   // Handle marker click
   const handleMarkerClick = (marker) => {
@@ -459,4 +473,6 @@ export default function VideoPlayer({ url, timeline = [], onMarkerClick, apiBase
       )}
     </div>
   );
-}
+});
+
+export default VideoPlayer;

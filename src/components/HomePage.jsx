@@ -1,9 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import OfficerCard from './OfficerCard';
 import OfficerProfile from './OfficerProfile';
 import MapView from './MapView';
-import { Heart, Camera, Megaphone, AlertTriangle, Users, Eye, Map, Grid, Filter, X, ChevronDown } from 'lucide-react';
+import LazyOfficerGrid, { useInfiniteOfficers } from './LazyOfficerGrid';
+import { Heart, Camera, Megaphone, AlertTriangle, Users, Eye, Map, Grid, Filter, X, ChevronDown, LayoutList } from 'lucide-react';
 import { Card } from '@/components/ui/card';
+import { OfficerGridSkeleton } from '@/components/ui/skeleton';
 
 let API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 if (!API_BASE.startsWith("http")) {
@@ -16,7 +18,7 @@ const HomePage = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedOfficer, setSelectedOfficer] = useState(null);
   const [officers, setOfficers] = useState([]);
-  const [viewMode, setViewMode] = useState('grid'); // 'grid' or 'map'
+  const [viewMode, setViewMode] = useState('grid'); // 'grid', 'map', or 'infinite'
   const [currentPage, setCurrentPage] = useState(1);
   const [totalOfficers, setTotalOfficers] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
@@ -28,6 +30,17 @@ const HomePage = () => {
   const [dateTo, setDateTo] = useState('');
   const [minAppearances, setMinAppearances] = useState(0);
   const [availableForces, setAvailableForces] = useState([]);
+
+  // Infinite scroll hook
+  const infiniteFilters = { force: forceFilter, dateFrom, dateTo };
+  const {
+    officers: infiniteOfficers,
+    isLoading: infiniteLoading,
+    loadingMore,
+    hasMore,
+    totalCount: infiniteTotalCount,
+    loadMore
+  } = useInfiniteOfficers(API_BASE, viewMode === 'infinite' ? infiniteFilters : {});
 
   useEffect(() => {
     const fetchOfficers = async () => {
@@ -105,7 +118,15 @@ const HomePage = () => {
   useEffect(() => {
     const fetchTotalCount = async () => {
       try {
-        const response = await fetch(`${API_BASE}/officers/count`);
+        // Build query params to match officers fetch filters
+        const params = new URLSearchParams();
+        if (forceFilter) params.append('force', forceFilter);
+        if (dateFrom) params.append('date_from', dateFrom);
+        if (dateTo) params.append('date_to', dateTo);
+
+        const queryString = params.toString();
+        const url = `${API_BASE}/officers/count${queryString ? '?' + queryString : ''}`;
+        const response = await fetch(url);
         const data = await response.json();
         setTotalOfficers(data.count || 0);
       } catch (error) {
@@ -113,7 +134,7 @@ const HomePage = () => {
       }
     };
     fetchTotalCount();
-  }, []);
+  }, [forceFilter, dateFrom, dateTo]);
 
   const totalPages = Math.ceil(totalOfficers / ITEMS_PER_PAGE);
 
@@ -262,16 +283,26 @@ const HomePage = () => {
                   <button
                     onClick={() => setViewMode('grid')}
                     className={`p-2 rounded flex items-center gap-2 text-sm font-medium ${viewMode === 'grid' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-900'}`}
+                    title="Paginated Grid"
                   >
                     <Grid className="h-4 w-4" />
-                    Grid
+                    <span className="hidden sm:inline">Grid</span>
+                  </button>
+                  <button
+                    onClick={() => setViewMode('infinite')}
+                    className={`p-2 rounded flex items-center gap-2 text-sm font-medium ${viewMode === 'infinite' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-900'}`}
+                    title="Infinite Scroll"
+                  >
+                    <LayoutList className="h-4 w-4" />
+                    <span className="hidden sm:inline">Scroll</span>
                   </button>
                   <button
                     onClick={() => setViewMode('map')}
                     className={`p-2 rounded flex items-center gap-2 text-sm font-medium ${viewMode === 'map' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-900'}`}
+                    title="Map View"
                   >
                     <Map className="h-4 w-4" />
-                    Map
+                    <span className="hidden sm:inline">Map</span>
                   </button>
                 </div>
               </div>
@@ -374,12 +405,36 @@ const HomePage = () => {
               onOfficerClick={handleOfficerClick}
             />
           </div>
+        ) : viewMode === 'infinite' ? (
+          /* Infinite Scroll View with Intersection Observer */
+          <LazyOfficerGrid
+            officers={infiniteOfficers.filter(officer => {
+              if (searchQuery) {
+                const query = searchQuery.toLowerCase();
+                const matchesSearch = (
+                  (officer.badgeNumber && officer.badgeNumber.toLowerCase().includes(query)) ||
+                  (officer.notes && officer.notes.toLowerCase().includes(query)) ||
+                  (officer.role && officer.role.toLowerCase().includes(query)) ||
+                  (officer.force && officer.force.toLowerCase().includes(query))
+                );
+                if (!matchesSearch) return false;
+              }
+              if (minAppearances > 0 && officer.sources.length < minAppearances) {
+                return false;
+              }
+              return true;
+            })}
+            onOfficerClick={handleOfficerClick}
+            isLoading={infiniteLoading}
+            hasMore={hasMore && !searchQuery}
+            onLoadMore={loadMore}
+            loadingMore={loadingMore}
+          />
         ) : (
+          /* Paginated Grid View */
           <>
           {isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600"></div>
-            </div>
+            <OfficerGridSkeleton count={8} />
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
               {officers
@@ -458,21 +513,21 @@ const HomePage = () => {
         <div className="mt-16 grid grid-cols-1 md:grid-cols-3 gap-8 text-center">
           <Card className="p-6 border-2 border-green-200">
             <div className="text-3xl font-bold text-green-700 mb-2">
-              {totalOfficers || officers.length}
+              {viewMode === 'infinite' ? infiniteTotalCount : (totalOfficers || officers.length)}
             </div>
             <div className="text-gray-600">State Agents Documented</div>
             <div className="text-xs text-gray-500 mt-1">Suppressing Palestine solidarity</div>
           </Card>
           <Card className="p-6 border-2 border-red-200">
             <div className="text-3xl font-bold text-red-700 mb-2">
-              {officers.reduce((total, officer) => total + officer.sources.length, 0)}
+              {(viewMode === 'infinite' ? infiniteOfficers : officers).reduce((total, officer) => total + officer.sources.length, 0)}
             </div>
             <div className="text-gray-600">Evidence Sources</div>
             <div className="text-xs text-gray-500 mt-1">Proof of authoritarian tactics</div>
           </Card>
           <Card className="p-6 border-2 border-gray-200">
             <div className="text-3xl font-bold text-gray-700 mb-2">
-              {new Set(officers.map(officer => officer.protestDate)).size}
+              {new Set((viewMode === 'infinite' ? infiniteOfficers : officers).map(officer => officer.protestDate)).size}
             </div>
             <div className="text-gray-600">Suppressed Demonstrations</div>
             <div className="text-xs text-gray-500 mt-1">Democratic rights violated</div>

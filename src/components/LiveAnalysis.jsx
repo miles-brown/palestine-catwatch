@@ -2,24 +2,85 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { io } from 'socket.io-client';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Terminal, Cpu, Shield, AlertTriangle, Check, X, Server, Activity, ZoomIn, RefreshCw, WifiOff } from 'lucide-react';
+import { Terminal, Cpu, Shield, AlertTriangle, Check, X, Server, Activity, ZoomIn, RefreshCw, WifiOff, Clock, XCircle, CheckCircle } from 'lucide-react';
 
 let API_URL = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 if (!API_URL.startsWith("http")) {
     API_URL = `https://${API_URL}`;
 }
 
-const MAX_RECONNECT_ATTEMPTS = 3;
-const CONNECTION_TIMEOUT = 15000; // 15 seconds
+const MAX_RECONNECT_ATTEMPTS = 5;
+const CONNECTION_TIMEOUT = 20000; // 20 seconds
+const STALE_TIMEOUT = 60000; // 60 seconds without updates = stale
+const HEARTBEAT_INTERVAL = 30000; // 30 second heartbeat check
+
+// Error types for granular handling
+const ErrorType = {
+    CONNECTION_FAILED: 'connection_failed',
+    CONNECTION_TIMEOUT: 'connection_timeout',
+    CONNECTION_LOST: 'connection_lost',
+    PROCESSING_ERROR: 'processing_error',
+    RATE_LIMITED: 'rate_limited',
+    SERVER_ERROR: 'server_error',
+    STALE_CONNECTION: 'stale_connection'
+};
+
+// Error messages and recovery actions
+const ERROR_CONFIG = {
+    [ErrorType.CONNECTION_FAILED]: {
+        title: 'Connection Failed',
+        message: 'Unable to connect to the analysis server.',
+        recoverable: true,
+        retryDelay: 2000
+    },
+    [ErrorType.CONNECTION_TIMEOUT]: {
+        title: 'Connection Timeout',
+        message: 'Server is not responding. It may be overloaded or unavailable.',
+        recoverable: true,
+        retryDelay: 5000
+    },
+    [ErrorType.CONNECTION_LOST]: {
+        title: 'Connection Lost',
+        message: 'Lost connection to server during analysis.',
+        recoverable: true,
+        retryDelay: 1000
+    },
+    [ErrorType.PROCESSING_ERROR]: {
+        title: 'Processing Error',
+        message: 'An error occurred during analysis.',
+        recoverable: false,
+        retryDelay: 0
+    },
+    [ErrorType.RATE_LIMITED]: {
+        title: 'Rate Limited',
+        message: 'Too many requests. Please wait before trying again.',
+        recoverable: true,
+        retryDelay: 60000
+    },
+    [ErrorType.SERVER_ERROR]: {
+        title: 'Server Error',
+        message: 'The server encountered an internal error.',
+        recoverable: true,
+        retryDelay: 5000
+    },
+    [ErrorType.STALE_CONNECTION]: {
+        title: 'Stale Connection',
+        message: 'No updates received for a while. Connection may be stale.',
+        recoverable: true,
+        retryDelay: 1000
+    }
+};
 
 export default function LiveAnalysis({ taskId, onComplete }) {
     const [logs, setLogs] = useState([]);
     const [candidates, setCandidates] = useState([]);
     const [scrapedMedia, setScrapedMedia] = useState([]);
-    const [status, setStatus] = useState('connecting'); // connecting, active, complete, error
+    const [status, setStatus] = useState('connecting'); // connecting, active, complete, error, paused
     const [stats, setStats] = useState({ faces: 0, objects: 0, confidence_avg: 0 });
-    const [errorMessage, setErrorMessage] = useState(null);
+    const [errorInfo, setErrorInfo] = useState(null); // { type, message, recoverable }
     const [reconnectAttempts, setReconnectAttempts] = useState(0);
+    const [lastUpdate, setLastUpdate] = useState(Date.now());
+    const [processingStage, setProcessingStage] = useState('initializing'); // initializing, downloading, analyzing, finalizing
     const logEndRef = useRef(null);
     const socketRef = useRef(null);
 
@@ -28,10 +89,64 @@ export default function LiveAnalysis({ taskId, onComplete }) {
     const [mediaId, setMediaId] = useState(null);
     const frameTimeoutRef = useRef(null);
     const connectionTimeoutRef = useRef(null);
+    const staleCheckRef = useRef(null);
+    const heartbeatRef = useRef(null);
 
     const addLog = useCallback((source, message) => {
         setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), source, message }]);
+        setLastUpdate(Date.now());
     }, []);
+
+    // Set error with proper typing
+    const setError = useCallback((errorType, customMessage = null) => {
+        const config = ERROR_CONFIG[errorType] || ERROR_CONFIG[ErrorType.SERVER_ERROR];
+        setErrorInfo({
+            type: errorType,
+            title: config.title,
+            message: customMessage || config.message,
+            recoverable: config.recoverable,
+            retryDelay: config.retryDelay
+        });
+        setStatus('error');
+        addLog('Error', customMessage || config.message);
+    }, [addLog]);
+
+    // Clear error state
+    const clearError = useCallback(() => {
+        setErrorInfo(null);
+    }, []);
+
+    // Detect processing stage from log messages
+    const detectStage = useCallback((message) => {
+        const lowerMsg = message.toLowerCase();
+        if (lowerMsg.includes('download') || lowerMsg.includes('fetch')) {
+            setProcessingStage('downloading');
+        } else if (lowerMsg.includes('analyz') || lowerMsg.includes('scan') || lowerMsg.includes('detect')) {
+            setProcessingStage('analyzing');
+        } else if (lowerMsg.includes('sav') || lowerMsg.includes('final') || lowerMsg.includes('complet')) {
+            setProcessingStage('finalizing');
+        }
+    }, []);
+
+    // Check for stale connection
+    const checkStale = useCallback(() => {
+        const timeSinceUpdate = Date.now() - lastUpdate;
+        if (timeSinceUpdate > STALE_TIMEOUT && status === 'active') {
+            setError(ErrorType.STALE_CONNECTION, `No updates for ${Math.round(timeSinceUpdate / 1000)}s`);
+        }
+    }, [lastUpdate, status, setError]);
+
+    // Start stale connection checker
+    useEffect(() => {
+        if (status === 'active') {
+            staleCheckRef.current = setInterval(checkStale, 10000);
+        }
+        return () => {
+            if (staleCheckRef.current) {
+                clearInterval(staleCheckRef.current);
+            }
+        };
+    }, [status, checkStale]);
 
     const connectSocket = useCallback(() => {
         // Clear any existing connection timeout
@@ -42,9 +157,7 @@ export default function LiveAnalysis({ taskId, onComplete }) {
         // Set connection timeout
         connectionTimeoutRef.current = setTimeout(() => {
             if (status === 'connecting') {
-                addLog('Error', 'Connection timeout - server not responding');
-                setStatus('error');
-                setErrorMessage('Connection timeout. The server may be unavailable.');
+                setError(ErrorType.CONNECTION_TIMEOUT);
             }
         }, CONNECTION_TIMEOUT);
 
@@ -62,60 +175,87 @@ export default function LiveAnalysis({ taskId, onComplete }) {
         socket.on('connect', () => {
             clearTimeout(connectionTimeoutRef.current);
             setReconnectAttempts(0);
-            setErrorMessage(null);
+            clearError();
             addLog('System', 'Connected to analysis server.');
             setStatus('active');
+            setProcessingStage('initializing');
             socket.emit('join_task', taskId);
         });
 
         socket.on('connect_error', (error) => {
             clearTimeout(connectionTimeoutRef.current);
-            addLog('Error', `Connection failed: ${error.message}`);
-            setReconnectAttempts(prev => prev + 1);
-
-            if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS - 1) {
-                setStatus('error');
-                setErrorMessage(`Failed to connect after ${MAX_RECONNECT_ATTEMPTS} attempts. Check if the backend server is running.`);
-            }
+            setReconnectAttempts(prev => {
+                const newCount = prev + 1;
+                if (newCount >= MAX_RECONNECT_ATTEMPTS) {
+                    // Check for rate limiting
+                    if (error.message && error.message.includes('429')) {
+                        setError(ErrorType.RATE_LIMITED, 'Too many connection attempts. Please wait.');
+                    } else {
+                        setError(ErrorType.CONNECTION_FAILED, `Failed after ${MAX_RECONNECT_ATTEMPTS} attempts. Is the server running?`);
+                    }
+                } else {
+                    addLog('Warning', `Connection attempt ${newCount}/${MAX_RECONNECT_ATTEMPTS} failed`);
+                }
+                return newCount;
+            });
         });
 
         socket.on('disconnect', (reason) => {
             addLog('System', `Disconnected: ${reason}`);
-            if (reason === 'io server disconnect' || reason === 'transport close') {
-                // Server closed connection or transport failed
+            if (reason === 'io server disconnect') {
+                // Server intentionally disconnected - could be error or rate limit
+                if (status !== 'complete') {
+                    setError(ErrorType.SERVER_ERROR, 'Server closed the connection.');
+                }
+            } else if (reason === 'transport close' || reason === 'transport error') {
+                // Network issue
                 if (status !== 'complete' && status !== 'error') {
-                    setStatus('error');
-                    setErrorMessage('Lost connection to server.');
+                    setError(ErrorType.CONNECTION_LOST);
                 }
             }
         });
 
         socket.on('reconnect', (attemptNumber) => {
             addLog('System', `Reconnected after ${attemptNumber} attempts`);
-            setErrorMessage(null);
+            clearError();
             setStatus('active');
             socket.emit('join_task', taskId);
         });
 
         socket.on('reconnect_failed', () => {
-            setStatus('error');
-            setErrorMessage('Failed to reconnect. Please try again.');
+            setError(ErrorType.CONNECTION_FAILED, 'Failed to reconnect after multiple attempts.');
         });
 
         socket.on('log_message', (data) => {
             addLog('System', data.message);
+            detectStage(data.message);
         });
 
         // Custom events from backend
         socket.on('log', (msg) => {
             addLog('Info', msg);
+            detectStage(msg);
         });
 
-        // Handle backend errors
+        // Handle backend errors with granular types
         socket.on('Error', (msg) => {
-            addLog('Error', msg);
-            setErrorMessage(`Processing error: ${msg}`);
-            // Don't set status to error - processing might continue
+            const lowerMsg = msg.toLowerCase();
+            if (lowerMsg.includes('rate limit') || lowerMsg.includes('too many')) {
+                setError(ErrorType.RATE_LIMITED, msg);
+            } else if (lowerMsg.includes('not found') || lowerMsg.includes('invalid')) {
+                setError(ErrorType.PROCESSING_ERROR, msg);
+            } else {
+                // Non-fatal error - log but don't stop processing
+                addLog('Error', msg);
+                // Show warning but don't set error status
+                setErrorInfo({
+                    type: ErrorType.PROCESSING_ERROR,
+                    title: 'Warning',
+                    message: msg,
+                    recoverable: true,
+                    retryDelay: 0
+                });
+            }
         });
 
         socket.on('analyzing_frame', (data) => {
@@ -173,13 +313,14 @@ export default function LiveAnalysis({ taskId, onComplete }) {
 
     const handleRetry = useCallback(() => {
         setStatus('connecting');
-        setErrorMessage(null);
+        clearError();
         setReconnectAttempts(0);
+        setProcessingStage('initializing');
         if (socketRef.current) {
             socketRef.current.disconnect();
         }
         connectSocket();
-    }, [connectSocket]);
+    }, [connectSocket, clearError]);
 
     useEffect(() => {
         const socket = connectSocket();
@@ -188,6 +329,8 @@ export default function LiveAnalysis({ taskId, onComplete }) {
             socket.disconnect();
             if (frameTimeoutRef.current) clearTimeout(frameTimeoutRef.current);
             if (connectionTimeoutRef.current) clearTimeout(connectionTimeoutRef.current);
+            if (staleCheckRef.current) clearInterval(staleCheckRef.current);
+            if (heartbeatRef.current) clearInterval(heartbeatRef.current);
         };
     }, [taskId]); // Only reconnect if taskId changes
 
@@ -220,22 +363,129 @@ export default function LiveAnalysis({ taskId, onComplete }) {
 
     const statusDisplay = getStatusDisplay();
 
-    return (
-        <div className="min-h-screen bg-slate-950 text-slate-200 p-3 sm:p-6 font-mono">
-            {/* Error Banner */}
-            {errorMessage && (
-                <div className="mb-6 p-4 bg-red-900/30 border border-red-500/50 rounded-lg flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                        <WifiOff className="h-5 w-5 text-red-400" />
-                        <div>
-                            <p className="text-red-400 font-bold">Connection Error</p>
-                            <p className="text-red-300 text-sm">{errorMessage}</p>
-                        </div>
+    // Connection Status Bar Component
+    const ConnectionStatusBar = () => {
+        if (status === 'active' && !errorInfo) return null;
+
+        const getStatusConfig = () => {
+            if (status === 'connecting') {
+                return {
+                    bg: 'bg-yellow-500/20',
+                    border: 'border-yellow-500/50',
+                    icon: <RefreshCw className="h-4 w-4 animate-spin text-yellow-400" />,
+                    text: reconnectAttempts > 0
+                        ? `Reconnecting... (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`
+                        : 'Connecting to server...',
+                    subtext: 'Please wait while we establish connection',
+                    color: 'text-yellow-400'
+                };
+            }
+            if (status === 'error') {
+                return {
+                    bg: 'bg-red-500/20',
+                    border: 'border-red-500/50',
+                    icon: <WifiOff className="h-4 w-4 text-red-400" />,
+                    text: errorInfo?.title || 'Connection Error',
+                    subtext: errorInfo?.message || 'Unable to connect to server',
+                    color: 'text-red-400'
+                };
+            }
+            if (status === 'complete') {
+                return {
+                    bg: 'bg-green-500/20',
+                    border: 'border-green-500/50',
+                    icon: <CheckCircle className="h-4 w-4 text-green-400" />,
+                    text: 'Analysis Complete',
+                    subtext: mediaId ? `Report ready (Media #${mediaId})` : 'Processing finished successfully',
+                    color: 'text-green-400'
+                };
+            }
+            return null;
+        };
+
+        const config = getStatusConfig();
+        if (!config) return null;
+
+        return (
+            <div className={`mb-4 p-3 rounded-lg border ${config.bg} ${config.border} flex items-center justify-between`}>
+                <div className="flex items-center gap-3">
+                    {config.icon}
+                    <div>
+                        <p className={`font-semibold text-sm ${config.color}`}>{config.text}</p>
+                        <p className="text-xs text-slate-400">{config.subtext}</p>
                     </div>
-                    <Button onClick={handleRetry} variant="outline" className="border-red-500/50 text-red-400 hover:bg-red-500/20">
-                        <RefreshCw className="h-4 w-4 mr-2" />
+                </div>
+                {status === 'error' && errorInfo?.recoverable && (
+                    <Button
+                        onClick={handleRetry}
+                        size="sm"
+                        className="bg-red-500/20 hover:bg-red-500/30 border border-red-500/50 text-red-400"
+                    >
+                        <RefreshCw className="h-4 w-4 mr-1" />
                         Retry
                     </Button>
+                )}
+            </div>
+        );
+    };
+
+    return (
+        <div className="min-h-screen bg-slate-950 text-slate-200 p-3 sm:p-6 font-mono">
+            {/* Connection Status Bar */}
+            <ConnectionStatusBar />
+
+            {/* Error Banner with context-aware styling */}
+            {errorInfo && status !== 'connecting' && (
+                <div className={`mb-6 p-4 rounded-lg flex items-center justify-between ${
+                    status === 'error'
+                        ? 'bg-red-900/30 border border-red-500/50'
+                        : 'bg-yellow-900/30 border border-yellow-500/50'
+                }`}>
+                    <div className="flex items-center gap-3">
+                        {errorInfo.type === ErrorType.CONNECTION_LOST || errorInfo.type === ErrorType.CONNECTION_FAILED ? (
+                            <WifiOff className="h-5 w-5 text-red-400" />
+                        ) : errorInfo.type === ErrorType.RATE_LIMITED ? (
+                            <Clock className="h-5 w-5 text-yellow-400" />
+                        ) : errorInfo.type === ErrorType.STALE_CONNECTION ? (
+                            <Activity className="h-5 w-5 text-yellow-400" />
+                        ) : (
+                            <AlertTriangle className={`h-5 w-5 ${status === 'error' ? 'text-red-400' : 'text-yellow-400'}`} />
+                        )}
+                        <div>
+                            <p className={`font-bold ${status === 'error' ? 'text-red-400' : 'text-yellow-400'}`}>
+                                {errorInfo.title}
+                            </p>
+                            <p className={`text-sm ${status === 'error' ? 'text-red-300' : 'text-yellow-300'}`}>
+                                {errorInfo.message}
+                            </p>
+                            {reconnectAttempts > 0 && reconnectAttempts < MAX_RECONNECT_ATTEMPTS && (
+                                <p className="text-xs text-slate-400 mt-1">
+                                    Reconnect attempt {reconnectAttempts}/{MAX_RECONNECT_ATTEMPTS}...
+                                </p>
+                            )}
+                        </div>
+                    </div>
+                    <div className="flex gap-2">
+                        {errorInfo.recoverable && (
+                            <Button
+                                onClick={handleRetry}
+                                variant="outline"
+                                className={`${status === 'error' ? 'border-red-500/50 text-red-400 hover:bg-red-500/20' : 'border-yellow-500/50 text-yellow-400 hover:bg-yellow-500/20'}`}
+                            >
+                                <RefreshCw className="h-4 w-4 mr-2" />
+                                Retry
+                            </Button>
+                        )}
+                        {status !== 'error' && (
+                            <Button
+                                onClick={clearError}
+                                variant="ghost"
+                                className="text-slate-400 hover:text-slate-200"
+                            >
+                                <X className="h-4 w-4" />
+                            </Button>
+                        )}
+                    </div>
                 </div>
             )}
 
