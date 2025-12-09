@@ -44,7 +44,8 @@ class User(Base):
     token_version = Column(Integer, default=0)  # Increment to invalidate all existing tokens
 
     # Track user actions for audit
-    uploads = relationship("Media", back_populates="uploaded_by_user", foreign_keys="Media.uploaded_by")
+    # Note: foreign_keys must reference the column on the other side of the relationship
+    uploads = relationship("Media", back_populates="uploaded_by_user", foreign_keys="[Media.uploaded_by]")
 
 
 class Protest(Base):

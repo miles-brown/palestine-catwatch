@@ -34,7 +34,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -183,6 +183,10 @@ class Role(str, Enum):
 # Role hierarchy - higher index = more privileges
 ROLE_HIERARCHY = [Role.VIEWER, Role.CONTRIBUTOR, Role.ADMIN]
 
+# Password validation constants (defined here so they're available for Field constraints)
+MIN_PASSWORD_LENGTH = 8
+MAX_PASSWORD_LENGTH = 128
+
 
 class TokenData(BaseModel):
     """Data extracted from JWT token."""
@@ -204,13 +208,14 @@ class Token(BaseModel):
 
 class UserCreate(BaseModel):
     """User registration request with full profile and consent."""
-    username: str
-    email: str
-    password: str
-    full_name: str
+    username: str = Field(..., min_length=3, max_length=50)
+    email: EmailStr
+    # max_length prevents DoS from extremely long passwords before validator runs
+    password: str = Field(..., min_length=MIN_PASSWORD_LENGTH, max_length=MAX_PASSWORD_LENGTH)
+    full_name: str = Field(..., min_length=1, max_length=255)
     date_of_birth: date
-    city: str
-    country: str
+    city: str = Field(..., min_length=1, max_length=100)
+    country: str = Field(..., min_length=1, max_length=100)
     consent_given: bool = False
     role: Role = Role.CONTRIBUTOR  # Default to contributor for registered users
 
@@ -288,8 +293,9 @@ class UserCreate(BaseModel):
 
 class UserLogin(BaseModel):
     """User login request."""
-    username: str
-    password: str
+    username: str = Field(..., min_length=1, max_length=50)
+    # max_length prevents DoS from extremely long passwords
+    password: str = Field(..., min_length=1, max_length=MAX_PASSWORD_LENGTH)
 
 
 class UserResponse(BaseModel):
@@ -313,9 +319,8 @@ class UserResponse(BaseModel):
 # PASSWORD UTILITIES
 # =============================================================================
 
-# Password validation constants
-MIN_PASSWORD_LENGTH = 8
-MAX_PASSWORD_LENGTH = 128
+# Note: MIN_PASSWORD_LENGTH and MAX_PASSWORD_LENGTH are defined earlier (near Role)
+# to make them available for Pydantic Field constraints in model classes.
 
 
 def validate_password_strength(password: str) -> Tuple[bool, str]:
