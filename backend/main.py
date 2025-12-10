@@ -2396,7 +2396,7 @@ def login(
     )
 
 
-@app.get("/auth/verify/{token}")
+@app.get("/auth/verify-email/{token}")
 @limiter.limit(get_rate_limit("auth_verify"))
 def verify_email(
     request: Request,
