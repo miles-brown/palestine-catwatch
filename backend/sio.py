@@ -6,7 +6,7 @@ Includes robust room management with automatic cleanup for orphaned rooms.
 """
 import socketio
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Set, Optional
 import os
 
@@ -50,7 +50,7 @@ class RoomInfo:
     __slots__ = ('created', 'clients', 'completed', 'cleanup_task')
 
     def __init__(self):
-        self.created: datetime = datetime.utcnow()
+        self.created: datetime = datetime.now(timezone.utc)
         self.clients: Set[str] = set()
         self.completed: Optional[datetime] = None
         self.cleanup_task: Optional[asyncio.Task] = None
@@ -110,7 +110,7 @@ async def mark_room_complete(task_id: str):
             return
 
         room_info = _active_rooms[task_id]
-        room_info.completed = datetime.utcnow()
+        room_info.completed = datetime.now(timezone.utc)
 
         # Cancel any existing cleanup task
         if room_info.cleanup_task and not room_info.cleanup_task.done():
@@ -130,7 +130,7 @@ async def cleanup_stale_rooms():
     - Tasks that never complete
     - Memory leaks from abandoned rooms
     """
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     max_age = timedelta(hours=ROOM_MAX_AGE_HOURS)
     completed_grace = timedelta(seconds=ROOM_CLEANUP_DELAY * 2)
 
@@ -207,7 +207,7 @@ def stop_cleanup_sweep():
 
 def get_room_stats() -> dict:
     """Get statistics about active rooms."""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     active_count = 0
     completed_count = 0
     total_clients = 0

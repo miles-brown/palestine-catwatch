@@ -1,6 +1,6 @@
 from database import SessionLocal
 import models
-import datetime
+from datetime import datetime, timezone
 import os
 
 def seed():
@@ -11,7 +11,7 @@ def seed():
     if not protest:
         protest = models.Protest(
             name="London March for Palestine",
-            date=datetime.datetime.utcnow(),
+            date=datetime.now(timezone.utc),
             location="Parliament Square, London",
             latitude="51.5007",
             longitude="-0.1246",
@@ -35,7 +35,7 @@ def seed():
             url=dummy_path,
             type='image',
             protest_id=protest.id,
-            timestamp=datetime.datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             processed=False
         )
         db.add(media)

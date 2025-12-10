@@ -7,7 +7,7 @@ Supports TTL-based expiration.
 import os
 import json
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, Dict, Any
 
@@ -100,7 +100,7 @@ class AnalysisCache:
         cache_entry = {
             "image_hash": image_hash,
             "cached_at": time.time(),
-            "cached_at_iso": datetime.utcnow().isoformat(),
+            "cached_at_iso": datetime.now(timezone.utc).isoformat(),
             "analysis": analysis
         }
 

@@ -1,7 +1,7 @@
 import os
 import requests
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from database import SessionLocal, engine
 import models
@@ -41,7 +41,7 @@ def ingest_media(url: str, protest_id: int, media_type: str, db: Session):
             url=filepath, # Storing local path for now
             type=media_type,
             protest_id=protest_id,
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
         db.add(db_media)
         db.commit()
@@ -72,7 +72,7 @@ def save_upload(file_obj, filename: str, protest_id: int, media_type: str, db: S
         if not general_protest:
             general_protest = models.Protest(
                 name="General Uploads",
-                date=datetime.utcnow(),
+                date=datetime.now(timezone.utc),
                 location="N/A",
                 description="Bucket for uploads without a specific protest."
             )
@@ -127,7 +127,7 @@ def save_upload(file_obj, filename: str, protest_id: int, media_type: str, db: S
                     url=filepath,
                     type=media_type,
                     protest_id=protest_id,
-                    timestamp=datetime.utcnow(),
+                    timestamp=datetime.now(timezone.utc),
                     content_hash=content_hash,
                     perceptual_hash=perceptual_hash,
                     file_size=file_size,
@@ -144,7 +144,7 @@ def save_upload(file_obj, filename: str, protest_id: int, media_type: str, db: S
             url=filepath,
             type=media_type,
             protest_id=protest_id,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             content_hash=content_hash,
             perceptual_hash=perceptual_hash,
             file_size=file_size,
@@ -173,7 +173,7 @@ if __name__ == "__main__":
     if not protest:
         protest = models.Protest(
             name="Test Protest",
-            date=datetime.utcnow(),
+            date=datetime.now(timezone.utc),
             location="London",
             description="Initial test protest"
         )

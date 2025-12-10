@@ -627,7 +627,7 @@ async def ingest_media_url(request: Request, body: IngestURLRequest, background_
             raise HTTPException(status_code=404, detail=f"Protest with ID {body.protest_id} not found")
 
     # Create a unique Task ID and room
-    task_id = f"task_{int(datetime.utcnow().timestamp())}"
+    task_id = f"task_{int(datetime.now(timezone.utc).timestamp())}"
 
     # We need to capture the current event loop to schedule async emits from the sync background thread
     loop = asyncio.get_running_loop()
@@ -727,7 +727,7 @@ async def bulk_ingest_urls(request: Request, body: BulkIngestRequest, background
     protest_id = body.protest_id
 
     for url in valid_urls:
-        task_id = f"task_{int(datetime.utcnow().timestamp())}_{hash(url) % 10000}"
+        task_id = f"task_{int(datetime.now(timezone.utc).timestamp())}_{hash(url) % 10000}"
         task_ids.append({"url": url, "task_id": task_id})
 
         # Define wrapper for this URL

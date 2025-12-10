@@ -22,9 +22,9 @@ def run_test():
         print("Error: Test image not found.")
         return
 
-    import datetime
+    from datetime import datetime, timezone
     # Manually create media
-    media1 = models.Media(url=src, type="image", protest_id=1, timestamp=datetime.datetime.utcnow())
+    media1 = models.Media(url=src, type="image", protest_id=1, timestamp=datetime.now(timezone.utc))
     db.add(media1)
     db.commit()
     db.refresh(media1)
@@ -44,7 +44,7 @@ def run_test():
     src2 = "../data/media/test_officer_face_2.png"
     shutil.copy(src, src2)
     
-    media2 = models.Media(url=src2, type="image", protest_id=1, timestamp=datetime.datetime.utcnow())
+    media2 = models.Media(url=src2, type="image", protest_id=1, timestamp=datetime.now(timezone.utc))
     db.add(media2)
     db.commit()
     db.refresh(media2)
