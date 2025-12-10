@@ -19,18 +19,63 @@ from sqlalchemy.orm import Session
 from database import SessionLocal, engine
 import models
 
+# Structured logging
+from logging_config import get_logger
+logger = get_logger("cleanup")
 
-# Configuration
-MEDIA_DIR = Path("data/media")
-CROPS_DIR = Path("data/crops")
-CACHE_DIR = Path("data/cache")
-DOWNLOADS_DIR = Path("downloads")
-TEMP_DIRS = ["data/temp", "data/tmp", "/tmp/palestine-catwatch"]
 
-# Cleanup thresholds
-MAX_ORPHAN_AGE_DAYS = 7  # Delete orphaned files older than this
-MAX_TEMP_AGE_HOURS = 24  # Delete temp files older than this
-MAX_CACHE_AGE_DAYS = 30  # Delete cached analysis older than this
+# Configuration - paths are configurable via environment variables
+MEDIA_DIR = Path(os.getenv("CLEANUP_MEDIA_DIR", "data/media"))
+CROPS_DIR = Path(os.getenv("CLEANUP_CROPS_DIR", "data/crops"))
+CACHE_DIR = Path(os.getenv("CLEANUP_CACHE_DIR", "data/cache"))
+DOWNLOADS_DIR = Path(os.getenv("CLEANUP_DOWNLOADS_DIR", "downloads"))
+TEMP_DIRS = os.getenv("CLEANUP_TEMP_DIRS", "data/temp,data/tmp,/tmp/palestine-catwatch").split(",")
+
+# Cleanup thresholds (also configurable via env)
+MAX_ORPHAN_AGE_DAYS = int(os.getenv("CLEANUP_MAX_ORPHAN_AGE_DAYS", "7"))
+MAX_TEMP_AGE_HOURS = int(os.getenv("CLEANUP_MAX_TEMP_AGE_HOURS", "24"))
+MAX_CACHE_AGE_DAYS = int(os.getenv("CLEANUP_MAX_CACHE_AGE_DAYS", "30"))
+
+# Resolve base directories for path traversal protection
+_BASE_DIRS = None
+
+def _get_base_dirs() -> Set[Path]:
+    """Get resolved base directories for path traversal validation."""
+    global _BASE_DIRS
+    if _BASE_DIRS is None:
+        _BASE_DIRS = set()
+        for d in [MEDIA_DIR, CROPS_DIR, CACHE_DIR, DOWNLOADS_DIR]:
+            try:
+                resolved = d.resolve()
+                _BASE_DIRS.add(resolved)
+            except (OSError, RuntimeError):
+                pass
+    return _BASE_DIRS
+
+
+def is_safe_path(filepath: str) -> bool:
+    """
+    Validate that a file path is within expected directories.
+    Prevents path traversal attacks.
+    """
+    try:
+        resolved = Path(filepath).resolve()
+        base_dirs = _get_base_dirs()
+
+        # Check if resolved path is under any of our base directories
+        for base_dir in base_dirs:
+            try:
+                resolved.relative_to(base_dir)
+                return True
+            except ValueError:
+                continue
+
+        # Log suspicious path attempts
+        logger.warning(f"Path traversal attempt detected: {filepath} -> {resolved}")
+        return False
+    except (OSError, RuntimeError) as e:
+        logger.error(f"Failed to validate path {filepath}: {e}")
+        return False
 
 
 class CleanupStats:
@@ -91,7 +136,12 @@ def get_referenced_files(db: Session) -> Set[str]:
     ).all()
     for (url,) in media_files:
         if url and not url.startswith("http"):
-            referenced.add(os.path.abspath(url))
+            abs_path = os.path.abspath(url)
+            # Only add paths that pass security validation
+            if is_safe_path(abs_path):
+                referenced.add(abs_path)
+            else:
+                logger.warning(f"Skipping suspicious media path from database: {url}")
 
     # Officer appearance crops
     crop_files = db.query(models.OfficerAppearance.image_crop_path).filter(
@@ -99,10 +149,15 @@ def get_referenced_files(db: Session) -> Set[str]:
     ).all()
     for (path,) in crop_files:
         if path:
-            # Handle relative paths
+            # Handle relative paths safely
             if path.startswith("../"):
                 path = path.replace("../", "")
-            referenced.add(os.path.abspath(path))
+            abs_path = os.path.abspath(path)
+            # Only add paths that pass security validation
+            if is_safe_path(abs_path):
+                referenced.add(abs_path)
+            else:
+                logger.warning(f"Skipping suspicious crop path from database: {path}")
 
     return referenced
 
@@ -234,14 +289,19 @@ def find_duplicate_files(db: Session) -> List[tuple]:
 
 
 def delete_file(filepath: str) -> bool:
-    """Delete a file safely."""
+    """Delete a file safely with path validation."""
+    # Security check: validate path before deletion
+    if not is_safe_path(filepath):
+        logger.error(f"Refusing to delete file outside safe directories: {filepath}")
+        return False
+
     try:
         path = Path(filepath)
         if path.exists():
             path.unlink()
             return True
     except (OSError, IOError) as e:
-        print(f"  Error deleting {filepath}: {e}")
+        logger.error(f"Error deleting {filepath}: {e}")
     return False
 
 

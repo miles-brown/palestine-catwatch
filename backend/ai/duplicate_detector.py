@@ -16,6 +16,10 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+# Structured logging
+from logging_config import get_logger
+logger = get_logger("duplicate_detector")
+
 # Try to import imagehash for perceptual hashing
 try:
     from PIL import Image
@@ -23,8 +27,7 @@ try:
     PHASH_AVAILABLE = True
 except ImportError:
     PHASH_AVAILABLE = False
-    print("Warning: imagehash not installed. Perceptual hashing disabled.")
-    print("Install with: pip install imagehash Pillow")
+    logger.warning("imagehash not installed. Perceptual hashing disabled. Install with: pip install imagehash Pillow")
 
 
 def compute_content_hash(file_path: str) -> Optional[str]:
@@ -38,8 +41,8 @@ def compute_content_hash(file_path: str) -> Optional[str]:
             for chunk in iter(lambda: f.read(8192), b""):
                 sha256.update(chunk)
         return sha256.hexdigest()
-    except Exception as e:
-        print(f"Error computing content hash for {file_path}: {e}")
+    except (IOError, OSError, PermissionError) as e:
+        logger.error(f"Error computing content hash for {file_path}: {e}")
         return None
 
 
@@ -63,8 +66,12 @@ def compute_perceptual_hash(file_path: str, hash_size: int = 16) -> Optional[str
         # Use pHash (DCT-based perceptual hash)
         phash = imagehash.phash(img, hash_size=hash_size)
         return str(phash)
+    except (IOError, OSError, PermissionError) as e:
+        logger.error(f"Error computing perceptual hash for {file_path}: {e}")
+        return None
     except Exception as e:
-        print(f"Error computing perceptual hash for {file_path}: {e}")
+        # Catch PIL-specific errors (corrupt image, unsupported format)
+        logger.warning(f"Failed to compute perceptual hash for {file_path}: {e}")
         return None
 
 
@@ -79,6 +86,7 @@ def compute_video_hash(file_path: str) -> Tuple[Optional[str], Optional[str]]:
 
     # Extract first frame for perceptual hash
     first_frame_hash = None
+    cap = None
     try:
         cap = cv2.VideoCapture(file_path)
         if cap.isOpened():
@@ -89,9 +97,14 @@ def compute_video_hash(file_path: str) -> Tuple[Optional[str], Optional[str]]:
                     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     pil_img = Image.fromarray(frame_rgb)
                     first_frame_hash = str(imagehash.phash(pil_img))
-            cap.release()
+    except (IOError, OSError) as e:
+        logger.error(f"Error extracting video frame for hashing: {e}")
     except Exception as e:
-        print(f"Error extracting video frame for hashing: {e}")
+        logger.warning(f"Failed to extract video frame for hashing: {e}")
+    finally:
+        # Always release VideoCapture to prevent resource leak
+        if cap is not None:
+            cap.release()
 
     return content_hash, first_frame_hash
 
@@ -227,29 +240,47 @@ class DuplicateDetector:
                 return result
 
         # Step 2: Check for visually similar images (perceptual hash)
+        # Use batched processing to avoid loading all images into memory at once
         if perceptual_hash and media_type == "image":
-            # Query all non-duplicate media with perceptual hashes
-            candidates = self.db.query(models.Media).filter(
-                models.Media.perceptual_hash.isnot(None),
-                models.Media.is_duplicate == False,  # noqa: E712
-                models.Media.type == "image"
-            ).all()
+            BATCH_SIZE = 1000
+            offset = 0
 
-            for candidate in candidates:
-                if is_perceptually_similar(
-                    perceptual_hash,
-                    candidate.perceptual_hash,
-                    self.similarity_threshold
-                ):
-                    distance = compute_hamming_distance(
+            while True:
+                # Fetch candidates in batches to prevent memory exhaustion
+                candidates = self.db.query(
+                    models.Media.id,
+                    models.Media.perceptual_hash
+                ).filter(
+                    models.Media.perceptual_hash.isnot(None),
+                    models.Media.is_duplicate == False,  # noqa: E712
+                    models.Media.type == "image"
+                ).offset(offset).limit(BATCH_SIZE).all()
+
+                if not candidates:
+                    break  # No more candidates
+
+                for candidate_id, candidate_hash in candidates:
+                    if is_perceptually_similar(
                         perceptual_hash,
-                        candidate.perceptual_hash
-                    )
-                    result["is_duplicate"] = True
-                    result["duplicate_type"] = "similar"
-                    result["original_id"] = candidate.id
-                    result["similarity_score"] = distance
-                    return result
+                        candidate_hash,
+                        self.similarity_threshold
+                    ):
+                        distance = compute_hamming_distance(
+                            perceptual_hash,
+                            candidate_hash
+                        )
+                        result["is_duplicate"] = True
+                        result["duplicate_type"] = "similar"
+                        result["original_id"] = candidate_id
+                        result["similarity_score"] = distance
+                        return result
+
+                offset += BATCH_SIZE
+
+                # Safety limit: don't scan more than 100k images
+                if offset >= 100000:
+                    logger.warning(f"Perceptual hash search truncated at {offset} images")
+                    break
 
         return result
 

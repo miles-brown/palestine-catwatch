@@ -109,8 +109,12 @@ class BulkIngestRequest(BaseModel):
 # CONFIGURATION CONSTANTS
 # =============================================================================
 MAX_URL_LENGTH = 2048
+MIN_URL_LENGTH = 10  # Minimum realistic URL length (e.g., "http://a.co")
 MAX_PAGINATION_LIMIT = 500
 DEFAULT_PAGINATION_LIMIT = 100
+
+# Allowed URL schemes (security: prevent file://, ftp://, etc.)
+ALLOWED_URL_SCHEMES = {'http', 'https'}
 
 
 def validate_single_url(v):
@@ -121,17 +125,22 @@ def validate_single_url(v):
 
     v = v.strip()
 
+    # Check minimum URL length
+    if len(v) < MIN_URL_LENGTH:
+        raise ValueError(f'URL too short (min {MIN_URL_LENGTH} characters)')
+
     # Check URL length (#19)
     if len(v) > MAX_URL_LENGTH:
         raise ValueError(f'URL too long (max {MAX_URL_LENGTH} characters)')
 
-    # Must start with http:// or https://
-    if not v.startswith(('http://', 'https://')):
-        raise ValueError('URL must start with http:// or https://')
-
     # Parse and validate structure
     try:
         parsed = urlparse(v)
+
+        # Validate scheme (security: only allow http/https)
+        if parsed.scheme.lower() not in ALLOWED_URL_SCHEMES:
+            raise ValueError(f'URL scheme must be http or https, got: {parsed.scheme}')
+
         if not parsed.netloc:
             raise ValueError('Invalid URL: no domain found')
 
@@ -141,13 +150,13 @@ def validate_single_url(v):
             if pattern.lower() in v.lower():
                 raise ValueError(f'URL contains suspicious pattern: {pattern}')
 
-        # Basic domain validation (must have at least one dot)
+        # Basic domain validation (must have at least one dot for TLD)
         if '.' not in parsed.netloc:
             raise ValueError('Invalid domain in URL')
 
+    except ValueError:
+        raise
     except Exception as e:
-        if 'Invalid' in str(e) or 'URL' in str(e):
-            raise
         raise ValueError(f'Invalid URL format: {str(e)}')
 
     return v

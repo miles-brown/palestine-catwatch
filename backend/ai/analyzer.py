@@ -5,6 +5,10 @@ import easyocr
 import numpy as np
 import ssl
 
+# Structured logging
+from logging_config import get_logger
+logger = get_logger("analyzer")
+
 try:
     _create_unverified_https_context = ssl._create_unverified_context
 except AttributeError:
@@ -34,11 +38,11 @@ def _get_ocr_reader():
         return reader
     _ocr_initialized = True
     try:
-        print("Initializing EasyOCR (this may download models on first use)...")
+        logger.info("Initializing EasyOCR (this may download models on first use)...")
         reader = easyocr.Reader(['en'], gpu=False)
-        print("EasyOCR initialized successfully.")
-    except Exception as e:
-        print(f"Warning: OCR Init failed: {e}")
+        logger.info("EasyOCR initialized successfully.")
+    except (ImportError, RuntimeError, OSError) as e:
+        logger.warning(f"OCR Init failed: {e}")
         reader = None
     return reader
 
@@ -50,10 +54,10 @@ model_path = os.path.join(os.path.dirname(__file__), "res10_300x300_ssd_iter_140
 
 net = None
 if os.path.exists(prototxt_path) and os.path.exists(model_path):
-    print(f"Loading Face Detector from {model_path}...")
+    logger.info(f"Loading Face Detector from {model_path}...")
     net = cv2.dnn.readNetFromCaffe(prototxt_path, model_path)
 else:
-    print("Warning: Face detection models not found.")
+    logger.warning("Face detection models not found.")
 
 # Face Recognition (Re-ID)
 resnet = None
@@ -62,36 +66,36 @@ try:
     import torch
     import torchvision.transforms as transforms
     from PIL import Image
-    
+
     # Initialize ResNet
-    print("Loading Face Re-ID model (InceptionResnetV1)...")
+    logger.info("Loading Face Re-ID model (InceptionResnetV1)...")
     resnet = InceptionResnetV1(pretrained='vggface2').eval()
-    
+
     # Standard transform for Facenet
     face_transform = transforms.Compose([
         transforms.Resize((160, 160)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
     ])
-    
+
 except ImportError:
-    print("Warning: facenet-pytorch not installed. Re-ID disabled.")
-except Exception as e:
-    print(f"Warning: Failed to load Re-ID model: {e}")
+    logger.warning("facenet-pytorch not installed. Re-ID disabled.")
+except (RuntimeError, OSError) as e:
+    logger.warning(f"Failed to load Re-ID model: {e}")
 
 # Object Detection (YOLOv8)
 yolo_model = None
 try:
     from ultralytics import YOLO
-    
+
     # Initialize YOLOv8
     # It will auto-download 'yolov8n.pt' on first use if not found
-    print("Loading YOLOv8 Object Detector...")
+    logger.info("Loading YOLOv8 Object Detector...")
     yolo_model = YOLO("yolov8n.pt")
 except ImportError:
-    print("Warning: ultralytics not installed. Object Detection disabled.")
-except Exception as e:
-    print(f"Warning: Failed to load YOLO model: {e}")
+    logger.warning("ultralytics not installed. Object Detection disabled.")
+except (RuntimeError, OSError) as e:
+    logger.warning(f"Failed to load YOLO model: {e}")
 
 
 def detect_faces(image_path):
