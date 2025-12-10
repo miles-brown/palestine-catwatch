@@ -59,8 +59,12 @@ const CLUSTER_SIZES = {
   XLARGE: 60
 };
 
-// Cache for cluster icons to avoid recreating identical icons
+/**
+ * Cache for cluster icons to avoid recreating identical icons.
+ * Limited to MAX_CACHE_SIZE entries to prevent unbounded memory growth.
+ */
 const clusterIconCache = new Map();
+const MAX_CACHE_SIZE = 100;
 
 // Custom marker icons based on officer count (memoized)
 const createClusterIcon = (count) => {
@@ -72,6 +76,12 @@ const createClusterIcon = (count) => {
   // Return cached icon if available
   if (clusterIconCache.has(safeCount)) {
     return clusterIconCache.get(safeCount);
+  }
+
+  // Evict oldest entry if cache is full (simple FIFO eviction)
+  if (clusterIconCache.size >= MAX_CACHE_SIZE) {
+    const firstKey = clusterIconCache.keys().next().value;
+    clusterIconCache.delete(firstKey);
   }
 
   const size = safeCount < CLUSTER_THRESHOLDS.SMALL ? CLUSTER_SIZES.SMALL :

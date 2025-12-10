@@ -6,7 +6,7 @@ import {
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { API_BASE, getMediaUrl, fetchWithErrorHandling } from '../utils/api';
-import { getRankColor } from '../utils/constants';
+import { getRankColor, logger } from '../utils/constants';
 
 // Officer Card Component
 const OfficerCard = ({ officer, isRoot = false, onSelectOfficer, selectedId }) => {
@@ -132,14 +132,13 @@ const ChainDetailPanel = ({ officerId, onClose, onLinkChanged }) => {
   const [linkError, setLinkError] = useState(null);
 
   const fetchChain = useCallback(async () => {
-    if (!officerId) return;
+    if (!officerId || officerId <= 0) return;
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/officers/${officerId}/chain`);
-      const data = await response.json();
+      const data = await fetchWithErrorHandling(`${API_BASE}/officers/${officerId}/chain`);
       setChainData(data);
     } catch (error) {
-      console.error("Failed to fetch chain:", error);
+      logger.error("Failed to fetch chain:", error);
     } finally {
       setLoading(false);
     }
@@ -150,13 +149,18 @@ const ChainDetailPanel = ({ officerId, onClose, onLinkChanged }) => {
   }, [fetchChain]);
 
   const handleAutoLink = async () => {
+    // Validate officerId before making API call
+    if (!officerId || officerId <= 0) {
+      setLinkError("Invalid officer ID");
+      return;
+    }
+
     setLinking(true);
     setLinkError(null);
     try {
-      const response = await fetch(`${API_BASE}/officers/${officerId}/auto-link-supervisor`, {
+      const data = await fetchWithErrorHandling(`${API_BASE}/officers/${officerId}/auto-link-supervisor`, {
         method: 'POST'
       });
-      const data = await response.json();
 
       if (data.status === 'error') {
         setLinkError(data.message);
@@ -166,6 +170,7 @@ const ChainDetailPanel = ({ officerId, onClose, onLinkChanged }) => {
         if (onLinkChanged) onLinkChanged();
       }
     } catch (error) {
+      logger.error("Failed to auto-link supervisor:", error);
       setLinkError("Failed to auto-link supervisor");
     } finally {
       setLinking(false);
@@ -182,7 +187,7 @@ const ChainDetailPanel = ({ officerId, onClose, onLinkChanged }) => {
       fetchChain();
       if (onLinkChanged) onLinkChanged();
     } catch (error) {
-      console.error("Failed to unlink:", error);
+      logger.error("Failed to unlink:", error);
     }
   };
 
@@ -339,12 +344,11 @@ const ChainOfCommand = () => {
   const fetchHierarchy = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/officers/hierarchy?max_depth=5`);
-      const data = await response.json();
+      const data = await fetchWithErrorHandling(`${API_BASE}/officers/hierarchy?max_depth=5`);
       setHierarchyTree(data.hierarchy || []);
       setFilteredTree(data.hierarchy || []);
     } catch (error) {
-      console.error("Failed to fetch hierarchy:", error);
+      logger.error("Failed to fetch hierarchy:", error);
     } finally {
       setLoading(false);
     }
@@ -366,7 +370,7 @@ const ChainOfCommand = () => {
     const filterNode = (node, visited = new Set()) => {
       // Cycle detection - if we've seen this node ID, skip it
       if (node.id && visited.has(node.id)) {
-        console.warn('Circular reference detected in hierarchy:', node.id);
+        logger.warn('Circular reference detected in hierarchy:', node.id);
         return null;
       }
 

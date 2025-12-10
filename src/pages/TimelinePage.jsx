@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { API_BASE, fetchWithErrorHandling } from '../utils/api';
 import { withErrorBoundary } from '../components/ErrorBoundary';
-import { ESCALATION_EQUIPMENT } from '../utils/constants';
+import { ESCALATION_EQUIPMENT, logger } from '../utils/constants';
 
 function TimelinePage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -37,7 +37,7 @@ function TimelinePage() {
         const data = await fetchWithErrorHandling(`${API_BASE}/protests`);
         setProtests(data);
       } catch (err) {
-        console.error('Failed to fetch protests:', err);
+        logger.error('Failed to fetch protests:', err);
       }
     };
     fetchProtests();
@@ -55,11 +55,10 @@ function TimelinePage() {
         if (dateTo) params.append('end_date', dateTo);
         params.append('limit', '200');
 
-        const res = await fetch(`${API_BASE}/timeline?${params}`);
-        const data = await res.json();
+        const data = await fetchWithErrorHandling(`${API_BASE}/timeline?${params}`);
         setGlobalTimeline(data);
       } catch (err) {
-        console.error('Failed to fetch global timeline:', err);
+        logger.error('Failed to fetch global timeline:', err);
       } finally {
         setLoading(false);
       }
@@ -74,11 +73,10 @@ function TimelinePage() {
     const fetchProtestTimeline = async () => {
       setLoading(true);
       try {
-        const res = await fetch(`${API_BASE}/protests/${selectedProtest.id}/timeline`);
-        const data = await res.json();
+        const data = await fetchWithErrorHandling(`${API_BASE}/protests/${selectedProtest.id}/timeline`);
         setTimelineData(data);
       } catch (err) {
-        console.error('Failed to fetch protest timeline:', err);
+        logger.error('Failed to fetch protest timeline:', err);
       } finally {
         setLoading(false);
       }
@@ -94,7 +92,7 @@ function TimelinePage() {
     globalTimeline.events
       .filter(e => {
         if (forceFilter && e.officer?.force !== forceFilter) return false;
-        if (showEscalationOnly && !e.high_escalation_equipment) return false;
+        if (showEscalationOnly && !e.high_escalation_equipment?.length) return false;
         return true;
       })
       .forEach(event => {

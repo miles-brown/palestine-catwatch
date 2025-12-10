@@ -50,7 +50,11 @@ const BatchAnalysis = () => {
   // Poll for batch progress with exponential backoff
   // Uses setTimeout chain instead of setInterval for dynamic intervals
   useEffect(() => {
-    if (!batchId) return;
+    if (!batchId) {
+      // Clean up ref when batchId is cleared to prevent stale polling
+      batchInProgressRef.current = false;
+      return;
+    }
 
     batchInProgressRef.current = true;
     pollIntervalRef.current = INITIAL_POLL_INTERVAL;
