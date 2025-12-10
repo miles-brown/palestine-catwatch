@@ -64,11 +64,17 @@ def set_csrf_cookie(response: Response, token: str) -> None:
     Set the CSRF token as a cookie for double-submit validation.
 
     The cookie is:
-    - SameSite=Strict: Prevents cross-site request inclusion
-    - Secure=True (production): HTTPS-only transmission
+    - SameSite=None: Required for cross-origin requests (frontend/backend on different domains)
+    - Secure=True: Required when SameSite=None, ensures HTTPS-only transmission
     - HttpOnly=False: REQUIRED for double-submit pattern (see module docstring)
 
     Security: httpOnly=False is intentional and documented above.
+
+    Note on SameSite=None:
+    - Our frontend (Vercel) and backend (Railway) are on different domains
+    - SameSite=Strict/Lax would prevent the cookie from being sent cross-origin
+    - SameSite=None + Secure=True allows cross-origin while requiring HTTPS
+    - The double-submit pattern (header must match cookie) still provides CSRF protection
     """
     is_production = os.getenv("ENVIRONMENT", "development").lower() in ("production", "prod")
 
@@ -79,8 +85,10 @@ def set_csrf_cookie(response: Response, token: str) -> None:
         # httpOnly=False is REQUIRED for double-submit pattern - JS must read cookie
         # to send in X-CSRF-Token header. See module docstring for security analysis.
         httponly=False,
-        samesite="strict",
-        secure=is_production,
+        # SameSite=None required for cross-origin (Vercel frontend -> Railway backend)
+        # Secure=True is mandatory when SameSite=None
+        samesite="none",
+        secure=True,  # Always true - required for SameSite=None
         path="/"
     )
 
