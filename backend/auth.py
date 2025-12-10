@@ -163,7 +163,14 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "30"))
 REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("JWT_REFRESH_EXPIRE_DAYS", "7"))
 
 # Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Note: bcrypt has a 72-byte password limit. Setting truncate_error=False
+# allows passlib to silently truncate longer passwords for compatibility
+# with bcrypt 4.1+ which enforces this limit strictly.
+pwd_context = CryptContext(
+    schemes=["bcrypt"],
+    deprecated="auto",
+    bcrypt__truncate_error=False
+)
 
 # Bearer token security
 security = HTTPBearer(auto_error=False)
