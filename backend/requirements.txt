@@ -11,6 +11,7 @@ requests
 # Authentication
 python-jose[cryptography]
 passlib[bcrypt]
+bcrypt==4.0.1
 pydantic[email]
 opencv-python-headless
 # opencv is sufficient for dnn face detection
@@ -35,4 +36,4 @@ alembic
 anthropic
 # Email sending
 resend
-# Force rebuild Wed Dec 10 06:03:20 GMT 2025
+# bcrypt 4.0.1 pinned for passlib compatibility (4.1+ breaks detect_wrap_bug)
