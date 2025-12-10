@@ -13,7 +13,7 @@ import argparse
 import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Set, Literal
+from typing import List, Dict, Any, Optional, Set, Literal, Tuple
 
 # TypedDict for Python 3.8+ compatibility
 if sys.version_info >= (3, 8):
@@ -273,53 +273,68 @@ def find_orphaned_files(
     referenced: Set[str],
     max_age_days: int,
     extensions: Optional[List[str]] = None
-) -> List[tuple]:
+) -> List[Tuple[str, int]]:
     """
     Find files in directory that are not referenced in the database
     and are older than max_age_days.
 
     Returns list of (filepath, size) tuples.
+
+    Note: Uses single stat() call to avoid TOCTOU race conditions where
+    a file could be deleted between existence check and stat.
     """
-    orphaned = []
+    import stat as stat_module
+
+    orphaned: List[Tuple[str, int]] = []
     cutoff = datetime.now() - timedelta(days=max_age_days)
 
     if not directory.exists():
         return orphaned
 
     for filepath in directory.rglob("*"):
-        if not filepath.is_file():
-            continue
-
-        # Check extension filter
-        if extensions and filepath.suffix.lower() not in extensions:
-            continue
-
-        # Check if file is referenced
-        abs_path = str(filepath.absolute())
-        if abs_path in referenced:
-            continue
-
-        # Check file age
         try:
-            mtime = datetime.fromtimestamp(filepath.stat().st_mtime)
+            # Single stat() call to avoid TOCTOU race condition
+            # File could be deleted between is_file() and stat() calls
+            file_stat = filepath.stat()
+
+            # Check if it's a regular file (not directory, symlink, etc.)
+            if not stat_module.S_ISREG(file_stat.st_mode):
+                continue
+
+            # Check extension filter
+            if extensions and filepath.suffix.lower() not in extensions:
+                continue
+
+            # Check if file is referenced
+            abs_path = str(filepath.absolute())
+            if abs_path in referenced:
+                continue
+
+            # Check file age using already-retrieved stat
+            mtime = datetime.fromtimestamp(file_stat.st_mtime)
             if mtime > cutoff:
                 continue  # File is too new
 
-            size = filepath.stat().st_size
-            orphaned.append((str(filepath), size))
-        except (OSError, IOError):
+            orphaned.append((str(filepath), file_stat.st_size))
+
+        except (OSError, FileNotFoundError):
+            # File was deleted or became inaccessible between rglob and stat
             continue
 
     return orphaned
 
 
-def find_temp_files(max_age_hours: int) -> List[tuple]:
+def find_temp_files(max_age_hours: int) -> List[Tuple[str, int]]:
     """
     Find temporary files older than max_age_hours.
 
     Returns list of (filepath, size) tuples.
+
+    Note: Uses single stat() call to avoid TOCTOU race conditions.
     """
-    temp_files = []
+    import stat as stat_module
+
+    temp_files: List[Tuple[str, int]] = []
     cutoff = datetime.now() - timedelta(hours=max_age_hours)
 
     for temp_dir in TEMP_DIRS:
@@ -328,27 +343,31 @@ def find_temp_files(max_age_hours: int) -> List[tuple]:
             continue
 
         for filepath in temp_path.rglob("*"):
-            if not filepath.is_file():
-                continue
-
             try:
-                mtime = datetime.fromtimestamp(filepath.stat().st_mtime)
+                # Single stat() call to avoid TOCTOU race condition
+                file_stat = filepath.stat()
+
+                if not stat_module.S_ISREG(file_stat.st_mode):
+                    continue
+
+                mtime = datetime.fromtimestamp(file_stat.st_mtime)
                 if mtime < cutoff:
-                    size = filepath.stat().st_size
-                    temp_files.append((str(filepath), size))
-            except (OSError, IOError):
+                    temp_files.append((str(filepath), file_stat.st_size))
+            except (OSError, FileNotFoundError):
                 continue
 
     return temp_files
 
 
-def find_old_cache_files(max_age_days: int) -> List[tuple]:
+def find_old_cache_files(max_age_days: int) -> List[Tuple[str, int]]:
     """
     Find old cache files.
 
     Returns list of (filepath, size) tuples.
+
+    Note: Uses single stat() call to avoid TOCTOU race conditions.
     """
-    cache_files = []
+    cache_files: List[Tuple[str, int]] = []
     cutoff = datetime.now() - timedelta(days=max_age_days)
 
     # Analysis cache
@@ -356,11 +375,12 @@ def find_old_cache_files(max_age_days: int) -> List[tuple]:
     if cache_path.exists():
         for filepath in cache_path.rglob("*.json"):
             try:
-                mtime = datetime.fromtimestamp(filepath.stat().st_mtime)
+                # Single stat() call to avoid TOCTOU race condition
+                file_stat = filepath.stat()
+                mtime = datetime.fromtimestamp(file_stat.st_mtime)
                 if mtime < cutoff:
-                    size = filepath.stat().st_size
-                    cache_files.append((str(filepath), size))
-            except (OSError, IOError):
+                    cache_files.append((str(filepath), file_stat.st_size))
+            except (OSError, FileNotFoundError):
                 continue
 
     return cache_files

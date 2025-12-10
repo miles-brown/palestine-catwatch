@@ -46,6 +46,26 @@ class BackfillStats(TypedDict):
     success: int
     failed: int
 
+
+class HashComparisonError(Exception):
+    """Exception raised when hash comparison fails."""
+    pass
+
+
+class HashLengthMismatchError(HashComparisonError):
+    """Exception raised when hashes have different lengths."""
+    def __init__(self, len1: int, len2: int):
+        self.len1 = len1
+        self.len2 = len2
+        super().__init__(f"Hash length mismatch: {len1} vs {len2}")
+
+
+class InvalidHashError(HashComparisonError):
+    """Exception raised when hash string is invalid (not valid hex)."""
+    def __init__(self, hash_value: str):
+        self.hash_value = hash_value
+        super().__init__(f"Invalid hex hash: {hash_value[:20]}...")
+
 import cv2
 import numpy as np
 
@@ -151,12 +171,27 @@ def get_file_size(file_path: str) -> Optional[int]:
         return None
 
 
-def compute_hamming_distance(hash1: str, hash2: str) -> int:
+def compute_hamming_distance(hash1: str, hash2: str, raise_on_error: bool = False) -> int:
     """
     Compute Hamming distance between two hex hash strings.
     Lower distance = more similar.
+
+    Args:
+        hash1: First hex hash string
+        hash2: Second hex hash string
+        raise_on_error: If True, raise exceptions on invalid input.
+                        If False (default), return -1 for backwards compatibility.
+
+    Returns:
+        Hamming distance (number of differing bits), or -1 on error if raise_on_error=False
+
+    Raises:
+        HashLengthMismatchError: If hashes have different lengths (when raise_on_error=True)
+        InvalidHashError: If hash is not valid hex (when raise_on_error=True)
     """
     if len(hash1) != len(hash2):
+        if raise_on_error:
+            raise HashLengthMismatchError(len(hash1), len(hash2))
         return -1
 
     try:
@@ -168,6 +203,13 @@ def compute_hamming_distance(hash1: str, hash2: str) -> int:
         # Count bits that differ
         return bin(xor).count('1')
     except ValueError:
+        if raise_on_error:
+            # Determine which hash is invalid
+            try:
+                int(hash1, 16)
+                raise InvalidHashError(hash2)
+            except ValueError:
+                raise InvalidHashError(hash1)
         return -1
 
 
@@ -280,47 +322,48 @@ class DuplicateDetector:
                 return result
 
         # Step 2: Check for visually similar images (perceptual hash)
-        # Use batched processing to avoid loading all images into memory at once
+        # Use batched processing with yield_per for memory-efficient streaming
         if perceptual_hash and media_type == "image":
-            BATCH_SIZE = 1000
-            offset = 0
+            # Use yield_per for server-side cursor to avoid loading all results into memory
+            # This streams results in batches directly from the database
+            YIELD_BATCH_SIZE = 500
+            MAX_CANDIDATES = 100000  # Safety limit to prevent runaway queries
+            candidates_checked = 0
 
-            while True:
-                # Fetch candidates in batches to prevent memory exhaustion
-                candidates = self.db.query(
-                    models.Media.id,
-                    models.Media.perceptual_hash
-                ).filter(
-                    models.Media.perceptual_hash.isnot(None),
-                    models.Media.is_duplicate == False,  # noqa: E712
-                    models.Media.type == "image"
-                ).offset(offset).limit(BATCH_SIZE).all()
+            query = self.db.query(
+                models.Media.id,
+                models.Media.perceptual_hash
+            ).filter(
+                models.Media.perceptual_hash.isnot(None),
+                models.Media.is_duplicate == False,  # noqa: E712
+                models.Media.type == "image"
+            ).yield_per(YIELD_BATCH_SIZE)
 
-                if not candidates:
-                    break  # No more candidates
+            for candidate_id, candidate_hash in query:
+                candidates_checked += 1
 
-                for candidate_id, candidate_hash in candidates:
-                    if is_perceptually_similar(
-                        perceptual_hash,
-                        candidate_hash,
-                        self.similarity_threshold
-                    ):
-                        distance = compute_hamming_distance(
-                            perceptual_hash,
-                            candidate_hash
-                        )
-                        result["is_duplicate"] = True
-                        result["duplicate_type"] = "similar"
-                        result["original_id"] = candidate_id
-                        result["similarity_score"] = distance
-                        return result
-
-                offset += BATCH_SIZE
-
-                # Safety limit: don't scan more than 100k images
-                if offset >= 100000:
-                    logger.warning(f"Perceptual hash search truncated at {offset} images")
+                # Safety limit to prevent excessive scanning
+                if candidates_checked > MAX_CANDIDATES:
+                    logger.warning(
+                        f"Perceptual hash search truncated at {candidates_checked} images",
+                        extra_data={"max_limit": MAX_CANDIDATES}
+                    )
                     break
+
+                if is_perceptually_similar(
+                    perceptual_hash,
+                    candidate_hash,
+                    self.similarity_threshold
+                ):
+                    distance = compute_hamming_distance(
+                        perceptual_hash,
+                        candidate_hash
+                    )
+                    result["is_duplicate"] = True
+                    result["duplicate_type"] = "similar"
+                    result["original_id"] = candidate_id
+                    result["similarity_score"] = distance
+                    return result
 
         return result
 
