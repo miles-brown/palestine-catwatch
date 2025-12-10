@@ -11,14 +11,26 @@ from datetime import datetime, timezone
 import asyncio
 import os
 
+# Structured logging
+from logging_config import setup_logging, get_logger, log_audit, log_error, timed
+
+# Initialize structured logging
+setup_logging()
+logger = get_logger("main")
+
 # Rate limiting
 from ratelimit import limiter, setup_rate_limiting, get_rate_limit
 
+# Path utilities for consistent path handling
+from utils.paths import get_web_url, get_absolute_path, normalize_for_storage
+
 try:
-    print("Attempting to connect to database and create tables...")
+    logger.info("Attempting to connect to database and create tables...")
     models.Base.metadata.create_all(bind=engine)
 
-    # --- SCHEMA MIGRATIONS ---
+    # --- LEGACY SCHEMA MIGRATIONS ---
+    # NOTE: New migrations should use Alembic. Run: alembic upgrade head
+    # These inline migrations are kept for backwards compatibility with existing deployments.
     from sqlalchemy import text
     with engine.connect() as conn:
         # Drop the index on visual_id because it is too large (vector) for b-tree
@@ -29,23 +41,48 @@ try:
             "ALTER TABLE officer_appearances ADD COLUMN IF NOT EXISTS confidence FLOAT",
             "ALTER TABLE officer_appearances ADD COLUMN IF NOT EXISTS confidence_factors TEXT",
             "ALTER TABLE officer_appearances ADD COLUMN IF NOT EXISTS verified BOOLEAN DEFAULT FALSE",
+            # User authentication support
+            "ALTER TABLE media ADD COLUMN IF NOT EXISTS uploaded_by INTEGER REFERENCES users(id)",
+            # Chain of command support
+            "ALTER TABLE officers ADD COLUMN IF NOT EXISTS supervisor_id INTEGER REFERENCES officers(id)",
+            "ALTER TABLE officers ADD COLUMN IF NOT EXISTS rank VARCHAR",
+            # Extended user profile fields
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name VARCHAR(255)",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS date_of_birth TIMESTAMP",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS city VARCHAR(100)",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS country VARCHAR(100)",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS consent_given BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS consent_date TIMESTAMP",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verification_token VARCHAR(255)",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verification_sent_at TIMESTAMP",
             # Token revocation support
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER DEFAULT 0",
+            # Account lockout fields
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_attempts INTEGER DEFAULT 0",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMP",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_failed_login TIMESTAMP",
+            # Duplicate detection fields for media
+            "ALTER TABLE media ADD COLUMN IF NOT EXISTS content_hash VARCHAR(64)",
+            "ALTER TABLE media ADD COLUMN IF NOT EXISTS perceptual_hash VARCHAR(64)",
+            "ALTER TABLE media ADD COLUMN IF NOT EXISTS file_size INTEGER",
+            "ALTER TABLE media ADD COLUMN IF NOT EXISTS is_duplicate BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE media ADD COLUMN IF NOT EXISTS duplicate_of_id INTEGER REFERENCES media(id)",
         ]
         for migration in migrations:
             try:
                 conn.execute(text(migration))
             except Exception as e:
                 # Column might already exist or other non-critical error
-                print(f"Migration note: {e}")
+                logger.debug(f"Migration note: {e}")
 
         conn.commit()
-        print("Schema migrations applied successfully.")
+        logger.info("Schema migrations applied successfully.")
     # -------------------------
 
-    print("Database tables created successfully.")
+    logger.info("Database tables created successfully.")
 except Exception as e:
-    print(f"Startup Warning: Database connection failed. App will start but DB features will fail. Error: {e}")
+    logger.error(f"Startup Warning: Database connection failed. App will start but DB features will fail.", extra_data={"error": str(e)})
 
 from pydantic import BaseModel, field_validator, HttpUrl, Field
 from urllib.parse import urlparse
@@ -72,8 +109,12 @@ class BulkIngestRequest(BaseModel):
 # CONFIGURATION CONSTANTS
 # =============================================================================
 MAX_URL_LENGTH = 2048
+MIN_URL_LENGTH = 10  # Minimum realistic URL length (e.g., "http://a.co")
 MAX_PAGINATION_LIMIT = 500
 DEFAULT_PAGINATION_LIMIT = 100
+
+# Allowed URL schemes (security: prevent file://, ftp://, etc.)
+ALLOWED_URL_SCHEMES = {'http', 'https'}
 
 
 def validate_single_url(v):
@@ -84,17 +125,22 @@ def validate_single_url(v):
 
     v = v.strip()
 
+    # Check minimum URL length
+    if len(v) < MIN_URL_LENGTH:
+        raise ValueError(f'URL too short (min {MIN_URL_LENGTH} characters)')
+
     # Check URL length (#19)
     if len(v) > MAX_URL_LENGTH:
         raise ValueError(f'URL too long (max {MAX_URL_LENGTH} characters)')
 
-    # Must start with http:// or https://
-    if not v.startswith(('http://', 'https://')):
-        raise ValueError('URL must start with http:// or https://')
-
     # Parse and validate structure
     try:
         parsed = urlparse(v)
+
+        # Validate scheme (security: only allow http/https)
+        if parsed.scheme.lower() not in ALLOWED_URL_SCHEMES:
+            raise ValueError(f'URL scheme must be http or https, got: {parsed.scheme}')
+
         if not parsed.netloc:
             raise ValueError('Invalid URL: no domain found')
 
@@ -104,13 +150,13 @@ def validate_single_url(v):
             if pattern.lower() in v.lower():
                 raise ValueError(f'URL contains suspicious pattern: {pattern}')
 
-        # Basic domain validation (must have at least one dot)
+        # Basic domain validation (must have at least one dot for TLD)
         if '.' not in parsed.netloc:
             raise ValueError('Invalid domain in URL')
 
+    except ValueError:
+        raise
     except Exception as e:
-        if 'Invalid' in str(e) or 'URL' in str(e):
-            raise
         raise ValueError(f'Invalid URL format: {str(e)}')
 
     return v
@@ -581,7 +627,7 @@ async def ingest_media_url(request: Request, body: IngestURLRequest, background_
             raise HTTPException(status_code=404, detail=f"Protest with ID {body.protest_id} not found")
 
     # Create a unique Task ID and room
-    task_id = f"task_{int(datetime.utcnow().timestamp())}"
+    task_id = f"task_{int(datetime.now(timezone.utc).timestamp())}"
 
     # We need to capture the current event loop to schedule async emits from the sync background thread
     loop = asyncio.get_running_loop()
@@ -681,7 +727,7 @@ async def bulk_ingest_urls(request: Request, body: BulkIngestRequest, background
     protest_id = body.protest_id
 
     for url in valid_urls:
-        task_id = f"task_{int(datetime.utcnow().timestamp())}_{hash(url) % 10000}"
+        task_id = f"task_{int(datetime.now(timezone.utc).timestamp())}_{hash(url) % 10000}"
         task_ids.append({"url": url, "task_id": task_id})
 
         # Define wrapper for this URL
@@ -1688,6 +1734,438 @@ def get_force_statistics(
             {"rank": r[0], "count": r[1]}
             for r in rank_stats
         ]
+    }
+
+
+@app.get("/stats/equipment-correlation")
+@limiter.limit(get_rate_limit("officers_list"))
+def get_equipment_correlation(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Analyze equipment combinations to detect escalation patterns.
+    Identifies which equipment items commonly appear together.
+    """
+    from sqlalchemy import func, text
+    from collections import defaultdict
+    import itertools
+
+    # Define escalation indicators
+    ESCALATION_EQUIPMENT = {
+        'high': ['Shield', 'Long Shield', 'Round Shield', 'Baton', 'Taser', 'Ballistic Helmet'],
+        'medium': ['Helmet', 'Body Armor', 'Public Order Vest', 'Handcuffs'],
+        'monitoring': ['Body Camera', 'Radio', 'Earpiece']
+    }
+
+    # Get all equipment detections with appearance context
+    detections = (
+        db.query(
+            models.EquipmentDetection.appearance_id,
+            models.Equipment.name,
+            models.Equipment.category,
+            models.OfficerAppearance.media_id,
+            models.Media.protest_id
+        )
+        .join(models.Equipment)
+        .join(models.OfficerAppearance, models.EquipmentDetection.appearance_id == models.OfficerAppearance.id)
+        .join(models.Media)
+        .all()
+    )
+
+    if not detections:
+        return {
+            "total_detections": 0,
+            "equipment_counts": [],
+            "co_occurrences": [],
+            "escalation_events": [],
+            "category_distribution": {}
+        }
+
+    # Group equipment by appearance
+    appearance_equipment = defaultdict(set)
+    for det in detections:
+        appearance_equipment[det.appearance_id].add(det.name)
+
+    # Calculate co-occurrences (which items appear together)
+    co_occurrence_counts = defaultdict(int)
+    for app_id, equipment_set in appearance_equipment.items():
+        if len(equipment_set) >= 2:
+            for combo in itertools.combinations(sorted(equipment_set), 2):
+                co_occurrence_counts[combo] += 1
+
+    # Sort co-occurrences by frequency
+    co_occurrences = [
+        {"item1": combo[0], "item2": combo[1], "count": count}
+        for combo, count in sorted(co_occurrence_counts.items(), key=lambda x: -x[1])[:20]
+    ]
+
+    # Count total equipment by type
+    equipment_counts = (
+        db.query(
+            models.Equipment.name,
+            models.Equipment.category,
+            func.count(models.EquipmentDetection.id).label('count')
+        )
+        .join(models.EquipmentDetection)
+        .group_by(models.Equipment.name, models.Equipment.category)
+        .order_by(func.count(models.EquipmentDetection.id).desc())
+        .all()
+    )
+
+    # Calculate escalation scores per protest
+    protest_equipment = defaultdict(lambda: {'equipment': set(), 'media_ids': set()})
+    for det in detections:
+        if det.protest_id:
+            protest_equipment[det.protest_id]['equipment'].add(det.name)
+            protest_equipment[det.protest_id]['media_ids'].add(det.media_id)
+
+    escalation_events = []
+    for protest_id, data in protest_equipment.items():
+        equipment = data['equipment']
+        high_count = sum(1 for e in equipment if e in ESCALATION_EQUIPMENT['high'])
+        medium_count = sum(1 for e in equipment if e in ESCALATION_EQUIPMENT['medium'])
+
+        escalation_score = (high_count * 3) + (medium_count * 1)
+
+        if escalation_score > 0:
+            # Get protest info
+            protest = db.query(models.Protest).filter(models.Protest.id == protest_id).first()
+            escalation_events.append({
+                "protest_id": protest_id,
+                "protest_name": protest.name if protest else f"Protest #{protest_id}",
+                "date": protest.date.isoformat() if protest and protest.date else None,
+                "escalation_score": escalation_score,
+                "high_risk_equipment": [e for e in equipment if e in ESCALATION_EQUIPMENT['high']],
+                "medium_risk_equipment": [e for e in equipment if e in ESCALATION_EQUIPMENT['medium']],
+                "total_equipment_types": len(equipment),
+                "media_count": len(data['media_ids'])
+            })
+
+    # Sort by escalation score
+    escalation_events.sort(key=lambda x: -x['escalation_score'])
+
+    # Category distribution
+    category_counts = defaultdict(int)
+    for det in detections:
+        category_counts[det.category] += 1
+
+    return {
+        "total_detections": len(detections),
+        "equipment_counts": [
+            {"name": e[0], "category": e[1], "count": e[2]}
+            for e in equipment_counts
+        ],
+        "co_occurrences": co_occurrences,
+        "escalation_events": escalation_events[:15],
+        "category_distribution": dict(category_counts),
+        "escalation_indicators": ESCALATION_EQUIPMENT
+    }
+
+
+@app.get("/stats/geographic")
+@limiter.limit(get_rate_limit("officers_list"))
+def get_geographic_stats(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Get geographic clustering data for protests and officers.
+    Returns protest locations with officer counts and patterns.
+    """
+    from sqlalchemy import func, distinct
+
+    # Get all protests with coordinates
+    protests = db.query(models.Protest).filter(
+        models.Protest.latitude.isnot(None),
+        models.Protest.longitude.isnot(None)
+    ).all()
+
+    protest_data = []
+    for protest in protests:
+        # Count officers at this protest
+        officer_count = (
+            db.query(distinct(models.OfficerAppearance.officer_id))
+            .join(models.Media)
+            .filter(models.Media.protest_id == protest.id)
+            .count()
+        )
+
+        # Count media items
+        media_count = db.query(models.Media).filter(
+            models.Media.protest_id == protest.id
+        ).count()
+
+        # Get force breakdown
+        force_breakdown = (
+            db.query(
+                models.Officer.force,
+                func.count(distinct(models.Officer.id)).label('count')
+            )
+            .join(models.OfficerAppearance)
+            .join(models.Media)
+            .filter(models.Media.protest_id == protest.id)
+            .filter(models.Officer.force.isnot(None))
+            .group_by(models.Officer.force)
+            .all()
+        )
+
+        protest_data.append({
+            "id": protest.id,
+            "name": protest.name,
+            "date": protest.date.isoformat() if protest.date else None,
+            "location": protest.location,
+            "latitude": float(protest.latitude) if protest.latitude else None,
+            "longitude": float(protest.longitude) if protest.longitude else None,
+            "officer_count": officer_count,
+            "media_count": media_count,
+            "forces": [{"force": f[0], "count": f[1]} for f in force_breakdown]
+        })
+
+    # Get officers who appear at multiple locations
+    multi_location_officers = (
+        db.query(
+            models.Officer.id,
+            models.Officer.badge_number,
+            models.Officer.force,
+            func.count(distinct(models.Media.protest_id)).label('protest_count')
+        )
+        .join(models.OfficerAppearance)
+        .join(models.Media)
+        .group_by(models.Officer.id, models.Officer.badge_number, models.Officer.force)
+        .having(func.count(distinct(models.Media.protest_id)) >= 2)
+        .order_by(func.count(distinct(models.Media.protest_id)).desc())
+        .limit(20)
+        .all()
+    )
+
+    # For each multi-location officer, get their protest locations
+    officer_movements = []
+    for officer in multi_location_officers:
+        protests_visited = (
+            db.query(
+                models.Protest.id,
+                models.Protest.name,
+                models.Protest.date,
+                models.Protest.latitude,
+                models.Protest.longitude
+            )
+            .join(models.Media)
+            .join(models.OfficerAppearance)
+            .filter(models.OfficerAppearance.officer_id == officer.id)
+            .filter(models.Protest.latitude.isnot(None))
+            .distinct()
+            .order_by(models.Protest.date)
+            .all()
+        )
+
+        if len(protests_visited) >= 2:
+            officer_movements.append({
+                "officer_id": officer.id,
+                "badge_number": officer.badge_number,
+                "force": officer.force,
+                "protest_count": officer.protest_count,
+                "locations": [
+                    {
+                        "protest_id": p.id,
+                        "name": p.name,
+                        "date": p.date.isoformat() if p.date else None,
+                        "latitude": float(p.latitude) if p.latitude else None,
+                        "longitude": float(p.longitude) if p.longitude else None
+                    }
+                    for p in protests_visited
+                ]
+            })
+
+    return {
+        "protests": protest_data,
+        "officer_movements": officer_movements,
+        "total_protests_with_coords": len(protest_data),
+        "total_multi_location_officers": len(officer_movements)
+    }
+
+
+# =============================================================================
+# DUPLICATE DETECTION ENDPOINTS
+# =============================================================================
+
+@app.get("/duplicates")
+@limiter.limit(get_rate_limit("officers_list"))
+def get_duplicates(
+    request: Request,
+    include_resolved: bool = False,
+    db: Session = Depends(get_db)
+):
+    """
+    Get all duplicate media entries.
+    """
+    from sqlalchemy import func
+
+    query = db.query(models.Media).filter(
+        models.Media.is_duplicate == True  # noqa: E712
+    )
+
+    if not include_resolved:
+        # Only show unresolved duplicates (not manually reviewed)
+        pass  # For now, show all duplicates
+
+    duplicates = query.order_by(models.Media.timestamp.desc()).all()
+
+    result = []
+    for dup in duplicates:
+        original = db.query(models.Media).filter(
+            models.Media.id == dup.duplicate_of_id
+        ).first()
+
+        result.append({
+            "id": dup.id,
+            "url": dup.url,
+            "type": dup.type,
+            "file_size": dup.file_size,
+            "content_hash": dup.content_hash,
+            "perceptual_hash": dup.perceptual_hash,
+            "uploaded_at": dup.timestamp.isoformat() if dup.timestamp else None,
+            "original_id": dup.duplicate_of_id,
+            "original_url": original.url if original else None
+        })
+
+    return {
+        "duplicates": result,
+        "total": len(result)
+    }
+
+
+@app.get("/duplicates/scan")
+@limiter.limit(get_rate_limit("ai_analysis"))
+def scan_for_duplicates(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Scan database for duplicate groups based on content hash.
+    Returns groups of media that are exact duplicates.
+    """
+    from ai.duplicate_detector import DuplicateDetector
+
+    detector = DuplicateDetector(db)
+    groups = detector.find_all_duplicates()
+
+    return {
+        "duplicate_groups": groups,
+        "total_groups": len(groups)
+    }
+
+
+@app.post("/duplicates/backfill")
+@limiter.limit(get_rate_limit("ai_analysis"))
+def backfill_hashes(
+    request: Request,
+    batch_size: int = 100,
+    db: Session = Depends(get_db)
+):
+    """
+    Backfill content/perceptual hashes for existing media without hashes.
+    Useful after upgrading to add duplicate detection.
+    """
+    from ai.duplicate_detector import DuplicateDetector
+
+    detector = DuplicateDetector(db)
+    stats = detector.backfill_hashes(batch_size)
+
+    # Count remaining media without hashes
+    remaining = db.query(models.Media).filter(
+        models.Media.content_hash.is_(None)
+    ).count()
+
+    return {
+        "status": "completed",
+        "processed": stats["processed"],
+        "success": stats["success"],
+        "failed": stats["failed"],
+        "remaining": remaining
+    }
+
+
+@app.delete("/duplicates/{media_id}")
+@limiter.limit(get_rate_limit("officers_detail"))
+def delete_duplicate(
+    request: Request,
+    media_id: int,
+    keep_file: bool = False,
+    db: Session = Depends(get_db)
+):
+    """
+    Delete a duplicate media entry.
+    By default also deletes the file from disk.
+    """
+    import os
+
+    media = db.query(models.Media).filter(models.Media.id == media_id).first()
+    if not media:
+        raise HTTPException(status_code=404, detail="Media not found")
+
+    if not media.is_duplicate:
+        raise HTTPException(
+            status_code=400,
+            detail="This media is not marked as a duplicate. Use /media/{id} endpoint to delete."
+        )
+
+    file_deleted = False
+    if not keep_file and media.url and os.path.exists(media.url):
+        try:
+            os.remove(media.url)
+            file_deleted = True
+        except Exception as e:
+            print(f"Warning: Could not delete file {media.url}: {e}")
+
+    db.delete(media)
+    db.commit()
+
+    return {
+        "status": "deleted",
+        "media_id": media_id,
+        "file_deleted": file_deleted
+    }
+
+
+# =============================================================================
+# FILE CLEANUP ENDPOINTS
+# =============================================================================
+
+@app.get("/admin/cleanup/preview")
+@limiter.limit(get_rate_limit("ai_analysis"))
+def preview_cleanup(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Preview what files would be cleaned up.
+    Returns stats without deleting anything.
+    """
+    from cleanup import run_cleanup
+
+    stats = run_cleanup(dry_run=True, verbose=False)
+    return stats.summary()
+
+
+@app.post("/admin/cleanup/execute")
+@limiter.limit(get_rate_limit("ai_analysis"))
+def execute_cleanup(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Execute file cleanup.
+    Deletes orphaned files, temp files, and old cache.
+    """
+    from cleanup import run_cleanup
+
+    stats = run_cleanup(dry_run=False, verbose=False)
+    summary = stats.summary()
+
+    return {
+        "status": "completed",
+        **summary
     }
 
 

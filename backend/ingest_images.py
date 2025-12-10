@@ -8,7 +8,7 @@ import ssl
 import uuid
 import logging
 import urllib3
-from datetime import datetime
+from datetime import datetime, timezone
 from database import SessionLocal
 import models
 from process import process_media
@@ -125,7 +125,7 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
                 pub_time = soup.find('meta', property='article:published_time') or \
                            soup.find('meta', {'name': 'date'}) or \
                            soup.find('meta', {'name': 'parsely-pub-date'})
-                event_date = datetime.utcnow()
+                event_date = datetime.now(timezone.utc)
                 if pub_time and pub_time.get('content'):
                     try:
                         # Handle ISO formats roughly
@@ -213,7 +213,7 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
                         url=filepath,
                         type='image',
                         protest_id=protest_id,
-                        timestamp=datetime.utcnow(),
+                        timestamp=datetime.now(timezone.utc),
                         processed=False
                     )
                     db.add(new_media)

@@ -1,7 +1,7 @@
 import yt_dlp
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from database import SessionLocal
 import models
 from process import process_media
@@ -134,7 +134,7 @@ def extract_metadata(info):
     text_content = f"{title} {description}"
     
     # 1. Date
-    date_obj = datetime.utcnow()
+    date_obj = datetime.now(timezone.utc)
     if upload_date_str:
         try:
             date_obj = datetime.strptime(upload_date_str, '%Y%m%d')
@@ -255,7 +255,7 @@ def process_video_workflow(url, answers, user_provided_protest_id=None, status_c
             url=file_path, # Local path for processing
             type='video',
             protest_id=protest_id,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             processed=False
         )
         db.add(new_media)

@@ -72,9 +72,17 @@ class Media(Base):
     processed = Column(Boolean, default=False)
     uploaded_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # Track who uploaded
 
+    # Duplicate detection fields
+    content_hash = Column(String(64), index=True, nullable=True)  # SHA256 of file content
+    perceptual_hash = Column(String(64), index=True, nullable=True)  # pHash for visual similarity
+    file_size = Column(Integer, nullable=True)  # File size in bytes
+    is_duplicate = Column(Boolean, default=False)  # Marked as duplicate
+    duplicate_of_id = Column(Integer, ForeignKey("media.id"), nullable=True)  # Original media if duplicate
+
     protest = relationship("Protest", back_populates="media")
     appearances = relationship("OfficerAppearance", back_populates="media")
     uploaded_by_user = relationship("User", back_populates="uploads", foreign_keys=[uploaded_by])
+    duplicate_of = relationship("Media", remote_side=[id], foreign_keys=[duplicate_of_id])
 
 class Officer(Base):
     __tablename__ = "officers"
@@ -87,7 +95,14 @@ class Officer(Base):
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
 
+    # Chain of command - self-referential relationship
+    supervisor_id = Column(Integer, ForeignKey("officers.id"), nullable=True)
+    rank = Column(String, nullable=True)  # Constable, Sergeant, Inspector, Chief Inspector, etc.
+
     appearances = relationship("OfficerAppearance", back_populates="officer")
+
+    # Self-referential relationships for chain of command
+    supervisor = relationship("Officer", remote_side=[id], backref="subordinates", foreign_keys=[supervisor_id])
 
 class OfficerAppearance(Base):
     __tablename__ = "officer_appearances"

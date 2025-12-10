@@ -380,7 +380,7 @@ class UniformAnalyzer:
             "raw_analysis": json.dumps(analysis),
             "api_cost_tokens": analysis_result.get("tokens_used", 0),
             "image_hash": analysis_result.get("image_hash"),
-            "analyzed_at": datetime.utcnow()
+            "analyzed_at": datetime.now(timezone.utc)
         }
 
     def extract_equipment(
