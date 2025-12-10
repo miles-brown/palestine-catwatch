@@ -1,13 +1,15 @@
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Request, status
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Request, Response
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import models, schemas
 from database import get_db, engine
-from datetime import datetime
+from datetime import datetime, timezone
 import asyncio
+import os
 
 # Structured logging
 from logging_config import setup_logging, get_logger, log_audit, log_error, timed
@@ -54,6 +56,18 @@ try:
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verification_token VARCHAR(255)",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verification_sent_at TIMESTAMP",
+            # Token revocation support
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER DEFAULT 0",
+            # Account lockout fields
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_attempts INTEGER DEFAULT 0",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMP",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_failed_login TIMESTAMP",
+            # Duplicate detection fields for media
+            "ALTER TABLE media ADD COLUMN IF NOT EXISTS content_hash VARCHAR(64)",
+            "ALTER TABLE media ADD COLUMN IF NOT EXISTS perceptual_hash VARCHAR(64)",
+            "ALTER TABLE media ADD COLUMN IF NOT EXISTS file_size INTEGER",
+            "ALTER TABLE media ADD COLUMN IF NOT EXISTS is_duplicate BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE media ADD COLUMN IF NOT EXISTS duplicate_of_id INTEGER REFERENCES media(id)",
         ]
         for migration in migrations:
             try:
@@ -92,89 +106,11 @@ class BulkIngestRequest(BaseModel):
 
 
 # =============================================================================
-# HEALTH CHECK ENDPOINT
-# =============================================================================
-
-@app.get("/health", tags=["health"])
-def health_check():
-    """
-    Health check endpoint for load balancers and monitoring.
-
-    Returns:
-        - status: "healthy" or "degraded"
-        - database: "connected" or "disconnected"
-        - version: Application version
-        - timestamp: Current server time
-    """
-    import time
-
-    health_status = {
-        "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat(),
-        "version": "1.0.0",
-        "services": {}
-    }
-
-    # Check database connection
-    try:
-        db = SessionLocal()
-        db.execute(text("SELECT 1"))
-        db.close()
-        health_status["services"]["database"] = "connected"
-    except Exception as e:
-        health_status["services"]["database"] = "disconnected"
-        health_status["status"] = "degraded"
-
-    # Check if data directory exists
-    import os
-    data_dir = os.path.join(os.path.dirname(__file__), "data")
-    health_status["services"]["storage"] = "available" if os.path.exists(data_dir) else "unavailable"
-
-    return health_status
-
-
-@app.get("/health/ready", tags=["health"])
-def readiness_check(db: Session = Depends(get_db)):
-    """
-    Readiness probe - checks if app is ready to receive traffic.
-    Returns 503 if not ready.
-    """
-    try:
-        # Verify database is accessible
-        db.execute(text("SELECT 1"))
-        return {"ready": True}
-    except Exception as e:
-        raise HTTPException(status_code=503, detail="Database not ready")
-
-
-@app.get("/health/live", tags=["health"])
-def liveness_check():
-    """
-    Liveness probe - checks if app is running.
-    Simple check that returns immediately.
-    """
-    return {"alive": True}
-
-
-# =============================================================================
 # CONFIGURATION CONSTANTS
 # =============================================================================
 MAX_URL_LENGTH = 2048
 MAX_PAGINATION_LIMIT = 500
 DEFAULT_PAGINATION_LIMIT = 100
-
-
-def to_crop_url(storage_path: str) -> str:
-    """
-    Convert a stored crop path to a web-accessible URL.
-    Handles various storage formats:
-    - Absolute paths: /Users/.../data/frames/1/face_0.jpg
-    - Relative paths: data/frames/1/face_0.jpg
-    - Legacy paths: ../data/frames/1/face_0.jpg
-    """
-    if not storage_path:
-        return None
-    return get_web_url(storage_path)
 
 
 def validate_single_url(v):
@@ -217,94 +153,19 @@ def validate_single_url(v):
     return v
 
 
-app = FastAPI(
-    title="Palestine Catwatch API",
-    description="""
-## Police Accountability Documentation System
+app = FastAPI(title="Palestine Catwatch API")
 
-This API powers the Palestine Catwatch application, providing tools for documenting
-and analyzing police presence at protests.
-
-### Features
-
-* **Officer Detection** - Automatic face detection and tracking across media
-* **Badge OCR** - Extract badge numbers and shoulder numbers from images
-* **Uniform Analysis** - Claude Vision AI analysis of police uniforms, ranks, and equipment
-* **Network Analysis** - Track which officers appear together and their chain of command
-* **Geographic Clustering** - Map officer presence across protest locations
-* **Equipment Correlation** - Detect equipment patterns that indicate escalation
-
-### Authentication
-
-Most endpoints require JWT authentication. Use `/auth/login` to obtain a token.
-Include the token in the `Authorization` header as `Bearer <token>`.
-
-### Rate Limiting
-
-API calls are rate-limited to protect the service:
-- General endpoints: 30 requests/minute
-- AI analysis: 10 requests/minute
-- Bulk operations: 5 requests/minute
-
-### Support
-
-For issues, visit: https://github.com/palestine-catwatch/issues
-    """,
-    version="2.0.0",
-    contact={
-        "name": "Palestine Accountability Campaign",
-        "url": "https://github.com/palestine-catwatch",
-    },
-    license_info={
-        "name": "MIT",
-        "url": "https://opensource.org/licenses/MIT",
-    },
-    openapi_tags=[
-        {
-            "name": "health",
-            "description": "Health check and system status endpoints",
-        },
-        {
-            "name": "auth",
-            "description": "Authentication and user management",
-        },
-        {
-            "name": "officers",
-            "description": "Officer records and appearance tracking",
-        },
-        {
-            "name": "media",
-            "description": "Media upload and processing",
-        },
-        {
-            "name": "protests",
-            "description": "Protest event management",
-        },
-        {
-            "name": "analysis",
-            "description": "AI-powered uniform and equipment analysis",
-        },
-        {
-            "name": "stats",
-            "description": "Statistics and analytics endpoints",
-        },
-        {
-            "name": "equipment",
-            "description": "Equipment database and detection tracking",
-        },
-        {
-            "name": "export",
-            "description": "Data export in various formats",
-        },
-        {
-            "name": "admin",
-            "description": "Administrative operations (requires admin role)",
-        },
-    ]
-)
+# HTTPS enforcement in production
+_environment = os.getenv("ENVIRONMENT", "development").lower()
+if _environment in ("production", "prod"):
+    app.add_middleware(HTTPSRedirectMiddleware)
 
 # Setup rate limiting
 setup_rate_limiting(app)
+
+# Setup standardized error handling
+from errors import setup_error_handlers, APIError, ErrorCode
+setup_error_handlers(app)
 
 # Configure CORS
 app.add_middleware(
@@ -328,304 +189,6 @@ app.mount("/data", StaticFiles(directory="data"), name="data")
 @app.get("/")
 def read_root():
     return {"message": "Palestine Catwatch Backend Operational"}
-
-
-# =============================================================================
-# AUTHENTICATION ENDPOINTS
-# =============================================================================
-
-from auth import (
-    authenticate_user, create_user, create_access_token,
-    get_current_user, get_current_user_optional, require_role,
-    UserCreate, UserLogin, UserResponse, Token, Role,
-    get_user_by_username, get_user_by_email, ACCESS_TOKEN_EXPIRE_MINUTES,
-    verify_user_email, get_password_hash
-)
-from datetime import timedelta
-
-# Admin credentials (password: BeKindRewind123)
-ADMIN_USERNAME = "admin"
-ADMIN_PASSWORD = "BeKindRewind123"
-
-
-@app.post("/auth/register")
-@limiter.limit("5/hour")  # Prevent registration spam
-def register_user(
-    request: Request,
-    user_data: UserCreate,
-    db: Session = Depends(get_db)
-):
-    """
-    Register a new user account.
-
-    Requires:
-    - Username, email, password
-    - Full name, date of birth, city, country
-    - Consent to terms (must be True)
-    - Must be 18 or older
-
-    New users must verify their email before they can log in.
-    Returns verification token (in production, this would be emailed).
-    """
-    # Check if username already exists
-    if get_user_by_username(db, user_data.username):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username already registered"
-        )
-
-    # Check if email already exists
-    if get_user_by_email(db, user_data.email):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
-        )
-
-    # Force contributor role for self-registration
-    user_data.role = Role.CONTRIBUTOR
-
-    # Create user with email verification required
-    user = create_user(db, user_data, require_verification=True)
-
-    # In production, send verification email here
-    # For now, return the verification token in response
-    return {
-        "message": "Registration successful. Please verify your email to activate your account.",
-        "user_id": user.id,
-        "username": user.username,
-        "email": user.email,
-        "verification_required": True,
-        # Include token for development/testing - remove in production
-        "verification_token": user.email_verification_token
-    }
-
-
-@app.get("/auth/verify-email/{token}")
-def verify_email(
-    token: str,
-    db: Session = Depends(get_db)
-):
-    """
-    Verify a user's email address.
-
-    After verification, the user can log in.
-    """
-    user = verify_user_email(db, token)
-
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired verification token"
-        )
-
-    return {
-        "message": "Email verified successfully. You can now log in.",
-        "username": user.username
-    }
-
-
-@app.post("/auth/resend-verification")
-@limiter.limit("3/hour")
-def resend_verification(
-    request: Request,
-    email: str,
-    db: Session = Depends(get_db)
-):
-    """Resend verification email."""
-    import secrets
-
-    user = get_user_by_email(db, email)
-
-    if not user:
-        # Don't reveal if email exists
-        return {"message": "If this email is registered, a verification link has been sent."}
-
-    if user.email_verified:
-        return {"message": "Email is already verified. You can log in."}
-
-    # Generate new token
-    user.email_verification_token = secrets.token_urlsafe(32)
-    user.email_verification_sent_at = datetime.utcnow()
-    db.commit()
-
-    # In production, send email here
-    return {
-        "message": "If this email is registered, a verification link has been sent.",
-        # Include token for development - remove in production
-        "verification_token": user.email_verification_token
-    }
-
-
-@app.post("/auth/login", response_model=Token)
-@limiter.limit("10/minute")  # Prevent brute force
-def login(
-    request: Request,
-    login_data: UserLogin,
-    db: Session = Depends(get_db)
-):
-    """
-    Authenticate and get an access token.
-
-    Returns a JWT token valid for 24 hours (configurable via JWT_EXPIRE_MINUTES).
-    Users must have verified their email to log in.
-    """
-    user = authenticate_user(db, login_data.username, login_data.password)
-
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    # Check if email is verified (admin bypasses this)
-    if not user.email_verified and user.role != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Please verify your email address before logging in"
-        )
-
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Your account has been deactivated"
-        )
-
-    # Update last login
-    user.last_login = datetime.utcnow()
-    db.commit()
-
-    # Create token
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={
-            "sub": user.username,
-            "user_id": user.id,
-            "role": user.role
-        },
-        expires_delta=access_token_expires
-    )
-
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60,  # Convert to seconds
-        "user": {
-            "id": user.id,
-            "username": user.username,
-            "email": user.email,
-            "role": user.role,
-            "full_name": user.full_name
-        }
-    }
-
-
-@app.on_event("startup")
-async def create_admin_user():
-    """Create the admin user on startup if it doesn't exist."""
-    db = SessionLocal()
-    try:
-        admin = get_user_by_username(db, ADMIN_USERNAME)
-        if not admin:
-            print("Creating admin user...")
-            admin = models.User(
-                username=ADMIN_USERNAME,
-                email="admin@palestineaccountability.org",
-                hashed_password=get_password_hash(ADMIN_PASSWORD),
-                role="admin",
-                is_active=True,
-                email_verified=True,
-                full_name="System Administrator",
-                consent_given=True,
-                consent_date=datetime.utcnow()
-            )
-            db.add(admin)
-            db.commit()
-            print(f"Admin user created: {ADMIN_USERNAME}")
-        else:
-            print(f"Admin user already exists: {ADMIN_USERNAME}")
-    except Exception as e:
-        print(f"Error creating admin user: {e}")
-    finally:
-        db.close()
-
-
-@app.get("/auth/me", response_model=UserResponse)
-def get_current_user_info(
-    current_user = Depends(get_current_user)
-):
-    """Get the current authenticated user's information."""
-    return current_user
-
-
-@app.get("/auth/users", response_model=List[UserResponse])
-@limiter.limit(get_rate_limit("default"))
-def list_users(
-    request: Request,
-    skip: int = 0,
-    limit: int = 50,
-    current_user = Depends(require_role(Role.ADMIN)),
-    db: Session = Depends(get_db)
-):
-    """List all users (admin only)."""
-    users = db.query(models.User).offset(skip).limit(limit).all()
-    return users
-
-
-@app.put("/auth/users/{user_id}/role")
-@limiter.limit(get_rate_limit("default"))
-def update_user_role(
-    request: Request,
-    user_id: int,
-    new_role: Role,
-    current_user = Depends(require_role(Role.ADMIN)),
-    db: Session = Depends(get_db)
-):
-    """Update a user's role (admin only)."""
-    user = db.query(models.User).filter(models.User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    # Prevent removing your own admin status
-    if user.id == current_user.id and new_role != Role.ADMIN:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot remove your own admin role"
-        )
-
-    user.role = new_role.value
-    db.commit()
-    return {"message": f"User {user.username} role updated to {new_role.value}"}
-
-
-@app.delete("/auth/users/{user_id}")
-@limiter.limit(get_rate_limit("default"))
-def delete_user(
-    request: Request,
-    user_id: int,
-    current_user = Depends(require_role(Role.ADMIN)),
-    db: Session = Depends(get_db)
-):
-    """Delete a user account (admin only)."""
-    user = db.query(models.User).filter(models.User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    # Prevent self-deletion
-    if user.id == current_user.id:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot delete your own account"
-        )
-
-    db.delete(user)
-    db.commit()
-    return {"message": f"User {user.username} deleted"}
-
-
-# =============================================================================
-# OFFICER ENDPOINTS
-# =============================================================================
 
 @app.get("/officers", response_model=List[schemas.Officer])
 @limiter.limit(get_rate_limit("officers_list"))
@@ -708,8 +271,6 @@ def get_officers_count(
     request: Request,
     badge_number: str = None,
     force: str = None,
-    date_from: str = None,
-    date_to: str = None,
     db: Session = Depends(get_db)
 ):
     """Get total count of officers (efficient for pagination)."""
@@ -719,27 +280,6 @@ def get_officers_count(
         query = query.filter(models.Officer.badge_number.contains(badge_number))
     if force:
         query = query.filter(models.Officer.force == force)
-
-    # Date range filter
-    if date_from or date_to:
-        query = query.join(models.OfficerAppearance).join(models.Media)
-
-        if date_from:
-            try:
-                from_date = datetime.strptime(date_from, "%Y-%m-%d")
-                query = query.filter(models.Media.timestamp >= from_date)
-            except ValueError:
-                raise HTTPException(status_code=400, detail="Invalid date_from format. Use YYYY-MM-DD")
-
-        if date_to:
-            try:
-                to_date = datetime.strptime(date_to, "%Y-%m-%d")
-                to_date = to_date.replace(hour=23, minute=59, second=59)
-                query = query.filter(models.Media.timestamp <= to_date)
-            except ValueError:
-                raise HTTPException(status_code=400, detail="Invalid date_to format. Use YYYY-MM-DD")
-
-        query = query.distinct()
 
     return {"count": query.count()}
 
@@ -803,7 +343,7 @@ def get_repeat_officers(
             "notes": officer.notes,
             "total_appearances": app_count,
             "distinct_events": evt_count,
-            "crop_path": to_crop_url(first_app.image_crop_path) if first_app else None
+            "crop_path": first_app.image_crop_path if first_app else None
         })
 
     return {
@@ -871,392 +411,13 @@ def get_officer_network(
                 "badge_number": co_officer.badge_number,
                 "force": co_officer.force,
                 "shared_appearances": shared_count,
-                "crop_path": to_crop_url(first_app.image_crop_path) if first_app else None
+                "crop_path": first_app.image_crop_path if first_app else None
             })
 
     return {
         "officer_id": officer_id,
         "connections": connections,
         "total_shared_media": len(media_ids)
-    }
-
-
-# =============================================================================
-# CHAIN OF COMMAND ENDPOINTS
-# =============================================================================
-
-# UK Police rank hierarchy (lowest to highest)
-UK_RANK_HIERARCHY = [
-    "Constable",
-    "Sergeant",
-    "Inspector",
-    "Chief Inspector",
-    "Superintendent",
-    "Chief Superintendent",
-    "Assistant Commissioner",
-    "Deputy Commissioner",
-    "Commissioner"
-]
-
-
-def get_rank_level(rank: str) -> int:
-    """Get numerical rank level for comparison. Returns -1 if rank not recognized."""
-    if not rank:
-        return -1
-    rank_lower = rank.lower()
-    for i, r in enumerate(UK_RANK_HIERARCHY):
-        if r.lower() in rank_lower or rank_lower in r.lower():
-            return i
-    return -1
-
-
-@app.get("/officers/{officer_id}/chain")
-@limiter.limit(get_rate_limit("officers_detail"))
-def get_officer_chain_of_command(
-    request: Request,
-    officer_id: int,
-    db: Session = Depends(get_db)
-):
-    """
-    Get the chain of command for an officer.
-    Returns supervisors (upward chain) and subordinates (downward chain).
-    """
-    officer = db.query(models.Officer).filter(models.Officer.id == officer_id).first()
-    if not officer:
-        raise HTTPException(status_code=404, detail="Officer not found")
-
-    # Get crop path for an officer (converted to web URL)
-    def get_officer_crop(off_id):
-        app = db.query(models.OfficerAppearance).filter(
-            models.OfficerAppearance.officer_id == off_id,
-            models.OfficerAppearance.image_crop_path.isnot(None)
-        ).first()
-        return to_crop_url(app.image_crop_path) if app else None
-
-    # Build upward chain (supervisors)
-    supervisors = []
-    current = officer
-    seen_ids = {officer.id}  # Prevent circular references
-    while current.supervisor_id and current.supervisor_id not in seen_ids:
-        supervisor = db.query(models.Officer).filter(models.Officer.id == current.supervisor_id).first()
-        if supervisor:
-            seen_ids.add(supervisor.id)
-            supervisors.append({
-                "id": supervisor.id,
-                "badge_number": supervisor.badge_number,
-                "force": supervisor.force,
-                "rank": supervisor.rank,
-                "crop_path": get_officer_crop(supervisor.id)
-            })
-            current = supervisor
-        else:
-            break
-
-    # Get direct subordinates
-    subordinates = []
-    direct_reports = db.query(models.Officer).filter(models.Officer.supervisor_id == officer_id).all()
-    for sub in direct_reports:
-        # Count their subordinates recursively
-        sub_count = db.query(models.Officer).filter(models.Officer.supervisor_id == sub.id).count()
-        subordinates.append({
-            "id": sub.id,
-            "badge_number": sub.badge_number,
-            "force": sub.force,
-            "rank": sub.rank,
-            "crop_path": get_officer_crop(sub.id),
-            "subordinate_count": sub_count
-        })
-
-    return {
-        "officer": {
-            "id": officer.id,
-            "badge_number": officer.badge_number,
-            "force": officer.force,
-            "rank": officer.rank,
-            "crop_path": get_officer_crop(officer.id)
-        },
-        "supervisors": supervisors,  # Ordered from immediate supervisor upward
-        "subordinates": subordinates,
-        "rank_level": get_rank_level(officer.rank)
-    }
-
-
-@app.put("/officers/{officer_id}/supervisor")
-@limiter.limit(get_rate_limit("default"))
-def set_officer_supervisor(
-    request: Request,
-    officer_id: int,
-    supervisor_id: Optional[int] = None,
-    db: Session = Depends(get_db)
-):
-    """
-    Set or clear an officer's supervisor.
-    Pass supervisor_id=null to clear the supervisor.
-    """
-    officer = db.query(models.Officer).filter(models.Officer.id == officer_id).first()
-    if not officer:
-        raise HTTPException(status_code=404, detail="Officer not found")
-
-    if supervisor_id is not None:
-        # Validate supervisor exists
-        supervisor = db.query(models.Officer).filter(models.Officer.id == supervisor_id).first()
-        if not supervisor:
-            raise HTTPException(status_code=404, detail="Supervisor not found")
-
-        # Prevent self-reference
-        if supervisor_id == officer_id:
-            raise HTTPException(status_code=400, detail="Officer cannot be their own supervisor")
-
-        # Prevent circular chains
-        current = supervisor
-        seen = {officer_id}
-        while current.supervisor_id:
-            if current.supervisor_id in seen:
-                raise HTTPException(status_code=400, detail="This would create a circular chain of command")
-            seen.add(current.supervisor_id)
-            current = db.query(models.Officer).filter(models.Officer.id == current.supervisor_id).first()
-            if not current:
-                break
-
-        # Validate rank hierarchy (supervisor should outrank subordinate)
-        officer_rank = get_rank_level(officer.rank)
-        supervisor_rank = get_rank_level(supervisor.rank)
-        if officer_rank >= 0 and supervisor_rank >= 0 and supervisor_rank <= officer_rank:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Supervisor ({supervisor.rank}) should outrank subordinate ({officer.rank})"
-            )
-
-    officer.supervisor_id = supervisor_id
-    db.commit()
-
-    return {
-        "message": f"Supervisor {'set' if supervisor_id else 'cleared'} for officer {officer_id}",
-        "officer_id": officer_id,
-        "supervisor_id": supervisor_id
-    }
-
-
-@app.put("/officers/{officer_id}/rank")
-@limiter.limit(get_rate_limit("default"))
-def set_officer_rank(
-    request: Request,
-    officer_id: int,
-    rank: str,
-    db: Session = Depends(get_db)
-):
-    """Set an officer's rank."""
-    officer = db.query(models.Officer).filter(models.Officer.id == officer_id).first()
-    if not officer:
-        raise HTTPException(status_code=404, detail="Officer not found")
-
-    officer.rank = rank
-    db.commit()
-
-    return {
-        "message": f"Rank set to {rank} for officer {officer_id}",
-        "officer_id": officer_id,
-        "rank": rank,
-        "rank_level": get_rank_level(rank)
-    }
-
-
-@app.get("/officers/hierarchy")
-@limiter.limit(get_rate_limit("officers_list"))
-def get_officers_hierarchy(
-    request: Request,
-    force: Optional[str] = None,
-    db: Session = Depends(get_db)
-):
-    """
-    Get a hierarchical view of all officers organized by chain of command.
-    Returns officers without supervisors as roots, with nested subordinates.
-    """
-    from sqlalchemy import func
-
-    # Build query for root officers (no supervisor)
-    query = db.query(models.Officer).filter(models.Officer.supervisor_id.is_(None))
-    if force:
-        query = query.filter(models.Officer.force == force)
-
-    root_officers = query.all()
-
-    def get_officer_crop(off_id):
-        app = db.query(models.OfficerAppearance).filter(
-            models.OfficerAppearance.officer_id == off_id,
-            models.OfficerAppearance.image_crop_path.isnot(None)
-        ).first()
-        return to_crop_url(app.image_crop_path) if app else None
-
-    def build_tree(officer, depth=0, max_depth=5):
-        """Recursively build officer tree with depth limit."""
-        if depth > max_depth:
-            return None
-
-        subordinates = db.query(models.Officer).filter(
-            models.Officer.supervisor_id == officer.id
-        ).all()
-
-        return {
-            "id": officer.id,
-            "badge_number": officer.badge_number,
-            "force": officer.force,
-            "rank": officer.rank,
-            "rank_level": get_rank_level(officer.rank),
-            "crop_path": get_officer_crop(officer.id),
-            "subordinates": [build_tree(sub, depth + 1, max_depth) for sub in subordinates if sub]
-        }
-
-    hierarchy = []
-    for root in root_officers:
-        tree = build_tree(root)
-        if tree:
-            hierarchy.append(tree)
-
-    # Sort by rank level (highest first)
-    hierarchy.sort(key=lambda x: x.get("rank_level", -1), reverse=True)
-
-    return {
-        "hierarchy": hierarchy,
-        "total_roots": len(hierarchy),
-        "available_ranks": UK_RANK_HIERARCHY
-    }
-
-
-@app.post("/officers/{officer_id}/auto-link-supervisor")
-@limiter.limit(get_rate_limit("default"))
-def auto_link_supervisor(
-    request: Request,
-    officer_id: int,
-    db: Session = Depends(get_db)
-):
-    """
-    Automatically suggest and link a supervisor based on:
-    1. Co-appearance in same media
-    2. Higher rank
-    3. Same force
-
-    Returns suggestions but only links if confidence is high enough.
-    """
-    officer = db.query(models.Officer).filter(models.Officer.id == officer_id).first()
-    if not officer:
-        raise HTTPException(status_code=404, detail="Officer not found")
-
-    if officer.supervisor_id:
-        return {
-            "message": "Officer already has a supervisor",
-            "current_supervisor_id": officer.supervisor_id,
-            "suggestions": []
-        }
-
-    officer_rank = get_rank_level(officer.rank)
-
-    # Find co-appearing officers with higher ranks
-    from sqlalchemy import func
-
-    # Get media IDs where this officer appears
-    officer_media = db.query(models.OfficerAppearance.media_id).filter(
-        models.OfficerAppearance.officer_id == officer_id
-    ).distinct().all()
-    media_ids = [m[0] for m in officer_media]
-
-    if not media_ids:
-        return {"message": "No appearances found", "suggestions": []}
-
-    # Find other officers in same media
-    co_officers = (
-        db.query(
-            models.OfficerAppearance.officer_id,
-            func.count(models.OfficerAppearance.id).label('shared_count')
-        )
-        .filter(
-            models.OfficerAppearance.media_id.in_(media_ids),
-            models.OfficerAppearance.officer_id != officer_id
-        )
-        .group_by(models.OfficerAppearance.officer_id)
-        .order_by(func.count(models.OfficerAppearance.id).desc())
-        .all()
-    )
-
-    suggestions = []
-    for co_id, shared_count in co_officers:
-        co_officer = db.query(models.Officer).filter(models.Officer.id == co_id).first()
-        if not co_officer:
-            continue
-
-        co_rank = get_rank_level(co_officer.rank)
-
-        # Skip if same or lower rank
-        if co_rank <= officer_rank:
-            continue
-
-        # Skip if different force (unless one is unknown)
-        if officer.force and co_officer.force and officer.force != co_officer.force:
-            continue
-
-        # Calculate confidence score
-        confidence = 0.0
-        reasons = []
-
-        # Rank difference (more levels = more confidence)
-        rank_diff = co_rank - officer_rank
-        if rank_diff == 1:
-            confidence += 0.4
-            reasons.append(f"Direct superior rank ({co_officer.rank})")
-        elif rank_diff > 1:
-            confidence += 0.2
-            reasons.append(f"Higher rank ({co_officer.rank})")
-
-        # Co-appearances (more = more confidence)
-        if shared_count >= 5:
-            confidence += 0.3
-            reasons.append(f"Frequently together ({shared_count} appearances)")
-        elif shared_count >= 2:
-            confidence += 0.2
-            reasons.append(f"Multiple appearances together ({shared_count})")
-        else:
-            confidence += 0.1
-            reasons.append("Appeared together")
-
-        # Same force
-        if officer.force and co_officer.force == officer.force:
-            confidence += 0.2
-            reasons.append("Same force")
-
-        # Get crop
-        app = db.query(models.OfficerAppearance).filter(
-            models.OfficerAppearance.officer_id == co_id,
-            models.OfficerAppearance.image_crop_path.isnot(None)
-        ).first()
-
-        suggestions.append({
-            "id": co_officer.id,
-            "badge_number": co_officer.badge_number,
-            "force": co_officer.force,
-            "rank": co_officer.rank,
-            "rank_level": co_rank,
-            "shared_appearances": shared_count,
-            "confidence": round(confidence, 2),
-            "reasons": reasons,
-            "crop_path": to_crop_url(app.image_crop_path) if app else None
-        })
-
-    # Sort by confidence
-    suggestions.sort(key=lambda x: x["confidence"], reverse=True)
-
-    # Auto-link if top suggestion has high confidence
-    auto_linked = False
-    if suggestions and suggestions[0]["confidence"] >= 0.7:
-        best = suggestions[0]
-        officer.supervisor_id = best["id"]
-        db.commit()
-        auto_linked = True
-
-    return {
-        "officer_id": officer_id,
-        "suggestions": suggestions[:5],  # Top 5 suggestions
-        "auto_linked": auto_linked,
-        "linked_supervisor_id": officer.supervisor_id
     }
 
 
@@ -1380,7 +541,7 @@ def get_media_report(request: Request, media_id: int, db: Session = Depends(get_
                 if app.timestamp_in_video:
                     timestamp_data = {
                         "timestamp": app.timestamp_in_video,
-                        "crop_path": to_crop_url(app.image_crop_path),
+                        "crop_path": app.image_crop_path,
                         "action": app.action,
                         "role": app.role
                     }
@@ -1391,7 +552,7 @@ def get_media_report(request: Request, media_id: int, db: Session = Depends(get_
                         "badge": officer.badge_number,
                         "timestamp": app.timestamp_in_video,
                         "action": app.action,
-                        "crop_path": to_crop_url(app.image_crop_path)
+                        "crop_path": app.image_crop_path
                     })
 
             officers.append({
@@ -1399,7 +560,7 @@ def get_media_report(request: Request, media_id: int, db: Session = Depends(get_
                 "badge": officer.badge_number,
                 "force": officer.force,
                 "role": first_app.role if first_app else None,
-                "crop_path": to_crop_url(first_app.image_crop_path) if first_app else None,
+                "crop_path": first_app.image_crop_path if first_app else None,
                 "total_appearances_in_video": len(officer_appearances),
                 "timestamps": officer_timestamps  # All timestamps for this officer
             })
@@ -1444,7 +605,6 @@ def get_media_report(request: Request, media_id: int, db: Session = Depends(get_
 
 @app.post("/ingest/url")
 @limiter.limit(get_rate_limit("ingest"))
-@limiter.limit(get_rate_limit("ingest_hourly"))
 async def ingest_media_url(request: Request, body: IngestURLRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """
     Ingest a URL (YouTube, web).
@@ -1524,8 +684,7 @@ async def ingest_media_url(request: Request, body: IngestURLRequest, background_
 
 
 @app.post("/ingest/bulk")
-@limiter.limit(get_rate_limit("bulk_ingest"))
-@limiter.limit(get_rate_limit("ingest_hourly"))
+@limiter.limit("2/minute")  # Stricter limit for bulk operations
 async def bulk_ingest_urls(request: Request, body: BulkIngestRequest, background_tasks: BackgroundTasks):
     """
     Ingest multiple URLs at once.
@@ -1597,235 +756,6 @@ async def bulk_ingest_urls(request: Request, body: BulkIngestRequest, background
 @limiter.limit(get_rate_limit("protests"))
 def get_protests(request: Request, db: Session = Depends(get_db)):
     return db.query(models.Protest).all()
-
-
-@app.get("/protests/{protest_id}/timeline", tags=["protests"])
-@limiter.limit(get_rate_limit("default"))
-def get_protest_timeline(
-    request: Request,
-    protest_id: int,
-    db: Session = Depends(get_db)
-):
-    """
-    Get chronological timeline of events for a specific protest.
-
-    Returns all officer appearances, media, and detected events ordered by time,
-    allowing reconstruction of how events unfolded.
-    """
-    from sqlalchemy import func
-
-    # Get protest details
-    protest = db.query(models.Protest).filter(models.Protest.id == protest_id).first()
-    if not protest:
-        raise HTTPException(status_code=404, detail="Protest not found")
-
-    # Get all media for this protest with appearances
-    media_items = db.query(models.Media).filter(
-        models.Media.protest_id == protest_id
-    ).order_by(models.Media.timestamp).all()
-
-    events = []
-
-    for media in media_items:
-        # Get all appearances in this media
-        appearances = db.query(models.OfficerAppearance).filter(
-            models.OfficerAppearance.media_id == media.id
-        ).all()
-
-        for app in appearances:
-            officer = app.officer
-
-            # Get uniform analysis if exists
-            uniform_data = None
-            if app.uniform_analysis:
-                ua = app.uniform_analysis
-                uniform_data = {
-                    "force": ua.detected_force,
-                    "unit_type": ua.unit_type,
-                    "rank": ua.detected_rank,
-                    "shoulder_number": ua.shoulder_number,
-                    "uniform_type": ua.uniform_type
-                }
-
-            # Get equipment detections
-            equipment_list = []
-            for eq_det in app.equipment_detections:
-                equipment_list.append({
-                    "name": eq_det.equipment.name,
-                    "category": eq_det.equipment.category,
-                    "confidence": eq_det.confidence
-                })
-
-            # Parse timestamp from video
-            event_time = media.timestamp
-            video_timestamp = None
-            if app.timestamp_in_video:
-                video_timestamp = app.timestamp_in_video
-                # Try to combine with media timestamp for more precise time
-                try:
-                    parts = app.timestamp_in_video.split(":")
-                    if len(parts) == 3:
-                        h, m, s = int(parts[0]), int(parts[1]), int(parts[2])
-                        from datetime import timedelta
-                        # Add offset to media timestamp
-                        if media.timestamp:
-                            event_time = media.timestamp + timedelta(hours=h, minutes=m, seconds=s)
-                except:
-                    pass
-
-            events.append({
-                "id": app.id,
-                "event_type": "officer_appearance",
-                "timestamp": event_time.isoformat() if event_time else None,
-                "video_timestamp": video_timestamp,
-                "media_id": media.id,
-                "media_type": media.type,
-                "media_url": get_web_url(media.url) if media.url else None,
-                "officer": {
-                    "id": officer.id,
-                    "badge_number": officer.badge_number,
-                    "force": officer.force,
-                    "rank": officer.rank
-                },
-                "action": app.action,
-                "role": app.role,
-                "confidence": app.confidence,
-                "crop_url": get_web_url(app.image_crop_path) if app.image_crop_path else None,
-                "uniform": uniform_data,
-                "equipment": equipment_list
-            })
-
-    # Sort all events by timestamp
-    events.sort(key=lambda e: e["timestamp"] or "")
-
-    # Group events by time buckets (every 5 minutes) for visualization
-    time_buckets = {}
-    for event in events:
-        if event["timestamp"]:
-            # Round to nearest 5 minute bucket
-            from datetime import datetime
-            try:
-                dt = datetime.fromisoformat(event["timestamp"].replace("Z", "+00:00"))
-                bucket = dt.replace(minute=(dt.minute // 5) * 5, second=0, microsecond=0)
-                bucket_key = bucket.isoformat()
-                if bucket_key not in time_buckets:
-                    time_buckets[bucket_key] = []
-                time_buckets[bucket_key].append(event)
-            except:
-                pass
-
-    return {
-        "protest": {
-            "id": protest.id,
-            "name": protest.name,
-            "date": protest.date.isoformat() if protest.date else None,
-            "location": protest.location,
-            "latitude": protest.latitude,
-            "longitude": protest.longitude,
-            "description": protest.description
-        },
-        "total_events": len(events),
-        "total_officers": len(set(e["officer"]["id"] for e in events)),
-        "total_media": len(media_items),
-        "events": events,
-        "time_buckets": time_buckets
-    }
-
-
-@app.get("/timeline", tags=["stats"])
-@limiter.limit(get_rate_limit("default"))
-def get_global_timeline(
-    request: Request,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    limit: int = 100,
-    db: Session = Depends(get_db)
-):
-    """
-    Get chronological timeline of all events across all protests.
-
-    Useful for understanding patterns across multiple demonstrations.
-    """
-    from sqlalchemy import func, desc
-    from datetime import datetime
-
-    # Base query for appearances with media
-    query = db.query(models.OfficerAppearance).join(
-        models.Media, models.OfficerAppearance.media_id == models.Media.id
-    ).join(
-        models.Officer, models.OfficerAppearance.officer_id == models.Officer.id
-    )
-
-    # Date filters
-    if start_date:
-        try:
-            start_dt = datetime.fromisoformat(start_date)
-            query = query.filter(models.Media.timestamp >= start_dt)
-        except:
-            pass
-
-    if end_date:
-        try:
-            end_dt = datetime.fromisoformat(end_date)
-            query = query.filter(models.Media.timestamp <= end_dt)
-        except:
-            pass
-
-    # Order by time and limit
-    appearances = query.order_by(desc(models.Media.timestamp)).limit(limit).all()
-
-    events = []
-    for app in appearances:
-        media = app.media
-        officer = app.officer
-        protest = media.protest if media.protest_id else None
-
-        # Equipment summary
-        equipment_count = len(app.equipment_detections)
-        high_escalation_count = sum(
-            1 for eq in app.equipment_detections
-            if eq.equipment and eq.equipment.name in ["Shield", "Long Shield", "Baton", "Taser", "Ballistic Helmet"]
-        )
-
-        events.append({
-            "id": app.id,
-            "timestamp": media.timestamp.isoformat() if media.timestamp else None,
-            "video_timestamp": app.timestamp_in_video,
-            "protest": {
-                "id": protest.id if protest else None,
-                "name": protest.name if protest else "Unknown",
-                "location": protest.location if protest else None
-            } if protest else None,
-            "media_id": media.id,
-            "media_type": media.type,
-            "officer": {
-                "id": officer.id,
-                "badge_number": officer.badge_number,
-                "force": officer.force,
-                "rank": officer.rank
-            },
-            "action": app.action,
-            "role": app.role,
-            "equipment_count": equipment_count,
-            "high_escalation_equipment": high_escalation_count > 0,
-            "crop_url": get_web_url(app.image_crop_path) if app.image_crop_path else None
-        })
-
-    # Summary stats
-    unique_officers = len(set(e["officer"]["id"] for e in events))
-    unique_protests = len(set(e["protest"]["id"] for e in events if e["protest"] and e["protest"]["id"]))
-
-    return {
-        "total_events": len(events),
-        "unique_officers": unique_officers,
-        "unique_protests": unique_protests,
-        "date_range": {
-            "earliest": events[-1]["timestamp"] if events else None,
-            "latest": events[0]["timestamp"] if events else None
-        },
-        "events": events
-    }
-
 
 @app.post("/officers/merge")
 @limiter.limit(get_rate_limit("default"))
@@ -2030,7 +960,7 @@ def get_unverified_appearances(
             "badge_number": officer.badge_number if officer else None,
             "force": officer.force if officer else None,
             "timestamp_in_video": app.timestamp_in_video,
-            "image_crop_path": to_crop_url(app.image_crop_path),
+            "image_crop_path": app.image_crop_path,
             "role": app.role,
             "action": app.action,
             "confidence": app.confidence,
@@ -2232,8 +1162,7 @@ def export_report_csv(
 
 
 @app.post("/search/face")
-@limiter.limit(get_rate_limit("face_search"))
-@limiter.limit(get_rate_limit("face_search_hourly"))
+@limiter.limit(get_rate_limit("upload"))
 async def search_by_face(
     request: Request,
     file: UploadFile = File(...),
@@ -2304,7 +1233,7 @@ async def search_by_face(
                         "force": officer.force,
                         "confidence": round(confidence * 100, 1),
                         "is_strong_match": is_match,
-                        "crop_path": to_crop_url(first_app.image_crop_path) if first_app else None
+                        "crop_path": first_app.image_crop_path if first_app else None
                     })
             except (json.JSONDecodeError, Exception) as e:
                 continue
@@ -2370,34 +1299,16 @@ async def upload_file(
     if type == "video" and not content_type.startswith("video/"):
         raise HTTPException(status_code=400, detail="File content type doesn't match declared video type")
 
-    result = save_upload(file.file, file.filename, protest_id, type, db)
-
-    # Handle tuple return (media, duplicate_info) or None
-    if result is None or result[0] is None:
+    media = save_upload(file.file, file.filename, protest_id, type, db)
+    
+    if not media:
         raise HTTPException(status_code=500, detail="File upload failed")
-
-    media, duplicate_info = result
-
-    # Trigger processing (skip if exact duplicate - already processed)
+        
+    # Trigger processing
     from process import process_media
-    if not (duplicate_info and duplicate_info.get("duplicate_type") == "exact"):
-        process_media(media.id)
-
-    response = {
-        "status": "uploaded",
-        "media_id": media.id,
-        "filename": file.filename
-    }
-
-    # Add duplicate info if detected
-    if duplicate_info:
-        response["duplicate_detected"] = True
-        response["duplicate_type"] = duplicate_info.get("duplicate_type")
-        response["original_media_id"] = duplicate_info.get("original_id")
-        if duplicate_info.get("similarity_score") is not None:
-            response["similarity_score"] = duplicate_info.get("similarity_score")
-
-    return response
+    process_media(media.id)
+    
+    return {"status": "uploaded", "media_id": media.id, "filename": file.filename}
 
 
 # =============================================================================
@@ -2494,7 +1405,7 @@ def get_equipment_detections(
             "officer_id": officer.id if officer else None,
             "badge_number": officer.badge_number if officer else None,
             "force": officer.force if officer else None,
-            "crop_path": to_crop_url(appearance.image_crop_path) if appearance else None,
+            "crop_path": appearance.image_crop_path if appearance else None,
             "timestamp": appearance.timestamp_in_video if appearance else None
         })
 
@@ -2557,7 +1468,7 @@ def get_officer_uniform_analysis(
             analyses.append({
                 "appearance_id": app.id,
                 "timestamp_in_video": app.timestamp_in_video,
-                "crop_path": to_crop_url(app.image_crop_path),
+                "crop_path": app.image_crop_path,
                 "analysis": {
                     "detected_force": analysis.detected_force,
                     "force_confidence": analysis.force_confidence,
@@ -2598,8 +1509,7 @@ def get_officer_uniform_analysis(
 
 
 @app.post("/appearances/{appearance_id}/analyze")
-@limiter.limit(get_rate_limit("ai_analysis"))
-@limiter.limit(get_rate_limit("ai_analysis_hourly"))
+@limiter.limit("5/minute")  # Strict limit due to API costs
 async def analyze_appearance_uniform(
     request: Request,
     appearance_id: int,
@@ -2637,8 +1547,8 @@ async def analyze_appearance_uniform(
             "message": "Use force_reanalyze=true to re-analyze"
         }
 
-    # Get full image path using path utilities for consistent handling
-    image_path = get_absolute_path(appearance.image_crop_path)
+    # Get full image path
+    image_path = os.path.join("data", appearance.image_crop_path.lstrip("/data/"))
     if not os.path.exists(image_path):
         raise HTTPException(status_code=400, detail=f"Image file not found: {appearance.image_crop_path}")
 
@@ -2734,239 +1644,6 @@ async def analyze_appearance_uniform(
         "status": "analysis_started",
         "appearance_id": appearance_id,
         "message": "Analysis running in background. Check /officers/{id}/uniform for results."
-    }
-
-
-# Track batch analysis progress in memory
-_batch_analysis_progress = {}
-
-
-@app.post("/appearances/batch-analyze")
-@limiter.limit(get_rate_limit("ai_analysis"))
-async def batch_analyze_uniforms(
-    request: Request,
-    background_tasks: BackgroundTasks,
-    appearance_ids: List[int],
-    force_reanalyze: bool = False,
-    db: Session = Depends(get_db)
-):
-    """
-    Batch analyze multiple officer appearances.
-    Returns a batch_id to track progress via /appearances/batch-status/{batch_id}.
-    """
-    import uuid
-    import os
-
-    if len(appearance_ids) > 50:
-        raise HTTPException(status_code=400, detail="Maximum 50 appearances per batch")
-
-    if len(appearance_ids) == 0:
-        raise HTTPException(status_code=400, detail="No appearance IDs provided")
-
-    # Validate appearances exist and have images
-    valid_appearances = []
-    for app_id in appearance_ids:
-        appearance = db.query(models.OfficerAppearance).filter(
-            models.OfficerAppearance.id == app_id
-        ).first()
-        if appearance and appearance.image_crop_path:
-            # Check if already analyzed (unless force_reanalyze)
-            if not force_reanalyze:
-                existing = db.query(models.UniformAnalysis).filter(
-                    models.UniformAnalysis.appearance_id == app_id
-                ).first()
-                if existing:
-                    continue  # Skip already analyzed
-            valid_appearances.append(app_id)
-
-    if not valid_appearances:
-        return {
-            "status": "no_work",
-            "message": "All appearances already analyzed or no valid appearances found"
-        }
-
-    # Create batch tracking
-    batch_id = str(uuid.uuid4())[:8]
-    _batch_analysis_progress[batch_id] = {
-        "total": len(valid_appearances),
-        "completed": 0,
-        "failed": 0,
-        "in_progress": True,
-        "results": []
-    }
-
-    def run_batch_analysis(batch_id: str, app_ids: list, force: bool):
-        from database import SessionLocal
-        from ai.uniform_analyzer import UniformAnalyzer
-        import time
-
-        db_session = SessionLocal()
-        try:
-            api_key = os.environ.get("ANTHROPIC_API_KEY")
-            if not api_key:
-                _batch_analysis_progress[batch_id]["in_progress"] = False
-                _batch_analysis_progress[batch_id]["error"] = "ANTHROPIC_API_KEY not set"
-                return
-
-            analyzer = UniformAnalyzer(api_key=api_key)
-
-            for app_id in app_ids:
-                try:
-                    # Get appearance
-                    appearance = db_session.query(models.OfficerAppearance).filter(
-                        models.OfficerAppearance.id == app_id
-                    ).first()
-
-                    if not appearance or not appearance.image_crop_path:
-                        _batch_analysis_progress[batch_id]["failed"] += 1
-                        continue
-
-                    # Build image path
-                    from utils.paths import normalize_storage_path, get_full_storage_path
-                    storage_path = normalize_storage_path(appearance.image_crop_path)
-                    image_path = get_full_storage_path(storage_path)
-
-                    # Run analysis
-                    result = analyzer.analyze_uniform_sync(image_path, force_reanalyze=force)
-
-                    if not result.get("success"):
-                        _batch_analysis_progress[batch_id]["failed"] += 1
-                        _batch_analysis_progress[batch_id]["results"].append({
-                            "appearance_id": app_id,
-                            "success": False,
-                            "error": result.get("error", "Unknown error")
-                        })
-                        continue
-
-                    # Save to DB
-                    db_data = analyzer.parse_to_db_format(result, app_id)
-                    if db_data:
-                        existing_analysis = db_session.query(models.UniformAnalysis).filter(
-                            models.UniformAnalysis.appearance_id == app_id
-                        ).first()
-
-                        if existing_analysis:
-                            for key, value in db_data.items():
-                                if key != "appearance_id":
-                                    setattr(existing_analysis, key, value)
-                        else:
-                            analysis = models.UniformAnalysis(**db_data)
-                            db_session.add(analysis)
-
-                        db_session.commit()
-
-                    _batch_analysis_progress[batch_id]["completed"] += 1
-                    _batch_analysis_progress[batch_id]["results"].append({
-                        "appearance_id": app_id,
-                        "success": True,
-                        "force": result.get("analysis", {}).get("force", {}).get("name")
-                    })
-
-                    # Rate limiting - wait between analyses
-                    time.sleep(1)
-
-                except Exception as e:
-                    _batch_analysis_progress[batch_id]["failed"] += 1
-                    _batch_analysis_progress[batch_id]["results"].append({
-                        "appearance_id": app_id,
-                        "success": False,
-                        "error": str(e)
-                    })
-                    db_session.rollback()
-
-        except Exception as e:
-            _batch_analysis_progress[batch_id]["error"] = str(e)
-        finally:
-            _batch_analysis_progress[batch_id]["in_progress"] = False
-            db_session.close()
-
-    background_tasks.add_task(run_batch_analysis, batch_id, valid_appearances, force_reanalyze)
-
-    return {
-        "status": "batch_started",
-        "batch_id": batch_id,
-        "total_to_analyze": len(valid_appearances),
-        "skipped": len(appearance_ids) - len(valid_appearances),
-        "message": f"Batch analysis started. Check progress at /appearances/batch-status/{batch_id}"
-    }
-
-
-@app.get("/appearances/batch-status/{batch_id}")
-@limiter.limit(get_rate_limit("officers_list"))
-def get_batch_status(request: Request, batch_id: str):
-    """
-    Get progress of a batch uniform analysis.
-    """
-    if batch_id not in _batch_analysis_progress:
-        raise HTTPException(status_code=404, detail="Batch not found")
-
-    progress = _batch_analysis_progress[batch_id]
-    return {
-        "batch_id": batch_id,
-        "total": progress["total"],
-        "completed": progress["completed"],
-        "failed": progress["failed"],
-        "in_progress": progress["in_progress"],
-        "percent_complete": round((progress["completed"] + progress["failed"]) / progress["total"] * 100, 1) if progress["total"] > 0 else 0,
-        "results": progress["results"][-10:] if not progress["in_progress"] else [],  # Only show results when done
-        "error": progress.get("error")
-    }
-
-
-@app.get("/appearances/pending-analysis")
-@limiter.limit(get_rate_limit("officers_list"))
-def get_pending_analysis(
-    request: Request,
-    limit: int = 50,
-    officer_id: int = None,
-    protest_id: int = None,
-    db: Session = Depends(get_db)
-):
-    """
-    Get officer appearances that haven't been analyzed yet.
-    Useful for batch analysis selection.
-    """
-    from sqlalchemy import func
-
-    # Find appearances with images but no uniform analysis
-    query = (
-        db.query(
-            models.OfficerAppearance.id,
-            models.OfficerAppearance.officer_id,
-            models.OfficerAppearance.media_id,
-            models.OfficerAppearance.image_crop_path,
-            models.Officer.badge_number,
-            models.Officer.force
-        )
-        .join(models.Officer)
-        .outerjoin(models.UniformAnalysis)
-        .filter(
-            models.OfficerAppearance.image_crop_path.isnot(None),
-            models.UniformAnalysis.id.is_(None)
-        )
-    )
-
-    if officer_id:
-        query = query.filter(models.OfficerAppearance.officer_id == officer_id)
-
-    if protest_id:
-        query = query.join(models.Media).filter(models.Media.protest_id == protest_id)
-
-    pending = query.limit(limit).all()
-
-    return {
-        "pending_count": len(pending),
-        "appearances": [
-            {
-                "id": p.id,
-                "officer_id": p.officer_id,
-                "media_id": p.media_id,
-                "badge_number": p.badge_number,
-                "current_force": p.force,
-                "has_image": bool(p.image_crop_path)
-            }
-            for p in pending
-        ]
     }
 
 
@@ -3482,3 +2159,454 @@ def execute_cleanup(
         **summary
     }
 
+
+# =============================================================================
+# CSRF PROTECTION
+# =============================================================================
+
+from csrf import generate_csrf_token, set_csrf_cookie, require_csrf, CSRF_ENABLED
+
+
+@app.get("/csrf/token")
+@limiter.limit("30/minute")
+def get_csrf_token(request: Request, response: Response):
+    """
+    Get a CSRF token for protected form submissions.
+
+    The token is returned in both:
+    1. Response body (for SPA to read)
+    2. Cookie (for double-submit validation)
+
+    Frontend should include this token in X-CSRF-Token header
+    when making protected requests (registration, etc.).
+    """
+    token = generate_csrf_token()
+    set_csrf_cookie(response, token)
+
+    return {
+        "csrf_token": token,
+        "expires_in": 24 * 3600,  # 24 hours in seconds
+        "header_name": "X-CSRF-Token"
+    }
+
+
+# =============================================================================
+# AUTHENTICATION ENDPOINTS
+# =============================================================================
+
+from auth import (
+    UserCreate, UserLogin, UserResponse, Token,
+    create_user, authenticate_user, create_access_token, create_refresh_token,
+    decode_refresh_token, get_user_by_username, get_user_by_email, verify_user_email,
+    AuthenticationError, ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS,
+    log_security_event, revoke_user_tokens, get_current_user, require_admin
+)
+from datetime import timedelta
+
+
+# Environment variable to control email verification requirement
+# Set to "false" in development to skip email verification
+REQUIRE_EMAIL_VERIFICATION = os.getenv("REQUIRE_EMAIL_VERIFICATION", "true").lower() == "true"
+
+
+@app.post("/auth/register")
+@limiter.limit(get_rate_limit("auth_register"))
+@limiter.limit(get_rate_limit("auth_register_hourly"))
+def register_user(
+    request: Request,
+    user_data: UserCreate,
+    db: Session = Depends(get_db),
+    _csrf = Depends(require_csrf)  # CSRF protection for registration
+):
+    """
+    Register a new user account.
+
+    Rate limited to prevent registration spam and abuse.
+
+    Email verification behavior controlled by REQUIRE_EMAIL_VERIFICATION env var:
+    - true (default): User must verify email before logging in
+    - false: User is immediately active (for development)
+
+    In development mode, returns verification_token for testing.
+    """
+    # Check if username already exists
+    existing_user = get_user_by_username(db, user_data.username)
+    if existing_user:
+        raise APIError(
+            code=ErrorCode.ALREADY_EXISTS,
+            message="Username already registered",
+            status_code=400
+        )
+
+    # Check if email already exists
+    existing_email = get_user_by_email(db, user_data.email)
+    if existing_email:
+        raise APIError(
+            code=ErrorCode.ALREADY_EXISTS,
+            message="Email already registered",
+            status_code=400
+        )
+
+    # Create user - verification requirement based on environment
+    user = create_user(db, user_data, require_verification=REQUIRE_EMAIL_VERIFICATION)
+
+    # Build response
+    response = {
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "role": user.role,
+        "is_active": user.is_active,
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+        "full_name": user.full_name,
+        "city": user.city,
+        "country": user.country,
+        "email_verified": user.email_verified,
+        "verification_required": REQUIRE_EMAIL_VERIFICATION,
+        "message": "Registration successful!"
+    }
+
+    # Only return verification token in development mode (security: prevents token exposure in logs)
+    is_development = os.getenv("ENVIRONMENT", "development").lower() in ("development", "dev")
+    if REQUIRE_EMAIL_VERIFICATION:
+        response["message"] = "Registration successful! Please check your email to verify your account."
+        # TODO: Send actual verification email here
+        if is_development and user.email_verification_token:
+            # Only expose token in dev for testing - never in production
+            response["verification_token"] = user.email_verification_token
+    elif not REQUIRE_EMAIL_VERIFICATION:
+        response["message"] = "Registration successful! You can now log in."
+
+    return response
+
+
+@app.post("/auth/login", response_model=Token)
+@limiter.limit(get_rate_limit("auth_login"))
+@limiter.limit(get_rate_limit("auth_login_hourly"))
+def login(
+    request: Request,
+    login_data: UserLogin,
+    db: Session = Depends(get_db)
+):
+    """
+    Authenticate user and return JWT access and refresh tokens.
+
+    Rate limited to prevent brute force attacks:
+    - 5 attempts per minute
+    - 20 attempts per hour
+
+    Returns specific error codes for different failure reasons.
+    Account is locked after 5 failed attempts for 15 minutes.
+    """
+    # Get client IP for security logging
+    client_ip = request.client.host if request.client else None
+
+    try:
+        user = authenticate_user(
+            db,
+            login_data.username,
+            login_data.password,
+            require_verified_email=REQUIRE_EMAIL_VERIFICATION,
+            ip_address=client_ip
+        )
+    except AuthenticationError as e:
+        # Map error codes to standardized API errors
+        error_map = {
+            "invalid_credentials": (ErrorCode.INVALID_CREDENTIALS, 401),
+            "email_not_verified": (ErrorCode.EMAIL_NOT_VERIFIED, 403),
+            "account_disabled": (ErrorCode.ACCOUNT_DISABLED, 403),
+            "account_locked": (ErrorCode.ACCOUNT_LOCKED, 429),
+        }
+
+        error_info = error_map.get(e.code, (ErrorCode.UNAUTHORIZED, 401))
+        raise APIError(
+            code=error_info[0],
+            message=e.message,
+            status_code=error_info[1],
+            headers={"WWW-Authenticate": "Bearer"} if error_info[1] == 401 else None
+        )
+
+    # Update last login timestamp (use timezone-aware datetime)
+    user.last_login = datetime.now(timezone.utc)
+    db.commit()
+
+    # Token payload (include token_version for revocation support)
+    token_data = {
+        "sub": user.username,
+        "user_id": user.id,
+        "role": user.role,
+        "token_version": user.token_version or 0
+    }
+
+    # Create access token (short-lived: 30 minutes)
+    access_token = create_access_token(
+        data=token_data,
+        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    )
+
+    # Create refresh token (long-lived: 7 days)
+    refresh_token = create_refresh_token(data=token_data)
+
+    return Token(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_type="bearer",
+        expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        refresh_expires_in=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+        user={
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "role": user.role,
+            "full_name": user.full_name
+        }
+    )
+
+
+@app.get("/auth/verify/{token}")
+@limiter.limit(get_rate_limit("auth_verify"))
+def verify_email(
+    request: Request,
+    token: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Verify user email address using the verification token.
+    """
+    user = verify_user_email(db, token)
+
+    if not user:
+        raise APIError(
+            code=ErrorCode.TOKEN_INVALID,
+            message="Invalid or expired verification token",
+            status_code=400
+        )
+
+    return {
+        "success": True,
+        "message": "Email verified successfully. You can now log in.",
+        "username": user.username
+    }
+
+
+@app.get("/auth/me", response_model=UserResponse)
+@limiter.limit(get_rate_limit("default"))
+def get_current_user_info(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Get current authenticated user's information.
+    Requires valid JWT token in Authorization header.
+    """
+    from auth import get_current_user
+    from fastapi import Security
+
+    # This endpoint requires manual token validation since we can't use Depends easily here
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise APIError(
+            code=ErrorCode.UNAUTHORIZED,
+            message="Not authenticated",
+            status_code=401,
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    token = auth_header.split(" ")[1]
+    from auth import decode_token, get_user_by_username as get_user
+
+    token_data = decode_token(token)
+    if not token_data:
+        raise APIError(
+            code=ErrorCode.TOKEN_INVALID,
+            message="Invalid token",
+            status_code=401,
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    user = get_user(db, token_data.username)
+    if not user:
+        raise APIError(
+            code=ErrorCode.NOT_FOUND,
+            message="User not found",
+            status_code=401,
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    return UserResponse(
+        id=user.id,
+        username=user.username,
+        email=user.email,
+        role=user.role,
+        is_active=user.is_active,
+        created_at=user.created_at,
+        full_name=user.full_name,
+        city=user.city,
+        country=user.country,
+        email_verified=user.email_verified
+    )
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
+
+@app.post("/auth/refresh")
+@limiter.limit("30/minute")  # Generous limit for token refresh
+def refresh_access_token(
+    request: Request,
+    body: RefreshTokenRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Exchange a valid refresh token for a new access token.
+
+    This allows clients to maintain sessions without re-authenticating.
+    Access tokens expire in 30 minutes, refresh tokens in 7 days.
+    """
+    client_ip = request.client.host if request.client else None
+
+    token_data = decode_refresh_token(body.refresh_token)
+    if not token_data:
+        raise APIError(
+            code=ErrorCode.TOKEN_INVALID,
+            message="Invalid or expired refresh token",
+            status_code=401,
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    # Verify user still exists and is active
+    user = get_user_by_username(db, token_data.username)
+    if not user:
+        raise APIError(
+            code=ErrorCode.NOT_FOUND,
+            message="User not found",
+            status_code=401,
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    if not user.is_active:
+        raise APIError(
+            code=ErrorCode.ACCOUNT_DISABLED,
+            message="Account is disabled",
+            status_code=403
+        )
+
+    # Validate token version for revocation support
+    user_token_version = user.token_version or 0
+    token_version = token_data.token_version or 0
+    if token_version < user_token_version:
+        # Refresh token was issued before tokens were revoked
+        raise APIError(
+            code=ErrorCode.TOKEN_REVOKED,
+            message="Token has been revoked. Please log in again.",
+            status_code=401,
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    # Log the token refresh
+    log_security_event(
+        "TOKEN_REFRESH",
+        username=user.username,
+        user_id=user.id,
+        ip_address=client_ip
+    )
+
+    # Create new access token (include current token_version)
+    new_token_data = {
+        "sub": user.username,
+        "user_id": user.id,
+        "role": user.role,
+        "token_version": user_token_version
+    }
+
+    access_token = create_access_token(
+        data=new_token_data,
+        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    )
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    }
+
+
+@app.post("/auth/revoke/{user_id}")
+@limiter.limit("10/minute")
+async def revoke_user_tokens_endpoint(
+    request: Request,
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_admin)
+):
+    """
+    Revoke all tokens for a specific user (admin only).
+
+    This invalidates all existing access and refresh tokens for the user,
+    forcing them to re-authenticate. Useful for:
+    - Security incidents
+    - Account compromises
+    - Admin forcing logout
+    """
+    from auth import get_user_by_id
+
+    target_user = get_user_by_id(db, user_id)
+    if not target_user:
+        raise APIError(
+            code=ErrorCode.NOT_FOUND,
+            message="User not found",
+            status_code=404
+        )
+
+    # Prevent revoking own tokens through this endpoint
+    if target_user.id == current_user.id:
+        raise APIError(
+            code=ErrorCode.INVALID_INPUT,
+            message="Cannot revoke your own tokens. Use /auth/logout instead.",
+            status_code=400
+        )
+
+    old_version = target_user.token_version
+    revoke_user_tokens(db, target_user)
+
+    # Audit log for security events
+    import logging
+    audit_logger = logging.getLogger("audit.security")
+    audit_logger.warning(
+        f"TOKEN_REVOCATION: admin_user_id={current_user.id} "
+        f"admin_username={current_user.username} "
+        f"target_user_id={user_id} "
+        f"target_username={target_user.username} "
+        f"old_token_version={old_version} "
+        f"new_token_version={target_user.token_version} "
+        f"client_ip={request.client.host if request.client else 'unknown'}"
+    )
+
+    return {
+        "success": True,
+        "message": f"All tokens revoked for user {target_user.username}",
+        "user_id": user_id,
+        "new_token_version": target_user.token_version,
+        "revoked_by": current_user.username
+    }
+
+
+@app.post("/auth/logout")
+@limiter.limit("10/minute")
+async def logout_user(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """
+    Logout the current user by revoking all their tokens.
+
+    This invalidates all access and refresh tokens, requiring re-authentication.
+    """
+    revoke_user_tokens(db, current_user)
+
+    return {
+        "success": True,
+        "message": "Logged out successfully. All tokens have been revoked."
+    }

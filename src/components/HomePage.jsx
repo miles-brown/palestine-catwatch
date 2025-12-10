@@ -1,22 +1,66 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import OfficerCard from './OfficerCard';
 import OfficerProfile from './OfficerProfile';
 import MapView from './MapView';
-import { Heart, Camera, Megaphone, AlertTriangle, Users, Eye, Map, Grid, Filter, X, ChevronDown } from 'lucide-react';
+import LazyOfficerGrid, { useInfiniteOfficers } from './LazyOfficerGrid';
+import { Heart, Camera, Megaphone, AlertTriangle, Users, Eye, Map, Grid, Filter, X, ChevronDown, LayoutList } from 'lucide-react';
 import { Card } from '@/components/ui/card';
+import { OfficerGridSkeleton } from '@/components/ui/skeleton';
+import { API_BASE, getMediaUrl, fetchWithErrorHandling } from '../utils/api';
 
-let API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
-if (!API_BASE.startsWith("http")) {
-  API_BASE = `https://${API_BASE}`;
-}
-
+// Configuration constants
 const ITEMS_PER_PAGE = 20;
+const MAX_SEARCH_LENGTH = 200;
+const COUNT_DEBOUNCE_MS = 300;
+
+/**
+ * Sanitize search query to prevent XSS and ensure safe string operations
+ * - Trims whitespace
+ * - Removes HTML tags
+ * - Limits length to prevent DoS
+ */
+const sanitizeSearchQuery = (query) => {
+  if (!query || typeof query !== 'string') return '';
+  return query
+    .trim()
+    .replace(/<[^>]*>/g, '') // Remove HTML tags
+    .slice(0, MAX_SEARCH_LENGTH);
+};
+
+/**
+ * Filter officers by search query and minimum appearances
+ * @param {Array} officers - List of officers to filter
+ * @param {string} query - Sanitized, lowercase search query
+ * @param {number} minAppearances - Minimum number of appearances required
+ * @returns {Array} Filtered officers
+ */
+const filterOfficers = (officers, query, minAppearances = 0) => {
+  return officers.filter(officer => {
+    // Text search filter
+    if (query) {
+      const matchesSearch = (
+        (officer.badgeNumber && officer.badgeNumber.toLowerCase().includes(query)) ||
+        (officer.notes && officer.notes.toLowerCase().includes(query)) ||
+        (officer.role && officer.role.toLowerCase().includes(query)) ||
+        (officer.force && officer.force.toLowerCase().includes(query))
+      );
+      if (!matchesSearch) return false;
+    }
+
+    // Min appearances filter
+    if (minAppearances > 0 && officer.sources.length < minAppearances) {
+      return false;
+    }
+
+    return true;
+  });
+};
 
 const HomePage = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedOfficer, setSelectedOfficer] = useState(null);
   const [officers, setOfficers] = useState([]);
-  const [viewMode, setViewMode] = useState('grid'); // 'grid' or 'map'
+  const [viewMode, setViewMode] = useState('grid'); // 'grid', 'map', or 'infinite'
   const [currentPage, setCurrentPage] = useState(1);
   const [totalOfficers, setTotalOfficers] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
@@ -29,7 +73,37 @@ const HomePage = () => {
   const [minAppearances, setMinAppearances] = useState(0);
   const [availableForces, setAvailableForces] = useState([]);
 
+  // Memoized sanitized search query for filtering
+  const sanitizedQuery = useMemo(() => sanitizeSearchQuery(searchQuery).toLowerCase(), [searchQuery]);
+
+  // Handler for search input that sanitizes on change
+  const handleSearchChange = useCallback((e) => {
+    setSearchQuery(sanitizeSearchQuery(e.target.value));
+  }, []);
+
+  // Infinite scroll hook
+  const infiniteFilters = { force: forceFilter, dateFrom, dateTo };
+  const {
+    officers: infiniteOfficers,
+    isLoading: infiniteLoading,
+    loadingMore,
+    hasMore,
+    totalCount: infiniteTotalCount,
+    loadMore
+  } = useInfiniteOfficers(API_BASE, viewMode === 'infinite' ? infiniteFilters : {});
+
+  // AbortController ref for officers fetch to prevent race conditions
+  const officersAbortRef = useRef(null);
+
   useEffect(() => {
+    // Abort any in-flight request to prevent race conditions
+    if (officersAbortRef.current) {
+      officersAbortRef.current.abort();
+    }
+
+    const abortController = new AbortController();
+    officersAbortRef.current = abortController;
+
     const fetchOfficers = async () => {
       setIsLoading(true);
       try {
@@ -44,23 +118,21 @@ const HomePage = () => {
         if (dateFrom) params.append('date_from', dateFrom);
         if (dateTo) params.append('date_to', dateTo);
 
-        const response = await fetch(`${API_BASE}/officers?${params}`);
+        const response = await fetch(`${API_BASE}/officers?${params}`, {
+          signal: abortController.signal
+        });
         const data = await response.json();
+
+        // Only update state if request wasn't aborted
+        if (abortController.signal.aborted) return;
 
         const mappedOfficers = data.map(off => {
           const mainAppearance = off.appearances?.[0];
           const media = mainAppearance?.media;
           const cropPath = mainAppearance?.image_crop_path;
 
-          // Format photo URL
-          // Backend stores: ../data/frames/2/frame_0000.jpg using relative paths from backend dir
-          // API serves /data -> mapped to ../data
-          // So we need to strip ../data/ and append to API_BASE/data/
-          let photoUrl = "https://via.placeholder.com/400?text=No+Image";
-          if (cropPath) {
-            const relativePath = cropPath.replace('../data/', '').replace(/^\/+/, '');
-            photoUrl = `${API_BASE}/data/${relativePath}`;
-          }
+          // Format photo URL using secure path sanitization
+          const photoUrl = getMediaUrl(cropPath) || "https://via.placeholder.com/400?text=No+Image";
 
           return {
             id: off.id,
@@ -77,7 +149,7 @@ const HomePage = () => {
             sources: off.appearances.map(app => ({
               type: app.media?.type || 'photo',
               description: app.action || 'Evidence',
-              url: app.media?.url ? `${API_BASE}/data/${app.media.url.replace('../data/', '').replace(/^\/+/, '')}` : '#'
+              url: getMediaUrl(app.media?.url) || '#'
             }))
           };
         });
@@ -92,28 +164,82 @@ const HomePage = () => {
           });
         }
       } catch (error) {
-        console.error("Failed to fetch officers:", error);
+        // Ignore abort errors, log others
+        if (error.name !== 'AbortError') {
+          console.error("Failed to fetch officers:", error);
+        }
       } finally {
-        setIsLoading(false);
+        if (!abortController.signal.aborted) {
+          setIsLoading(false);
+        }
       }
     };
 
     fetchOfficers();
-  }, [currentPage, forceFilter, dateFrom, dateTo]);
 
-  // Fetch total count using dedicated count endpoint
-  useEffect(() => {
-    const fetchTotalCount = async () => {
-      try {
-        const response = await fetch(`${API_BASE}/officers/count`);
-        const data = await response.json();
-        setTotalOfficers(data.count || 0);
-      } catch (error) {
-        console.error("Failed to fetch total count:", error);
+    return () => {
+      // Use the ref to abort, not the captured abortController
+      // This prevents aborting the wrong request if a new render has already started
+      if (officersAbortRef.current) {
+        officersAbortRef.current.abort();
       }
     };
-    fetchTotalCount();
-  }, []);
+  }, [currentPage, forceFilter, dateFrom, dateTo]);
+
+  // Debounce timer ref for count fetch
+  const countDebounceRef = useRef(null);
+  // AbortController ref to cancel stale requests
+  const countAbortRef = useRef(null);
+
+  // Fetch total count using dedicated count endpoint (debounced with race condition handling)
+  useEffect(() => {
+    // Clear previous debounce timer
+    if (countDebounceRef.current) {
+      clearTimeout(countDebounceRef.current);
+    }
+    // Abort any in-flight request to prevent race conditions
+    if (countAbortRef.current) {
+      countAbortRef.current.abort();
+    }
+
+    // Debounce the count fetch to reduce API calls during rapid filter changes
+    countDebounceRef.current = setTimeout(async () => {
+      // Create new AbortController for this request
+      const abortController = new AbortController();
+      countAbortRef.current = abortController;
+
+      try {
+        // Build query params to match officers fetch filters
+        const params = new URLSearchParams();
+        if (forceFilter) params.append('force', forceFilter);
+        if (dateFrom) params.append('date_from', dateFrom);
+        if (dateTo) params.append('date_to', dateTo);
+
+        const queryString = params.toString();
+        const url = `${API_BASE}/officers/count${queryString ? '?' + queryString : ''}`;
+        const response = await fetch(url, { signal: abortController.signal });
+        const data = await response.json();
+        // Only update state if this request wasn't aborted
+        if (!abortController.signal.aborted) {
+          setTotalOfficers(data.count || 0);
+        }
+      } catch (error) {
+        // Ignore abort errors, log others
+        if (error.name !== 'AbortError') {
+          console.error("Failed to fetch total count:", error);
+        }
+      }
+    }, COUNT_DEBOUNCE_MS);
+
+    return () => {
+      if (countDebounceRef.current) {
+        clearTimeout(countDebounceRef.current);
+      }
+      if (countAbortRef.current) {
+        countAbortRef.current.abort();
+      }
+    };
+  }, [forceFilter, dateFrom, dateTo]);
 
   const totalPages = Math.ceil(totalOfficers / ITEMS_PER_PAGE);
 
@@ -131,6 +257,22 @@ const HomePage = () => {
   const handleCloseProfile = () => {
     setSelectedOfficer(null);
   };
+
+  // Memoize filtered officers to prevent expensive filtering on every render
+  const filteredOfficersForMap = useMemo(
+    () => filterOfficers(officers, sanitizedQuery),
+    [officers, sanitizedQuery]
+  );
+
+  const filteredInfiniteOfficers = useMemo(
+    () => filterOfficers(infiniteOfficers, sanitizedQuery, minAppearances),
+    [infiniteOfficers, sanitizedQuery, minAppearances]
+  );
+
+  const filteredOfficersForGrid = useMemo(
+    () => filterOfficers(officers, sanitizedQuery, minAppearances),
+    [officers, sanitizedQuery, minAppearances]
+  );
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -231,7 +373,8 @@ const HomePage = () => {
                   placeholder="Search by badge number, notes, or role..."
                   className="w-full p-2 border border-gray-300 rounded-md focus:ring-green-500 focus:border-green-500"
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onChange={handleSearchChange}
+                  maxLength={MAX_SEARCH_LENGTH}
                 />
               </div>
 
@@ -262,16 +405,26 @@ const HomePage = () => {
                   <button
                     onClick={() => setViewMode('grid')}
                     className={`p-2 rounded flex items-center gap-2 text-sm font-medium ${viewMode === 'grid' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-900'}`}
+                    title="Paginated Grid"
                   >
                     <Grid className="h-4 w-4" />
-                    Grid
+                    <span className="hidden sm:inline">Grid</span>
+                  </button>
+                  <button
+                    onClick={() => setViewMode('infinite')}
+                    className={`p-2 rounded flex items-center gap-2 text-sm font-medium ${viewMode === 'infinite' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-900'}`}
+                    title="Infinite Scroll"
+                  >
+                    <LayoutList className="h-4 w-4" />
+                    <span className="hidden sm:inline">Scroll</span>
                   </button>
                   <button
                     onClick={() => setViewMode('map')}
                     className={`p-2 rounded flex items-center gap-2 text-sm font-medium ${viewMode === 'map' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-900'}`}
+                    title="Map View"
                   >
                     <Map className="h-4 w-4" />
-                    Map
+                    <span className="hidden sm:inline">Map</span>
                   </button>
                 </div>
               </div>
@@ -362,54 +515,34 @@ const HomePage = () => {
         {viewMode === 'map' ? (
           <div className="mb-16">
             <MapView
-              officers={officers.filter(o => {
-                if (!searchQuery) return true;
-                const query = searchQuery.toLowerCase();
-                return (
-                  (o.badgeNumber && o.badgeNumber.toLowerCase().includes(query)) ||
-                  (o.notes && o.notes.toLowerCase().includes(query)) ||
-                  (o.role && o.role.toLowerCase().includes(query))
-                );
-              })}
+              officers={filteredOfficersForMap}
               onOfficerClick={handleOfficerClick}
             />
           </div>
+        ) : viewMode === 'infinite' ? (
+          /* Infinite Scroll View with Intersection Observer */
+          <LazyOfficerGrid
+            officers={filteredInfiniteOfficers}
+            onOfficerClick={handleOfficerClick}
+            isLoading={infiniteLoading}
+            hasMore={hasMore && !sanitizedQuery}
+            onLoadMore={loadMore}
+            loadingMore={loadingMore}
+          />
         ) : (
+          /* Paginated Grid View */
           <>
           {isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600"></div>
-            </div>
+            <OfficerGridSkeleton count={8} />
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {officers
-                .filter(officer => {
-                  // Text search filter
-                  if (searchQuery) {
-                    const query = searchQuery.toLowerCase();
-                    const matchesSearch = (
-                      (officer.badgeNumber && officer.badgeNumber.toLowerCase().includes(query)) ||
-                      (officer.notes && officer.notes.toLowerCase().includes(query)) ||
-                      (officer.role && officer.role.toLowerCase().includes(query)) ||
-                      (officer.force && officer.force.toLowerCase().includes(query))
-                    );
-                    if (!matchesSearch) return false;
-                  }
-
-                  // Min appearances filter (client-side)
-                  if (minAppearances > 0 && officer.sources.length < minAppearances) {
-                    return false;
-                  }
-
-                  return true;
-                })
-                .map((officer) => (
-                  <OfficerCard
-                    key={officer.id}
-                    officer={officer}
-                    onClick={handleOfficerClick}
-                  />
-                ))}
+              {filteredOfficersForGrid.map((officer) => (
+                <OfficerCard
+                  key={officer.id}
+                  officer={officer}
+                  onClick={handleOfficerClick}
+                />
+              ))}
             </div>
           )}
 
@@ -458,21 +591,21 @@ const HomePage = () => {
         <div className="mt-16 grid grid-cols-1 md:grid-cols-3 gap-8 text-center">
           <Card className="p-6 border-2 border-green-200">
             <div className="text-3xl font-bold text-green-700 mb-2">
-              {totalOfficers || officers.length}
+              {viewMode === 'infinite' ? infiniteTotalCount : (totalOfficers || officers.length)}
             </div>
             <div className="text-gray-600">State Agents Documented</div>
             <div className="text-xs text-gray-500 mt-1">Suppressing Palestine solidarity</div>
           </Card>
           <Card className="p-6 border-2 border-red-200">
             <div className="text-3xl font-bold text-red-700 mb-2">
-              {officers.reduce((total, officer) => total + officer.sources.length, 0)}
+              {(viewMode === 'infinite' ? infiniteOfficers : officers).reduce((total, officer) => total + officer.sources.length, 0)}
             </div>
             <div className="text-gray-600">Evidence Sources</div>
             <div className="text-xs text-gray-500 mt-1">Proof of authoritarian tactics</div>
           </Card>
           <Card className="p-6 border-2 border-gray-200">
             <div className="text-3xl font-bold text-gray-700 mb-2">
-              {new Set(officers.map(officer => officer.protestDate)).size}
+              {new Set((viewMode === 'infinite' ? infiniteOfficers : officers).map(officer => officer.protestDate)).size}
             </div>
             <div className="text-gray-600">Suppressed Demonstrations</div>
             <div className="text-xs text-gray-500 mt-1">Democratic rights violated</div>

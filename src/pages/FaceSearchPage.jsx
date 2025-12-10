@@ -7,11 +7,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import PasswordGate from '@/components/PasswordGate';
-
-let API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
-if (!API_BASE.startsWith("http")) {
-  API_BASE = `https://${API_BASE}`;
-}
+import { API_BASE, getMediaUrl } from '../utils/api';
 
 const FaceSearchPage = () => {
   const [selectedFile, setSelectedFile] = useState(null);
@@ -200,9 +196,7 @@ const FaceSearchPage = () => {
 
                     <div className="space-y-3 max-h-96 overflow-y-auto">
                       {results.matches.map((match) => {
-                        const cropUrl = match.crop_path
-                          ? `${API_BASE}/data/${match.crop_path.replace('../data/', '').replace(/^\/+/, '')}`
-                          : null;
+                        const cropUrl = getMediaUrl(match.crop_path);
 
                         return (
                           <div

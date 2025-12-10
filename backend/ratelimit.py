@@ -32,6 +32,14 @@ RATE_LIMITS = {
     # General API endpoints
     "default": "100/minute",
 
+    # Authentication endpoints - strict limits to prevent brute force
+    "auth_login": "5/minute",           # Login attempts - very strict
+    "auth_login_hourly": "20/hour",     # Additional hourly limit
+    "auth_register": "3/minute",        # Registration - prevent spam
+    "auth_register_hourly": "10/hour",  # Hourly registration limit
+    "auth_verify": "10/minute",         # Email verification
+    "auth_password_reset": "3/minute",  # Password reset requests
+
     # Expensive AI processing endpoints - strict limits
     "ingest": "5/minute",           # URL ingestion (triggers video download + AI)
     "ingest_hourly": "20/hour",     # Hourly cap for sustained abuse
@@ -52,11 +60,6 @@ RATE_LIMITS = {
 
     # Static data
     "protests": "60/minute",
-
-    # Authentication - protect against brute force
-    "auth_login": "10/minute",
-    "auth_login_hourly": "50/hour",
-    "auth_register": "5/hour",
 }
 
 

@@ -9,11 +9,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import PasswordGate from '@/components/PasswordGate';
-
-let API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
-if (!API_BASE.startsWith("http")) {
-  API_BASE = `https://${API_BASE}`;
-}
+import { API_BASE, getMediaUrl, fetchWithErrorHandling } from '../utils/api';
 
 const ITEMS_PER_PAGE = 20;
 
@@ -146,11 +142,8 @@ const AdminPage = () => {
     }
   };
 
-  const getCropUrl = (cropPath) => {
-    if (!cropPath) return null;
-    const cleanPath = cropPath.split('data/')[1] || cropPath.replace('../data/', '').replace(/^\/+/, '');
-    return `${API_BASE}/data/${cleanPath}`;
-  };
+  // Use centralized utility for secure path handling
+  const getCropUrl = getMediaUrl;
 
   const getConfidenceColor = (confidence) => {
     if (confidence === null || confidence === undefined) return 'text-gray-500';

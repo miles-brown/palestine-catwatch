@@ -1,7 +1,12 @@
 from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, Boolean, Float
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime, timezone
 from database import Base
+
+
+def utc_now():
+    """Return current UTC time as timezone-aware datetime."""
+    return datetime.now(timezone.utc)
 
 
 class User(Base):
@@ -14,7 +19,7 @@ class User(Base):
     hashed_password = Column(String(255), nullable=False)
     role = Column(String(20), default="viewer", nullable=False)  # viewer, contributor, admin
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
     last_login = Column(DateTime, nullable=True)
 
     # Extended profile fields
@@ -30,8 +35,18 @@ class User(Base):
     email_verification_token = Column(String(255), nullable=True)  # Token for email verification
     email_verification_sent_at = Column(DateTime, nullable=True)  # When verification email was sent
 
+    # Account lockout fields (for brute force protection)
+    failed_login_attempts = Column(Integer, default=0)  # Count of consecutive failed logins
+    locked_until = Column(DateTime, nullable=True)  # Account locked until this time
+    last_failed_login = Column(DateTime, nullable=True)  # Time of last failed login
+
+    # Token versioning for revocation
+    token_version = Column(Integer, default=0)  # Increment to invalidate all existing tokens
+
     # Track user actions for audit
-    uploads = relationship("Media", back_populates="uploaded_by_user", foreign_keys="Media.uploaded_by")
+    # Note: foreign_keys must reference the column on the other side of the relationship
+    uploads = relationship("Media", back_populates="uploaded_by_user", foreign_keys="[Media.uploaded_by]")
+
 
 class Protest(Base):
     __tablename__ = "protests"
@@ -53,7 +68,7 @@ class Media(Base):
     url = Column(String, index=True)  # URL or local path
     type = Column(String)  # 'image' or 'video'
     protest_id = Column(Integer, ForeignKey("protests.id"))
-    timestamp = Column(DateTime, default=datetime.utcnow)
+    timestamp = Column(DateTime, default=utc_now)
     processed = Column(Boolean, default=False)
     uploaded_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # Track who uploaded
 
@@ -169,7 +184,7 @@ class UniformAnalysis(Base):
 
     # Analysis metadata
     raw_analysis = Column(Text, nullable=True)  # Full Claude JSON response
-    analyzed_at = Column(DateTime, default=datetime.utcnow)
+    analyzed_at = Column(DateTime, default=utc_now)
     api_cost_tokens = Column(Integer, nullable=True)  # Track API usage
     image_hash = Column(String, nullable=True, index=True)  # SHA256 for caching
 

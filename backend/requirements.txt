@@ -5,8 +5,13 @@ psycopg2-binary
 reportlab
 yt-dlp
 sqlalchemy
+alembic
 python-dotenv
 requests
+# Authentication
+python-jose[cryptography]
+passlib[bcrypt]
+pydantic[email]
 opencv-python-headless
 # opencv is sufficient for dnn face detection
 easyocr
