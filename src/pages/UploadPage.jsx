@@ -4,8 +4,8 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import IngestQuestionnaire from '@/components/IngestQuestionnaire';
 import LiveAnalysis from '@/components/LiveAnalysis';
-import PasswordGate from '@/components/PasswordGate';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/context/AuthContext';
 
 let API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 if (!API_BASE.startsWith("http")) {
@@ -19,6 +19,16 @@ const formatErrorMessage = (error) => {
 };
 
 const UploadPage = () => {
+    const navigate = useNavigate();
+    const { isAuthenticated, loading } = useAuth();
+
+    // Redirect to login if not authenticated
+    useEffect(() => {
+        if (!loading && !isAuthenticated) {
+            navigate('/login', { state: { from: '/upload' } });
+        }
+    }, [isAuthenticated, loading, navigate]);
+
     // Shared State
     const [activeTab, setActiveTab] = useState('upload'); // 'upload' | 'link' | 'bulk'
     const [protests, setProtests] = useState([]);
@@ -193,7 +203,19 @@ const UploadPage = () => {
         }
     };
 
-    const navigate = useNavigate();
+    // Show loading while checking auth
+    if (loading) {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-gray-50">
+                <div className="animate-pulse text-gray-500">Checking access...</div>
+            </div>
+        );
+    }
+
+    // Don't render if not authenticated (redirect will happen via useEffect)
+    if (!isAuthenticated) {
+        return null;
+    }
 
     if (liveTaskId) {
         return (
@@ -216,7 +238,6 @@ const UploadPage = () => {
     }
 
     return (
-        <PasswordGate>
         <div className="max-w-3xl mx-auto px-4 py-12">
             <div className="text-center mb-8">
                 <h1 className="text-3xl font-bold text-gray-900 mb-2">Submit Evidence</h1>
@@ -430,7 +451,6 @@ const UploadPage = () => {
                 )}
             </Card>
         </div>
-        </PasswordGate>
     );
 };
 

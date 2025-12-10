@@ -8,13 +8,24 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import PasswordGate from '@/components/PasswordGate';
 import BatchAnalysis from '@/components/BatchAnalysis';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/context/AuthContext';
 import { API_BASE, getMediaUrl, fetchWithErrorHandling } from '../utils/api';
 
 const ITEMS_PER_PAGE = 20;
 
 const AdminPage = () => {
+  const navigate = useNavigate();
+  const { isAuthenticated, isAdmin, loading: authLoading } = useAuth();
+
+  // Redirect non-admin users
+  useEffect(() => {
+    if (!authLoading && (!isAuthenticated || !isAdmin)) {
+      navigate('/login', { state: { from: '/admin' } });
+    }
+  }, [isAuthenticated, isAdmin, authLoading, navigate]);
+
   const [activeTab, setActiveTab] = useState('officers'); // 'officers', 'verification', or 'analysis'
   const [officers, setOfficers] = useState([]);
   const [totalOfficers, setTotalOfficers] = useState(0);
@@ -289,8 +300,21 @@ const AdminPage = () => {
 
   const verificationPages = Math.ceil(totalUnverified / ITEMS_PER_PAGE);
 
+  // Show loading while checking auth
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="animate-pulse text-gray-500">Checking access...</div>
+      </div>
+    );
+  }
+
+  // Don't render if not authenticated/admin (redirect will happen via useEffect)
+  if (!isAuthenticated || !isAdmin) {
+    return null;
+  }
+
   return (
-    <PasswordGate>
       <div className="min-h-screen bg-gray-50">
         {/* Header */}
         <div className="bg-white border-b-2 border-green-700">
@@ -859,7 +883,6 @@ const AdminPage = () => {
           )}
         </div>
       </div>
-    </PasswordGate>
   );
 };
 

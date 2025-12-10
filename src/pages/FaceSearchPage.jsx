@@ -6,10 +6,22 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import PasswordGate from '@/components/PasswordGate';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/context/AuthContext';
+import { useEffect } from 'react';
 import { API_BASE, getMediaUrl } from '../utils/api';
 
 const FaceSearchPage = () => {
+  const navigate = useNavigate();
+  const { isAuthenticated, loading: authLoading } = useAuth();
+
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (!authLoading && !isAuthenticated) {
+      navigate('/login', { state: { from: '/face-search' } });
+    }
+  }, [isAuthenticated, authLoading, navigate]);
+
   const [selectedFile, setSelectedFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -75,8 +87,21 @@ const FaceSearchPage = () => {
     setError(null);
   };
 
+  // Show loading while checking auth
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="animate-pulse text-gray-500">Checking access...</div>
+      </div>
+    );
+  }
+
+  // Don't render if not authenticated (redirect will happen via useEffect)
+  if (!isAuthenticated) {
+    return null;
+  }
+
   return (
-    <PasswordGate>
       <div className="min-h-screen bg-gray-50">
         {/* Header */}
         <div className="bg-white border-b-2 border-green-700">
@@ -277,7 +302,6 @@ const FaceSearchPage = () => {
           </Card>
         </div>
       </div>
-    </PasswordGate>
   );
 };
 
