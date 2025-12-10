@@ -43,15 +43,15 @@ const OfficerCard = ({ officer, onClick }) => {
           />
         )}
         
-        {/* Palestine flag stripe overlay */}
-        <div className="absolute top-0 left-0 right-0 palestine-flag-stripe"></div>
+        {/* UK flag stripe overlay */}
+        <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-900 via-red-600 to-blue-900"></div>
         
         {/* Badge number overlay */}
         <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent p-4">
           <div className="text-white">
             <div className="text-xs font-medium opacity-90 text-red-300">STATE AGENT</div>
             <div className="text-2xl font-bold">{officer.badgeNumber}</div>
-            <div className="text-xs text-green-300 mt-1">🇵🇸 DOCUMENTED</div>
+            <div className="text-xs text-blue-300 mt-1">🇬🇧 DOCUMENTED</div>
           </div>
         </div>
         
@@ -67,8 +67,8 @@ const OfficerCard = ({ officer, onClick }) => {
           <div className="text-xs text-red-700 font-bold uppercase tracking-wide bg-red-100 px-2 py-1 rounded">
             {officer.role}
           </div>
-          <div className="text-xs text-green-700 font-bold">
-            🇵🇸 SOLIDARITY
+          <div className="text-xs text-blue-700 font-bold">
+            {officer.force || 'UK POLICE'}
           </div>
         </div>
       </div>
