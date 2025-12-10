@@ -5,11 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Printer, ArrowLeft, Shield, AlertTriangle, Play, Clock, User, Video, Image as ImageIcon, ChevronLeft, ChevronRight, Download } from 'lucide-react';
 import VideoPlayer from '@/components/VideoPlayer';
 import UniformAnalysisCard from '@/components/UniformAnalysisCard';
-
-let API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
-if (!API_BASE.startsWith("http")) {
-    API_BASE = `https://${API_BASE}`;
-}
+import { API_BASE, getMediaUrl, sanitizeMediaPath } from '../utils/api';
 
 export default function ReportPage() {
     const { mediaId } = useParams();
@@ -52,20 +48,20 @@ export default function ReportPage() {
         // VideoPlayer will handle seeking via its timeline
     };
 
-    const getMediaUrl = (url) => {
+    // Use imported getMediaUrl for secure path handling
+    // Local alias for internal URL handling with http check
+    const getLocalMediaUrl = (url) => {
         if (!url) return '';
         if (url.startsWith('http://') || url.startsWith('https://')) {
             return url;
         }
-        const cleanPath = url.replace('../data/', '').replace(/^\/+/, '');
+        const cleanPath = sanitizeMediaPath(url);
+        if (!cleanPath) return '';
         return `${API_BASE}/data/${cleanPath}`;
     };
 
-    const getCropUrl = (cropPath) => {
-        if (!cropPath) return null;
-        const cleanPath = cropPath.split('data/')[1] || cropPath.replace('../data/', '').replace(/^\/+/, '');
-        return `${API_BASE}/data/${cleanPath}`;
-    };
+    // Use centralized utility for crop URLs
+    const getCropUrl = getMediaUrl;
 
     if (loading) {
         return (
