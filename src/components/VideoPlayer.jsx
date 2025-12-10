@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect, forwardRef, useImperativeHandle } from 'react';
 import ReactPlayer from 'react-player';
 import { Play, Pause, Volume2, VolumeX, Maximize, SkipBack, SkipForward, Clock, User } from 'lucide-react';
+import { sanitizeMediaPath } from '../utils/api';
 
 /**
  * Parse timestamp string to seconds.
@@ -63,8 +64,9 @@ const VideoPlayer = forwardRef(function VideoPlayer({ url, timeline = [], onMark
     if (url.startsWith('http://') || url.startsWith('https://')) {
       return url;
     }
-    // Local file - construct URL from API
-    const cleanPath = url.replace('../data/', '').replace(/^\/+/, '');
+    // Local file - use secure path sanitization
+    const cleanPath = sanitizeMediaPath(url);
+    if (!cleanPath) return '';
     return `${apiBase}/data/${cleanPath}`;
   };
 

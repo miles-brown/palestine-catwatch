@@ -6,11 +6,8 @@ import LazyOfficerGrid, { useInfiniteOfficers } from './LazyOfficerGrid';
 import { Heart, Camera, Megaphone, AlertTriangle, Users, Eye, Map, Grid, Filter, X, ChevronDown, LayoutList } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { OfficerGridSkeleton } from '@/components/ui/skeleton';
-
-let API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
-if (!API_BASE.startsWith("http")) {
-  API_BASE = `https://${API_BASE}`;
-}
+import { API_BASE } from '../utils/api';
+import { API_BASE, getMediaUrl, fetchWithErrorHandling } from '../utils/api';
 
 const ITEMS_PER_PAGE = 20;
 
@@ -65,15 +62,8 @@ const HomePage = () => {
           const media = mainAppearance?.media;
           const cropPath = mainAppearance?.image_crop_path;
 
-          // Format photo URL
-          // Backend stores: ../data/frames/2/frame_0000.jpg using relative paths from backend dir
-          // API serves /data -> mapped to ../data
-          // So we need to strip ../data/ and append to API_BASE/data/
-          let photoUrl = "https://via.placeholder.com/400?text=No+Image";
-          if (cropPath) {
-            const relativePath = cropPath.replace('../data/', '').replace(/^\/+/, '');
-            photoUrl = `${API_BASE}/data/${relativePath}`;
-          }
+          // Format photo URL using secure path sanitization
+          const photoUrl = getMediaUrl(cropPath) || "https://via.placeholder.com/400?text=No+Image";
 
           return {
             id: off.id,
@@ -90,7 +80,7 @@ const HomePage = () => {
             sources: off.appearances.map(app => ({
               type: app.media?.type || 'photo',
               description: app.action || 'Evidence',
-              url: app.media?.url ? `${API_BASE}/data/${app.media.url.replace('../data/', '').replace(/^\/+/, '')}` : '#'
+              url: getMediaUrl(app.media?.url) || '#'
             }))
           };
         });

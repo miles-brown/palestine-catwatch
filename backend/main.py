@@ -1,13 +1,15 @@
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Request
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Request, Response
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import models, schemas
 from database import get_db, engine
-from datetime import datetime
+from datetime import datetime, timezone
 import asyncio
+import os
 
 # Rate limiting
 from ratelimit import limiter, setup_rate_limiting, get_rate_limit
@@ -27,6 +29,8 @@ try:
             "ALTER TABLE officer_appearances ADD COLUMN IF NOT EXISTS confidence FLOAT",
             "ALTER TABLE officer_appearances ADD COLUMN IF NOT EXISTS confidence_factors TEXT",
             "ALTER TABLE officer_appearances ADD COLUMN IF NOT EXISTS verified BOOLEAN DEFAULT FALSE",
+            # Token revocation support
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER DEFAULT 0",
         ]
         for migration in migrations:
             try:
@@ -114,8 +118,17 @@ def validate_single_url(v):
 
 app = FastAPI(title="Palestine Catwatch API")
 
+# HTTPS enforcement in production
+_environment = os.getenv("ENVIRONMENT", "development").lower()
+if _environment in ("production", "prod"):
+    app.add_middleware(HTTPSRedirectMiddleware)
+
 # Setup rate limiting
 setup_rate_limiting(app)
+
+# Setup standardized error handling
+from errors import setup_error_handlers, APIError, ErrorCode
+setup_error_handlers(app)
 
 # Configure CORS
 app.add_middleware(
@@ -1677,3 +1690,454 @@ def get_force_statistics(
         ]
     }
 
+
+# =============================================================================
+# CSRF PROTECTION
+# =============================================================================
+
+from csrf import generate_csrf_token, set_csrf_cookie, require_csrf, CSRF_ENABLED
+
+
+@app.get("/csrf/token")
+@limiter.limit("30/minute")
+def get_csrf_token(request: Request, response: Response):
+    """
+    Get a CSRF token for protected form submissions.
+
+    The token is returned in both:
+    1. Response body (for SPA to read)
+    2. Cookie (for double-submit validation)
+
+    Frontend should include this token in X-CSRF-Token header
+    when making protected requests (registration, etc.).
+    """
+    token = generate_csrf_token()
+    set_csrf_cookie(response, token)
+
+    return {
+        "csrf_token": token,
+        "expires_in": 24 * 3600,  # 24 hours in seconds
+        "header_name": "X-CSRF-Token"
+    }
+
+
+# =============================================================================
+# AUTHENTICATION ENDPOINTS
+# =============================================================================
+
+from auth import (
+    UserCreate, UserLogin, UserResponse, Token,
+    create_user, authenticate_user, create_access_token, create_refresh_token,
+    decode_refresh_token, get_user_by_username, get_user_by_email, verify_user_email,
+    AuthenticationError, ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS,
+    log_security_event, revoke_user_tokens, get_current_user, require_admin
+)
+from datetime import timedelta
+
+
+# Environment variable to control email verification requirement
+# Set to "false" in development to skip email verification
+REQUIRE_EMAIL_VERIFICATION = os.getenv("REQUIRE_EMAIL_VERIFICATION", "true").lower() == "true"
+
+
+@app.post("/auth/register")
+@limiter.limit(get_rate_limit("auth_register"))
+@limiter.limit(get_rate_limit("auth_register_hourly"))
+def register_user(
+    request: Request,
+    user_data: UserCreate,
+    db: Session = Depends(get_db),
+    _csrf = Depends(require_csrf)  # CSRF protection for registration
+):
+    """
+    Register a new user account.
+
+    Rate limited to prevent registration spam and abuse.
+
+    Email verification behavior controlled by REQUIRE_EMAIL_VERIFICATION env var:
+    - true (default): User must verify email before logging in
+    - false: User is immediately active (for development)
+
+    In development mode, returns verification_token for testing.
+    """
+    # Check if username already exists
+    existing_user = get_user_by_username(db, user_data.username)
+    if existing_user:
+        raise APIError(
+            code=ErrorCode.ALREADY_EXISTS,
+            message="Username already registered",
+            status_code=400
+        )
+
+    # Check if email already exists
+    existing_email = get_user_by_email(db, user_data.email)
+    if existing_email:
+        raise APIError(
+            code=ErrorCode.ALREADY_EXISTS,
+            message="Email already registered",
+            status_code=400
+        )
+
+    # Create user - verification requirement based on environment
+    user = create_user(db, user_data, require_verification=REQUIRE_EMAIL_VERIFICATION)
+
+    # Build response
+    response = {
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "role": user.role,
+        "is_active": user.is_active,
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+        "full_name": user.full_name,
+        "city": user.city,
+        "country": user.country,
+        "email_verified": user.email_verified,
+        "verification_required": REQUIRE_EMAIL_VERIFICATION,
+        "message": "Registration successful!"
+    }
+
+    # Only return verification token in development mode (security: prevents token exposure in logs)
+    is_development = os.getenv("ENVIRONMENT", "development").lower() in ("development", "dev")
+    if REQUIRE_EMAIL_VERIFICATION:
+        response["message"] = "Registration successful! Please check your email to verify your account."
+        # TODO: Send actual verification email here
+        if is_development and user.email_verification_token:
+            # Only expose token in dev for testing - never in production
+            response["verification_token"] = user.email_verification_token
+    elif not REQUIRE_EMAIL_VERIFICATION:
+        response["message"] = "Registration successful! You can now log in."
+
+    return response
+
+
+@app.post("/auth/login", response_model=Token)
+@limiter.limit(get_rate_limit("auth_login"))
+@limiter.limit(get_rate_limit("auth_login_hourly"))
+def login(
+    request: Request,
+    login_data: UserLogin,
+    db: Session = Depends(get_db)
+):
+    """
+    Authenticate user and return JWT access and refresh tokens.
+
+    Rate limited to prevent brute force attacks:
+    - 5 attempts per minute
+    - 20 attempts per hour
+
+    Returns specific error codes for different failure reasons.
+    Account is locked after 5 failed attempts for 15 minutes.
+    """
+    # Get client IP for security logging
+    client_ip = request.client.host if request.client else None
+
+    try:
+        user = authenticate_user(
+            db,
+            login_data.username,
+            login_data.password,
+            require_verified_email=REQUIRE_EMAIL_VERIFICATION,
+            ip_address=client_ip
+        )
+    except AuthenticationError as e:
+        # Map error codes to standardized API errors
+        error_map = {
+            "invalid_credentials": (ErrorCode.INVALID_CREDENTIALS, 401),
+            "email_not_verified": (ErrorCode.EMAIL_NOT_VERIFIED, 403),
+            "account_disabled": (ErrorCode.ACCOUNT_DISABLED, 403),
+            "account_locked": (ErrorCode.ACCOUNT_LOCKED, 429),
+        }
+
+        error_info = error_map.get(e.code, (ErrorCode.UNAUTHORIZED, 401))
+        raise APIError(
+            code=error_info[0],
+            message=e.message,
+            status_code=error_info[1],
+            headers={"WWW-Authenticate": "Bearer"} if error_info[1] == 401 else None
+        )
+
+    # Update last login timestamp (use timezone-aware datetime)
+    user.last_login = datetime.now(timezone.utc)
+    db.commit()
+
+    # Token payload (include token_version for revocation support)
+    token_data = {
+        "sub": user.username,
+        "user_id": user.id,
+        "role": user.role,
+        "token_version": user.token_version or 0
+    }
+
+    # Create access token (short-lived: 30 minutes)
+    access_token = create_access_token(
+        data=token_data,
+        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    )
+
+    # Create refresh token (long-lived: 7 days)
+    refresh_token = create_refresh_token(data=token_data)
+
+    return Token(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_type="bearer",
+        expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        refresh_expires_in=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+        user={
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "role": user.role,
+            "full_name": user.full_name
+        }
+    )
+
+
+@app.get("/auth/verify/{token}")
+@limiter.limit(get_rate_limit("auth_verify"))
+def verify_email(
+    request: Request,
+    token: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Verify user email address using the verification token.
+    """
+    user = verify_user_email(db, token)
+
+    if not user:
+        raise APIError(
+            code=ErrorCode.TOKEN_INVALID,
+            message="Invalid or expired verification token",
+            status_code=400
+        )
+
+    return {
+        "success": True,
+        "message": "Email verified successfully. You can now log in.",
+        "username": user.username
+    }
+
+
+@app.get("/auth/me", response_model=UserResponse)
+@limiter.limit(get_rate_limit("default"))
+def get_current_user_info(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Get current authenticated user's information.
+    Requires valid JWT token in Authorization header.
+    """
+    from auth import get_current_user
+    from fastapi import Security
+
+    # This endpoint requires manual token validation since we can't use Depends easily here
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise APIError(
+            code=ErrorCode.UNAUTHORIZED,
+            message="Not authenticated",
+            status_code=401,
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    token = auth_header.split(" ")[1]
+    from auth import decode_token, get_user_by_username as get_user
+
+    token_data = decode_token(token)
+    if not token_data:
+        raise APIError(
+            code=ErrorCode.TOKEN_INVALID,
+            message="Invalid token",
+            status_code=401,
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    user = get_user(db, token_data.username)
+    if not user:
+        raise APIError(
+            code=ErrorCode.NOT_FOUND,
+            message="User not found",
+            status_code=401,
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    return UserResponse(
+        id=user.id,
+        username=user.username,
+        email=user.email,
+        role=user.role,
+        is_active=user.is_active,
+        created_at=user.created_at,
+        full_name=user.full_name,
+        city=user.city,
+        country=user.country,
+        email_verified=user.email_verified
+    )
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
+
+@app.post("/auth/refresh")
+@limiter.limit("30/minute")  # Generous limit for token refresh
+def refresh_access_token(
+    request: Request,
+    body: RefreshTokenRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Exchange a valid refresh token for a new access token.
+
+    This allows clients to maintain sessions without re-authenticating.
+    Access tokens expire in 30 minutes, refresh tokens in 7 days.
+    """
+    client_ip = request.client.host if request.client else None
+
+    token_data = decode_refresh_token(body.refresh_token)
+    if not token_data:
+        raise APIError(
+            code=ErrorCode.TOKEN_INVALID,
+            message="Invalid or expired refresh token",
+            status_code=401,
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    # Verify user still exists and is active
+    user = get_user_by_username(db, token_data.username)
+    if not user:
+        raise APIError(
+            code=ErrorCode.NOT_FOUND,
+            message="User not found",
+            status_code=401,
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    if not user.is_active:
+        raise APIError(
+            code=ErrorCode.ACCOUNT_DISABLED,
+            message="Account is disabled",
+            status_code=403
+        )
+
+    # Validate token version for revocation support
+    user_token_version = user.token_version or 0
+    token_version = token_data.token_version or 0
+    if token_version < user_token_version:
+        # Refresh token was issued before tokens were revoked
+        raise APIError(
+            code=ErrorCode.TOKEN_REVOKED,
+            message="Token has been revoked. Please log in again.",
+            status_code=401,
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    # Log the token refresh
+    log_security_event(
+        "TOKEN_REFRESH",
+        username=user.username,
+        user_id=user.id,
+        ip_address=client_ip
+    )
+
+    # Create new access token (include current token_version)
+    new_token_data = {
+        "sub": user.username,
+        "user_id": user.id,
+        "role": user.role,
+        "token_version": user_token_version
+    }
+
+    access_token = create_access_token(
+        data=new_token_data,
+        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    )
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    }
+
+
+@app.post("/auth/revoke/{user_id}")
+@limiter.limit("10/minute")
+async def revoke_user_tokens_endpoint(
+    request: Request,
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_admin)
+):
+    """
+    Revoke all tokens for a specific user (admin only).
+
+    This invalidates all existing access and refresh tokens for the user,
+    forcing them to re-authenticate. Useful for:
+    - Security incidents
+    - Account compromises
+    - Admin forcing logout
+    """
+    from auth import get_user_by_id
+
+    target_user = get_user_by_id(db, user_id)
+    if not target_user:
+        raise APIError(
+            code=ErrorCode.NOT_FOUND,
+            message="User not found",
+            status_code=404
+        )
+
+    # Prevent revoking own tokens through this endpoint
+    if target_user.id == current_user.id:
+        raise APIError(
+            code=ErrorCode.INVALID_INPUT,
+            message="Cannot revoke your own tokens. Use /auth/logout instead.",
+            status_code=400
+        )
+
+    old_version = target_user.token_version
+    revoke_user_tokens(db, target_user)
+
+    # Audit log for security events
+    import logging
+    audit_logger = logging.getLogger("audit.security")
+    audit_logger.warning(
+        f"TOKEN_REVOCATION: admin_user_id={current_user.id} "
+        f"admin_username={current_user.username} "
+        f"target_user_id={user_id} "
+        f"target_username={target_user.username} "
+        f"old_token_version={old_version} "
+        f"new_token_version={target_user.token_version} "
+        f"client_ip={request.client.host if request.client else 'unknown'}"
+    )
+
+    return {
+        "success": True,
+        "message": f"All tokens revoked for user {target_user.username}",
+        "user_id": user_id,
+        "new_token_version": target_user.token_version,
+        "revoked_by": current_user.username
+    }
+
+
+@app.post("/auth/logout")
+@limiter.limit("10/minute")
+async def logout_user(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """
+    Logout the current user by revoking all their tokens.
+
+    This invalidates all access and refresh tokens, requiring re-authentication.
+    """
+    revoke_user_tokens(db, current_user)
+
+    return {
+        "success": True,
+        "message": "Logged out successfully. All tokens have been revoked."
+    }
