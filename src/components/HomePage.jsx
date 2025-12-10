@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import OfficerCard from './OfficerCard';
 import OfficerProfile from './OfficerProfile';
 import MapView from './MapView';
@@ -6,10 +6,23 @@ import LazyOfficerGrid, { useInfiniteOfficers } from './LazyOfficerGrid';
 import { Heart, Camera, Megaphone, AlertTriangle, Users, Eye, Map, Grid, Filter, X, ChevronDown, LayoutList } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { OfficerGridSkeleton } from '@/components/ui/skeleton';
-import { API_BASE } from '../utils/api';
 import { API_BASE, getMediaUrl, fetchWithErrorHandling } from '../utils/api';
 
 const ITEMS_PER_PAGE = 20;
+
+/**
+ * Sanitize search query to prevent XSS and ensure safe string operations
+ * - Trims whitespace
+ * - Removes HTML tags
+ * - Limits length to prevent DoS
+ */
+const sanitizeSearchQuery = (query) => {
+  if (!query || typeof query !== 'string') return '';
+  return query
+    .trim()
+    .replace(/<[^>]*>/g, '') // Remove HTML tags
+    .slice(0, 200); // Limit length
+};
 
 const HomePage = () => {
   const [searchQuery, setSearchQuery] = useState('');
@@ -27,6 +40,14 @@ const HomePage = () => {
   const [dateTo, setDateTo] = useState('');
   const [minAppearances, setMinAppearances] = useState(0);
   const [availableForces, setAvailableForces] = useState([]);
+
+  // Memoized sanitized search query for filtering
+  const sanitizedQuery = useMemo(() => sanitizeSearchQuery(searchQuery).toLowerCase(), [searchQuery]);
+
+  // Handler for search input that sanitizes on change
+  const handleSearchChange = useCallback((e) => {
+    setSearchQuery(sanitizeSearchQuery(e.target.value));
+  }, []);
 
   // Infinite scroll hook
   const infiniteFilters = { force: forceFilter, dateFrom, dateTo };
@@ -242,7 +263,8 @@ const HomePage = () => {
                   placeholder="Search by badge number, notes, or role..."
                   className="w-full p-2 border border-gray-300 rounded-md focus:ring-green-500 focus:border-green-500"
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onChange={handleSearchChange}
+                  maxLength={200}
                 />
               </div>
 
@@ -384,12 +406,11 @@ const HomePage = () => {
           <div className="mb-16">
             <MapView
               officers={officers.filter(o => {
-                if (!searchQuery) return true;
-                const query = searchQuery.toLowerCase();
+                if (!sanitizedQuery) return true;
                 return (
-                  (o.badgeNumber && o.badgeNumber.toLowerCase().includes(query)) ||
-                  (o.notes && o.notes.toLowerCase().includes(query)) ||
-                  (o.role && o.role.toLowerCase().includes(query))
+                  (o.badgeNumber && o.badgeNumber.toLowerCase().includes(sanitizedQuery)) ||
+                  (o.notes && o.notes.toLowerCase().includes(sanitizedQuery)) ||
+                  (o.role && o.role.toLowerCase().includes(sanitizedQuery))
                 );
               })}
               onOfficerClick={handleOfficerClick}
@@ -399,13 +420,12 @@ const HomePage = () => {
           /* Infinite Scroll View with Intersection Observer */
           <LazyOfficerGrid
             officers={infiniteOfficers.filter(officer => {
-              if (searchQuery) {
-                const query = searchQuery.toLowerCase();
+              if (sanitizedQuery) {
                 const matchesSearch = (
-                  (officer.badgeNumber && officer.badgeNumber.toLowerCase().includes(query)) ||
-                  (officer.notes && officer.notes.toLowerCase().includes(query)) ||
-                  (officer.role && officer.role.toLowerCase().includes(query)) ||
-                  (officer.force && officer.force.toLowerCase().includes(query))
+                  (officer.badgeNumber && officer.badgeNumber.toLowerCase().includes(sanitizedQuery)) ||
+                  (officer.notes && officer.notes.toLowerCase().includes(sanitizedQuery)) ||
+                  (officer.role && officer.role.toLowerCase().includes(sanitizedQuery)) ||
+                  (officer.force && officer.force.toLowerCase().includes(sanitizedQuery))
                 );
                 if (!matchesSearch) return false;
               }
@@ -416,7 +436,7 @@ const HomePage = () => {
             })}
             onOfficerClick={handleOfficerClick}
             isLoading={infiniteLoading}
-            hasMore={hasMore && !searchQuery}
+            hasMore={hasMore && !sanitizedQuery}
             onLoadMore={loadMore}
             loadingMore={loadingMore}
           />
@@ -429,14 +449,13 @@ const HomePage = () => {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
               {officers
                 .filter(officer => {
-                  // Text search filter
-                  if (searchQuery) {
-                    const query = searchQuery.toLowerCase();
+                  // Text search filter (using pre-sanitized query)
+                  if (sanitizedQuery) {
                     const matchesSearch = (
-                      (officer.badgeNumber && officer.badgeNumber.toLowerCase().includes(query)) ||
-                      (officer.notes && officer.notes.toLowerCase().includes(query)) ||
-                      (officer.role && officer.role.toLowerCase().includes(query)) ||
-                      (officer.force && officer.force.toLowerCase().includes(query))
+                      (officer.badgeNumber && officer.badgeNumber.toLowerCase().includes(sanitizedQuery)) ||
+                      (officer.notes && officer.notes.toLowerCase().includes(sanitizedQuery)) ||
+                      (officer.role && officer.role.toLowerCase().includes(sanitizedQuery)) ||
+                      (officer.force && officer.force.toLowerCase().includes(sanitizedQuery))
                     );
                     if (!matchesSearch) return false;
                   }

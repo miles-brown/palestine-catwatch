@@ -3,6 +3,7 @@ import { Home, Upload, LayoutDashboard, Search, Shield } from 'lucide-react';
 import Header from './components/Header';
 import HomePage from './components/HomePage';
 import ErrorBoundary from './components/ErrorBoundary';
+import { AuthProvider } from './context/AuthContext';
 import OurStory from './pages/OurStory';
 import WhatWeWant from './pages/WhatWeWant';
 import About from './pages/About';
@@ -57,6 +58,7 @@ const MobileNav = () => {
 function App() {
   return (
     <ErrorBoundary>
+    <AuthProvider>
     <Router>
       <div className="min-h-screen bg-gray-50 pb-16 md:pb-0">
         <Header />
@@ -110,6 +112,7 @@ function App() {
         <MobileNav />
       </div>
     </Router>
+    </AuthProvider>
     </ErrorBoundary>
   );
 }

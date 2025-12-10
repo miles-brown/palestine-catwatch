@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import OfficerCard from './OfficerCard';
 import { OfficerGridSkeleton } from '@/components/ui/skeleton';
 import { Loader2 } from 'lucide-react';
@@ -12,6 +12,12 @@ import { Loader2 } from 'lucide-react';
  * - Smooth loading states
  * - Memory efficient for large datasets
  */
+
+// Maximum number of items to keep in the visible set to prevent memory leaks
+const MAX_VISIBLE_ITEMS = 100;
+// Time in ms to wait before removing an item from visible set after it leaves viewport
+const VISIBILITY_CLEANUP_DELAY = 5000;
+
 export default function LazyOfficerGrid({
   officers,
   onOfficerClick,
@@ -24,6 +30,7 @@ export default function LazyOfficerGrid({
   const observerRef = useRef(null);
   const loadMoreRef = useRef(null);
   const itemRefs = useRef({});
+  const cleanupTimersRef = useRef({});
 
   // Set up intersection observer for individual cards
   useEffect(() => {
@@ -37,14 +44,43 @@ export default function LazyOfficerGrid({
       entries.forEach(entry => {
         const id = entry.target.dataset.officerId;
         if (id) {
-          setVisibleItems(prev => {
-            const next = new Set(prev);
-            if (entry.isIntersecting) {
-              next.add(id);
+          if (entry.isIntersecting) {
+            // Clear any pending cleanup timer for this item
+            if (cleanupTimersRef.current[id]) {
+              clearTimeout(cleanupTimersRef.current[id]);
+              delete cleanupTimersRef.current[id];
             }
-            // Keep items visible for smoother scrolling (don't remove immediately)
-            return next;
-          });
+
+            setVisibleItems(prev => {
+              const next = new Set(prev);
+              next.add(id);
+
+              // If we exceed the max, remove oldest items (FIFO behavior via Set iteration order)
+              if (next.size > MAX_VISIBLE_ITEMS) {
+                const iterator = next.values();
+                // Remove the oldest items until we're under the limit
+                while (next.size > MAX_VISIBLE_ITEMS) {
+                  const oldest = iterator.next().value;
+                  // Don't remove items that are currently intersecting
+                  if (oldest !== id) {
+                    next.delete(oldest);
+                  }
+                }
+              }
+
+              return next;
+            });
+          } else {
+            // Item left viewport - schedule cleanup after delay for smoother scrolling
+            cleanupTimersRef.current[id] = setTimeout(() => {
+              setVisibleItems(prev => {
+                const next = new Set(prev);
+                next.delete(id);
+                return next;
+              });
+              delete cleanupTimersRef.current[id];
+            }, VISIBILITY_CLEANUP_DELAY);
+          }
         }
       });
     }, options);
@@ -60,6 +96,9 @@ export default function LazyOfficerGrid({
       if (observerRef.current) {
         observerRef.current.disconnect();
       }
+      // Clean up all pending timers
+      Object.values(cleanupTimersRef.current).forEach(timer => clearTimeout(timer));
+      cleanupTimersRef.current = {};
     };
   }, [officers.length]);
 
@@ -188,13 +227,16 @@ export function useInfiniteOfficers(apiBase, filters = {}) {
   const [totalCount, setTotalCount] = useState(0);
   const ITEMS_PER_PAGE = 20;
 
+  // Extract filter values for stable dependencies
+  const { force, dateFrom, dateTo } = filters;
+
   // Reset when filters change
   useEffect(() => {
     setOfficers([]);
     setPage(1);
     setHasMore(true);
     setIsLoading(true);
-  }, [JSON.stringify(filters)]);
+  }, [force, dateFrom, dateTo]);
 
   // Fetch officers
   useEffect(() => {
@@ -213,9 +255,9 @@ export function useInfiniteOfficers(apiBase, filters = {}) {
           limit: ITEMS_PER_PAGE.toString()
         });
 
-        if (filters.force) params.append('force', filters.force);
-        if (filters.dateFrom) params.append('date_from', filters.dateFrom);
-        if (filters.dateTo) params.append('date_to', filters.dateTo);
+        if (force) params.append('force', force);
+        if (dateFrom) params.append('date_from', dateFrom);
+        if (dateTo) params.append('date_to', dateTo);
 
         const response = await fetch(`${apiBase}/officers?${params}`);
         const data = await response.json();
@@ -267,16 +309,16 @@ export function useInfiniteOfficers(apiBase, filters = {}) {
     };
 
     fetchOfficers();
-  }, [page, apiBase, JSON.stringify(filters)]);
+  }, [page, apiBase, force, dateFrom, dateTo]);
 
   // Fetch total count
   useEffect(() => {
     const fetchCount = async () => {
       try {
         const params = new URLSearchParams();
-        if (filters.force) params.append('force', filters.force);
-        if (filters.dateFrom) params.append('date_from', filters.dateFrom);
-        if (filters.dateTo) params.append('date_to', filters.dateTo);
+        if (force) params.append('force', force);
+        if (dateFrom) params.append('date_from', dateFrom);
+        if (dateTo) params.append('date_to', dateTo);
 
         const queryString = params.toString();
         const url = `${apiBase}/officers/count${queryString ? '?' + queryString : ''}`;
@@ -288,7 +330,7 @@ export function useInfiniteOfficers(apiBase, filters = {}) {
       }
     };
     fetchCount();
-  }, [apiBase, JSON.stringify(filters)]);
+  }, [apiBase, force, dateFrom, dateTo]);
 
   const loadMore = useCallback(() => {
     if (!loadingMore && hasMore) {

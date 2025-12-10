@@ -305,7 +305,7 @@ export default function LiveAnalysis({ taskId, onComplete }) {
             addLog('System', msg || 'Processing complete');
             setStatus('complete');
             setCurrentFrame(null);
-            setErrorMessage(null);
+            clearError();
         });
 
         return socket;
