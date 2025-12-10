@@ -29,12 +29,79 @@ MEDIA_DIR = Path(os.getenv("CLEANUP_MEDIA_DIR", "data/media"))
 CROPS_DIR = Path(os.getenv("CLEANUP_CROPS_DIR", "data/crops"))
 CACHE_DIR = Path(os.getenv("CLEANUP_CACHE_DIR", "data/cache"))
 DOWNLOADS_DIR = Path(os.getenv("CLEANUP_DOWNLOADS_DIR", "downloads"))
-TEMP_DIRS = os.getenv("CLEANUP_TEMP_DIRS", "data/temp,data/tmp,/tmp/palestine-catwatch").split(",")
+
+# Parse TEMP_DIRS safely (handle empty strings and whitespace)
+_temp_dirs_str = os.getenv("CLEANUP_TEMP_DIRS", "data/temp,data/tmp,/tmp/palestine-catwatch")
+TEMP_DIRS = [d.strip() for d in _temp_dirs_str.split(",") if d.strip()]
 
 # Cleanup thresholds (also configurable via env)
 MAX_ORPHAN_AGE_DAYS = int(os.getenv("CLEANUP_MAX_ORPHAN_AGE_DAYS", "7"))
 MAX_TEMP_AGE_HOURS = int(os.getenv("CLEANUP_MAX_TEMP_AGE_HOURS", "24"))
 MAX_CACHE_AGE_DAYS = int(os.getenv("CLEANUP_MAX_CACHE_AGE_DAYS", "30"))
+
+
+def validate_directories() -> Dict[str, Any]:
+    """
+    Validate that configured cleanup directories exist and are accessible.
+    Returns a report of directory status.
+
+    This should be called at startup to warn about misconfigured paths.
+    """
+    report = {
+        "valid": [],
+        "missing": [],
+        "errors": []
+    }
+
+    directories = [
+        ("MEDIA_DIR", MEDIA_DIR),
+        ("CROPS_DIR", CROPS_DIR),
+        ("CACHE_DIR", CACHE_DIR),
+        ("DOWNLOADS_DIR", DOWNLOADS_DIR),
+    ]
+
+    for name, path in directories:
+        try:
+            if path.exists():
+                if path.is_dir():
+                    report["valid"].append({"name": name, "path": str(path)})
+                else:
+                    report["errors"].append({
+                        "name": name,
+                        "path": str(path),
+                        "error": "Path exists but is not a directory"
+                    })
+            else:
+                report["missing"].append({"name": name, "path": str(path)})
+        except (OSError, RuntimeError) as e:
+            report["errors"].append({
+                "name": name,
+                "path": str(path),
+                "error": str(e)
+            })
+
+    # Check temp directories
+    for temp_dir in TEMP_DIRS:
+        temp_path = Path(temp_dir)
+        try:
+            if temp_path.exists() and temp_path.is_dir():
+                report["valid"].append({"name": "TEMP_DIR", "path": temp_dir})
+            elif not temp_path.exists():
+                report["missing"].append({"name": "TEMP_DIR", "path": temp_dir})
+        except (OSError, RuntimeError) as e:
+            report["errors"].append({
+                "name": "TEMP_DIR",
+                "path": temp_dir,
+                "error": str(e)
+            })
+
+    # Log warnings for missing/error directories
+    for item in report["missing"]:
+        logger.warning(f"Cleanup directory does not exist: {item['name']}={item['path']}")
+    for item in report["errors"]:
+        logger.error(f"Cleanup directory error: {item['name']}={item['path']}: {item['error']}")
+
+    return report
 
 # Resolve base directories for path traversal protection
 _BASE_DIRS = None

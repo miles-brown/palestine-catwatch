@@ -113,7 +113,8 @@ def get_file_size(file_path: str) -> Optional[int]:
     """Get file size in bytes."""
     try:
         return os.path.getsize(file_path)
-    except Exception:
+    except (OSError, FileNotFoundError) as e:
+        logger.debug(f"Could not get file size for {file_path}: {e}")
         return None
 
 
@@ -154,7 +155,13 @@ def is_perceptually_similar(hash1: str, hash2: str, threshold: int = 10) -> bool
         return False
 
     distance = compute_hamming_distance(hash1, hash2)
-    return 0 <= distance <= threshold
+
+    # compute_hamming_distance returns -1 on error (different lengths, invalid hex)
+    # Explicitly handle this case rather than relying on range check
+    if distance < 0:
+        return False
+
+    return distance <= threshold
 
 
 class DuplicateDetector:

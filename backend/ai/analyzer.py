@@ -1,12 +1,13 @@
 import cv2
 import os
 import re
+import time
 import easyocr
 import numpy as np
 import ssl
 
 # Structured logging
-from logging_config import get_logger
+from logging_config import get_logger, log_performance
 logger = get_logger("analyzer")
 
 try:
@@ -303,37 +304,75 @@ def extract_badge_number(img, face_box):
     """
     Dedicated function to extract badge/shoulder number from officer image.
     Uses multiple ROIs and preprocessing for better accuracy.
+
+    Performance metrics are logged for monitoring OCR enhancement effectiveness.
     """
+    start_time = time.time()
     all_texts = []
+    ocr_calls = 0
+    ocr_successes = 0  # OCR calls that returned text
+
+    # Track which method found the badge (for metrics)
+    found_by_method = None
 
     # Try body ROI (broad area)
     body_crop = get_body_roi(img, face_box)
     if body_crop is not None and body_crop.size > 0:
         # Standard OCR
         texts = extract_text(body_crop)
-        all_texts.extend(texts)
+        ocr_calls += 1
+        if texts:
+            ocr_successes += 1
+            all_texts.extend(texts)
 
         # Try with preprocessing
         preprocessed = preprocess_for_ocr(body_crop)
         if preprocessed is not None:
             texts_enhanced = extract_text(preprocessed)
-            all_texts.extend(texts_enhanced)
+            ocr_calls += 1
+            if texts_enhanced:
+                ocr_successes += 1
+                all_texts.extend(texts_enhanced)
 
     # Try shoulder ROIs (more precise)
     shoulder_rois = get_shoulder_rois(img, face_box)
     for location, roi in shoulder_rois:
         if roi is not None and roi.size > 100:  # Minimum size check
             texts = extract_text(roi)
-            all_texts.extend(texts)
+            ocr_calls += 1
+            if texts:
+                ocr_successes += 1
+                all_texts.extend(texts)
 
             # Try with preprocessing
             preprocessed = preprocess_for_ocr(roi)
             if preprocessed is not None:
                 texts_enhanced = extract_text(preprocessed)
-                all_texts.extend(texts_enhanced)
+                ocr_calls += 1
+                if texts_enhanced:
+                    ocr_successes += 1
+                    all_texts.extend(texts_enhanced)
 
     # Filter and return best badge number candidate
-    return filter_badge_number(all_texts)
+    result = filter_badge_number(all_texts)
+
+    # Log performance metrics
+    elapsed_ms = (time.time() - start_time) * 1000
+    log_performance(
+        logger,
+        "badge_ocr_extraction",
+        elapsed_ms,
+        success=result is not None,
+        details={
+            "ocr_calls": ocr_calls,
+            "ocr_successes": ocr_successes,
+            "texts_found": len(all_texts),
+            "badge_detected": result is not None,
+            "badge_value": result if result else None
+        }
+    )
+
+    return result
 
 def filter_badge_number(texts):
     """

@@ -20,6 +20,23 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 LOG_FORMAT = os.getenv("LOG_FORMAT", "json")  # "json" or "text"
 LOG_FILE = os.getenv("LOG_FILE", None)  # Optional file path
 
+# Log rotation settings
+LOG_MAX_SIZE = os.getenv("LOG_MAX_SIZE", "10M")  # e.g., "10M" or "1024K"
+LOG_BACKUP_COUNT = int(os.getenv("LOG_BACKUP_COUNT", "5"))
+
+
+def _parse_size(size_str: str) -> int:
+    """Parse size string like '10M' or '1024K' to bytes."""
+    size_str = size_str.strip().upper()
+    if size_str.endswith('M'):
+        return int(size_str[:-1]) * 1024 * 1024
+    elif size_str.endswith('K'):
+        return int(size_str[:-1]) * 1024
+    elif size_str.endswith('G'):
+        return int(size_str[:-1]) * 1024 * 1024 * 1024
+    else:
+        return int(size_str)  # Assume bytes
+
 
 class StructuredFormatter(logging.Formatter):
     """
@@ -168,9 +185,22 @@ def setup_logging(
     console_handler.setFormatter(formatter)
     root_logger.addHandler(console_handler)
 
-    # File handler (optional)
+    # File handler with rotation (optional)
     if log_file:
-        file_handler = logging.FileHandler(log_file)
+        from logging.handlers import RotatingFileHandler
+
+        # Ensure log directory exists
+        log_dir = os.path.dirname(log_file)
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
+
+        # Use rotating file handler to prevent unbounded log growth
+        max_bytes = _parse_size(LOG_MAX_SIZE)
+        file_handler = RotatingFileHandler(
+            log_file,
+            maxBytes=max_bytes,
+            backupCount=LOG_BACKUP_COUNT
+        )
         file_handler.setFormatter(StructuredFormatter())  # Always JSON for files
         root_logger.addHandler(file_handler)
 
