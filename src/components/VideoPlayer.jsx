@@ -245,6 +245,10 @@ const VideoPlayer = forwardRef(function VideoPlayer({ url, timeline = [], onMark
           config={{
             file: {
               attributes: {
+                // crossOrigin: 'anonymous' enables CORS requests for media files
+                // Required for: canvas operations (thumbnails), subtitle loading,
+                // and accessing video frames from different origins.
+                // Note: The server must send appropriate CORS headers.
                 crossOrigin: 'anonymous'
               }
             }

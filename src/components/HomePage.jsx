@@ -8,7 +8,10 @@ import { Card } from '@/components/ui/card';
 import { OfficerGridSkeleton } from '@/components/ui/skeleton';
 import { API_BASE, getMediaUrl, fetchWithErrorHandling } from '../utils/api';
 
+// Configuration constants
 const ITEMS_PER_PAGE = 20;
+const MAX_SEARCH_LENGTH = 200;
+const COUNT_DEBOUNCE_MS = 300;
 
 /**
  * Sanitize search query to prevent XSS and ensure safe string operations
@@ -21,7 +24,36 @@ const sanitizeSearchQuery = (query) => {
   return query
     .trim()
     .replace(/<[^>]*>/g, '') // Remove HTML tags
-    .slice(0, 200); // Limit length
+    .slice(0, MAX_SEARCH_LENGTH);
+};
+
+/**
+ * Filter officers by search query and minimum appearances
+ * @param {Array} officers - List of officers to filter
+ * @param {string} query - Sanitized, lowercase search query
+ * @param {number} minAppearances - Minimum number of appearances required
+ * @returns {Array} Filtered officers
+ */
+const filterOfficers = (officers, query, minAppearances = 0) => {
+  return officers.filter(officer => {
+    // Text search filter
+    if (query) {
+      const matchesSearch = (
+        (officer.badgeNumber && officer.badgeNumber.toLowerCase().includes(query)) ||
+        (officer.notes && officer.notes.toLowerCase().includes(query)) ||
+        (officer.role && officer.role.toLowerCase().includes(query)) ||
+        (officer.force && officer.force.toLowerCase().includes(query))
+      );
+      if (!matchesSearch) return false;
+    }
+
+    // Min appearances filter
+    if (minAppearances > 0 && officer.sources.length < minAppearances) {
+      return false;
+    }
+
+    return true;
+  });
 };
 
 const HomePage = () => {
@@ -152,7 +184,7 @@ const HomePage = () => {
       } catch (error) {
         console.error("Failed to fetch total count:", error);
       }
-    }, 300); // 300ms debounce
+    }, COUNT_DEBOUNCE_MS);
 
     return () => {
       if (countDebounceRef.current) {
@@ -278,7 +310,7 @@ const HomePage = () => {
                   className="w-full p-2 border border-gray-300 rounded-md focus:ring-green-500 focus:border-green-500"
                   value={searchQuery}
                   onChange={handleSearchChange}
-                  maxLength={200}
+                  maxLength={MAX_SEARCH_LENGTH}
                 />
               </div>
 
@@ -419,35 +451,14 @@ const HomePage = () => {
         {viewMode === 'map' ? (
           <div className="mb-16">
             <MapView
-              officers={officers.filter(o => {
-                if (!sanitizedQuery) return true;
-                return (
-                  (o.badgeNumber && o.badgeNumber.toLowerCase().includes(sanitizedQuery)) ||
-                  (o.notes && o.notes.toLowerCase().includes(sanitizedQuery)) ||
-                  (o.role && o.role.toLowerCase().includes(sanitizedQuery))
-                );
-              })}
+              officers={filterOfficers(officers, sanitizedQuery)}
               onOfficerClick={handleOfficerClick}
             />
           </div>
         ) : viewMode === 'infinite' ? (
           /* Infinite Scroll View with Intersection Observer */
           <LazyOfficerGrid
-            officers={infiniteOfficers.filter(officer => {
-              if (sanitizedQuery) {
-                const matchesSearch = (
-                  (officer.badgeNumber && officer.badgeNumber.toLowerCase().includes(sanitizedQuery)) ||
-                  (officer.notes && officer.notes.toLowerCase().includes(sanitizedQuery)) ||
-                  (officer.role && officer.role.toLowerCase().includes(sanitizedQuery)) ||
-                  (officer.force && officer.force.toLowerCase().includes(sanitizedQuery))
-                );
-                if (!matchesSearch) return false;
-              }
-              if (minAppearances > 0 && officer.sources.length < minAppearances) {
-                return false;
-              }
-              return true;
-            })}
+            officers={filterOfficers(infiniteOfficers, sanitizedQuery, minAppearances)}
             onOfficerClick={handleOfficerClick}
             isLoading={infiniteLoading}
             hasMore={hasMore && !sanitizedQuery}
@@ -461,26 +472,7 @@ const HomePage = () => {
             <OfficerGridSkeleton count={8} />
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {officers
-                .filter(officer => {
-                  // Text search filter (using pre-sanitized query)
-                  if (sanitizedQuery) {
-                    const matchesSearch = (
-                      (officer.badgeNumber && officer.badgeNumber.toLowerCase().includes(sanitizedQuery)) ||
-                      (officer.notes && officer.notes.toLowerCase().includes(sanitizedQuery)) ||
-                      (officer.role && officer.role.toLowerCase().includes(sanitizedQuery)) ||
-                      (officer.force && officer.force.toLowerCase().includes(sanitizedQuery))
-                    );
-                    if (!matchesSearch) return false;
-                  }
-
-                  // Min appearances filter (client-side)
-                  if (minAppearances > 0 && officer.sources.length < minAppearances) {
-                    return false;
-                  }
-
-                  return true;
-                })
+              {filterOfficers(officers, sanitizedQuery, minAppearances)
                 .map((officer) => (
                   <OfficerCard
                     key={officer.id}

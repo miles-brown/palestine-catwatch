@@ -12,7 +12,6 @@ if (!API_URL.startsWith("http")) {
 const MAX_RECONNECT_ATTEMPTS = 5;
 const CONNECTION_TIMEOUT = 20000; // 20 seconds
 const STALE_TIMEOUT = 60000; // 60 seconds without updates = stale
-const HEARTBEAT_INTERVAL = 30000; // 30 second heartbeat check
 
 // Error types for granular handling
 const ErrorType = {
@@ -90,7 +89,6 @@ export default function LiveAnalysis({ taskId, onComplete }) {
     const frameTimeoutRef = useRef(null);
     const connectionTimeoutRef = useRef(null);
     const staleCheckRef = useRef(null);
-    const heartbeatRef = useRef(null);
 
     const addLog = useCallback((source, message) => {
         setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), source, message }]);
@@ -330,7 +328,6 @@ export default function LiveAnalysis({ taskId, onComplete }) {
             if (frameTimeoutRef.current) clearTimeout(frameTimeoutRef.current);
             if (connectionTimeoutRef.current) clearTimeout(connectionTimeoutRef.current);
             if (staleCheckRef.current) clearInterval(staleCheckRef.current);
-            if (heartbeatRef.current) clearInterval(heartbeatRef.current);
         };
     }, [taskId]); // Only reconnect if taskId changes
 
