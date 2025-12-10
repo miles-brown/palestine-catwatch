@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Button } from './ui/button';
 import { AlertTriangle, Shield, Video, CheckCircle } from 'lucide-react';
+import Turnstile from './Turnstile';
 
 const IngestQuestionnaire = ({ protests, onSubmit, isSubmitting }) => {
     const [answers, setAnswers] = useState({
@@ -9,10 +10,9 @@ const IngestQuestionnaire = ({ protests, onSubmit, isSubmitting }) => {
         hasImages: false,
         hasPolice: false,
         protestId: '',
-        captcha: ''
     });
-
-    const [captchaChallenge] = useState({ q: "2 + 3 = ?", a: "5" });
+    const [turnstileToken, setTurnstileToken] = useState(null);
+    const [error, setError] = useState('');
 
     const handleChange = (key, value) => {
         setAnswers(prev => ({ ...prev, [key]: value }));
@@ -20,11 +20,14 @@ const IngestQuestionnaire = ({ protests, onSubmit, isSubmitting }) => {
 
     const handleSubmit = (e) => {
         e.preventDefault();
-        if (answers.captcha.trim() !== captchaChallenge.a) {
-            alert("Incorrect Captcha. Please try again.");
+        setError('');
+
+        if (!turnstileToken) {
+            setError('Please complete the security check');
             return;
         }
-        onSubmit(answers);
+
+        onSubmit({ ...answers, turnstile_token: turnstileToken });
     };
 
     return (
@@ -109,23 +112,23 @@ const IngestQuestionnaire = ({ protests, onSubmit, isSubmitting }) => {
                 </div>
             </div>
 
-            {/* Captcha */}
-            <div className="bg-white p-4 border border-gray-200 rounded-lg max-w-xs">
-                <label className="block text-sm font-medium text-gray-700 mb-1">Human Verification</label>
-                <div className="flex items-center gap-3">
-                    <span className="font-mono text-lg font-bold bg-gray-100 px-3 py-1 rounded border">{captchaChallenge.q}</span>
-                    <input
-                        type="text"
-                        required
-                        className="w-20 p-2 border border-gray-300 rounded-md text-center"
-                        placeholder="?"
-                        value={answers.captcha}
-                        onChange={(e) => handleChange('captcha', e.target.value)}
-                    />
-                </div>
+            {/* Turnstile CAPTCHA */}
+            <div className="py-2 flex justify-center">
+                <Turnstile
+                    onVerify={(token) => setTurnstileToken(token)}
+                    onExpire={() => setTurnstileToken(null)}
+                    onError={() => setError('Security check failed. Please try again.')}
+                    theme="light"
+                />
             </div>
 
-            <Button disabled={isSubmitting} type="submit" className="w-full bg-green-700 hover:bg-green-800 text-white py-6 text-lg">
+            {error && (
+                <div className="p-3 bg-red-100 border border-red-300 rounded-lg text-red-700 text-sm">
+                    {error}
+                </div>
+            )}
+
+            <Button disabled={isSubmitting || !turnstileToken} type="submit" className="w-full bg-green-700 hover:bg-green-800 text-white py-6 text-lg">
                 {isSubmitting ? 'Queueing Analysis...' : 'Submit Intelligence'}
             </Button>
 

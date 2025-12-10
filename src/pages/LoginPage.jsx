@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Lock, Eye, EyeOff, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
+import Turnstile from '@/components/Turnstile';
 
 export default function LoginPage() {
     const navigate = useNavigate();
@@ -17,6 +18,7 @@ export default function LoginPage() {
     const [showPassword, setShowPassword] = useState(false);
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
+    const [turnstileToken, setTurnstileToken] = useState(null);
 
     // Check for verification success message
     const verified = new URLSearchParams(location.search).get('verified');
@@ -38,9 +40,15 @@ export default function LoginPage() {
     const handleSubmit = async (e) => {
         e.preventDefault();
         setError('');
+
+        if (!turnstileToken) {
+            setError('Please complete the security check');
+            return;
+        }
+
         setLoading(true);
 
-        const result = await login(formData.username, formData.password);
+        const result = await login(formData.username, formData.password, turnstileToken);
 
         if (result.success) {
             const from = location.state?.from?.pathname || '/';
@@ -113,6 +121,16 @@ export default function LoginPage() {
                                 {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
                             </button>
                         </div>
+                    </div>
+
+                    {/* Turnstile CAPTCHA */}
+                    <div className="py-2">
+                        <Turnstile
+                            onVerify={(token) => setTurnstileToken(token)}
+                            onExpire={() => setTurnstileToken(null)}
+                            onError={() => setError('Security check failed. Please try again.')}
+                            theme="dark"
+                        />
                     </div>
 
                     {error && (

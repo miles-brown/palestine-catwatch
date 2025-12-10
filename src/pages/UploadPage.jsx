@@ -6,6 +6,7 @@ import IngestQuestionnaire from '@/components/IngestQuestionnaire';
 import LiveAnalysis from '@/components/LiveAnalysis';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
+import Turnstile from '@/components/Turnstile';
 
 let API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 if (!API_BASE.startsWith("http")) {
@@ -44,6 +45,9 @@ const UploadPage = () => {
     const [bulkUrls, setBulkUrls] = useState('');
     const [bulkResults, setBulkResults] = useState(null);
 
+    // Turnstile State
+    const [turnstileToken, setTurnstileToken] = useState(null);
+
     // Fetch protests on mount
     useEffect(() => {
         fetch(`${API_BASE}/protests`)
@@ -78,11 +82,18 @@ const UploadPage = () => {
         e.preventDefault();
         if (!file) return;
 
+        if (!turnstileToken) {
+            setSubmitStatus('error');
+            setMessage('Please complete the security check');
+            return;
+        }
+
         setSubmitStatus('loading');
         const formData = new FormData();
         formData.append('file', file);
         formData.append('type', mediaType);
         formData.append('protest_id', 1); // Default ID, should be selectable if we add dropdown here too
+        formData.append('turnstile_token', turnstileToken);
 
         try {
             const response = await fetch(`${API_BASE}/upload`, {
@@ -107,6 +118,12 @@ const UploadPage = () => {
     // --- Bulk Import Logic ---
     const handleBulkSubmit = async (e) => {
         e.preventDefault();
+
+        if (!turnstileToken) {
+            setSubmitStatus('error');
+            setMessage('Please complete the security check');
+            return;
+        }
 
         // Parse URLs from textarea (one per line)
         const urls = bulkUrls
@@ -356,10 +373,23 @@ const UploadPage = () => {
                             </label>
                         </div>
 
+                        {/* Turnstile CAPTCHA */}
+                        <div className="py-2 flex justify-center">
+                            <Turnstile
+                                onVerify={(token) => setTurnstileToken(token)}
+                                onExpire={() => setTurnstileToken(null)}
+                                onError={() => {
+                                    setSubmitStatus('error');
+                                    setMessage('Security check failed. Please try again.');
+                                }}
+                                theme="light"
+                            />
+                        </div>
+
                         <Button
                             type="submit"
                             className="w-full bg-green-700 hover:bg-green-800 text-white py-6 text-lg"
-                            disabled={!file || submitStatus === 'loading'}
+                            disabled={!file || submitStatus === 'loading' || !turnstileToken}
                         >
                             {submitStatus === 'loading' ? 'Uploading...' : 'Submit Evidence'}
                         </Button>
@@ -429,10 +459,23 @@ const UploadPage = () => {
                             </div>
                         )}
 
+                        {/* Turnstile CAPTCHA */}
+                        <div className="py-2 flex justify-center">
+                            <Turnstile
+                                onVerify={(token) => setTurnstileToken(token)}
+                                onExpire={() => setTurnstileToken(null)}
+                                onError={() => {
+                                    setSubmitStatus('error');
+                                    setMessage('Security check failed. Please try again.');
+                                }}
+                                theme="light"
+                            />
+                        </div>
+
                         <Button
                             type="submit"
                             className="w-full bg-green-700 hover:bg-green-800 text-white py-6 text-lg"
-                            disabled={!bulkUrls.trim() || submitStatus === 'loading'}
+                            disabled={!bulkUrls.trim() || submitStatus === 'loading' || !turnstileToken}
                         >
                             {submitStatus === 'loading' ? (
                                 <span className="flex items-center gap-2">

@@ -225,6 +225,7 @@ class UserCreate(BaseModel):
     country: str = Field(..., min_length=1, max_length=100)
     consent_given: bool = False
     role: Role = Role.CONTRIBUTOR  # Default to contributor for registered users
+    turnstile_token: Optional[str] = None  # Cloudflare Turnstile verification token
 
     @field_validator('password')
     @classmethod
@@ -303,6 +304,7 @@ class UserLogin(BaseModel):
     username: str = Field(..., min_length=1, max_length=50)
     # max_length prevents DoS from extremely long passwords
     password: str = Field(..., min_length=1, max_length=MAX_PASSWORD_LENGTH)
+    turnstile_token: Optional[str] = None  # Cloudflare Turnstile verification token
 
 
 class UserResponse(BaseModel):

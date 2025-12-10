@@ -12,6 +12,7 @@ import {
     FormSection,
 } from '@/components/ui/FormInput';
 import { UserPlus, AlertCircle, CheckCircle, Info, Loader2 } from 'lucide-react';
+import Turnstile from '@/components/Turnstile';
 
 // ============================================================================
 // Constants
@@ -213,6 +214,7 @@ export default function RegisterPage() {
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
     const [verificationToken, setVerificationToken] = useState(null);
+    const [turnstileToken, setTurnstileToken] = useState(null);
 
     // Redirect if already authenticated
     if (isAuthenticated) {
@@ -238,6 +240,11 @@ export default function RegisterPage() {
             return;
         }
 
+        if (!turnstileToken) {
+            setError('Please complete the security check');
+            return;
+        }
+
         setLoading(true);
 
         const result = await register({
@@ -249,6 +256,7 @@ export default function RegisterPage() {
             city: formData.city,
             country: formData.country,
             consent_given: formData.consent_given,
+            turnstile_token: turnstileToken,
         });
 
         if (result.success) {
@@ -392,6 +400,16 @@ export default function RegisterPage() {
                         consent_given={formData.consent_given}
                         onChange={handleChange}
                     />
+
+                    {/* Turnstile CAPTCHA */}
+                    <div className="py-2">
+                        <Turnstile
+                            onVerify={(token) => setTurnstileToken(token)}
+                            onExpire={() => setTurnstileToken(null)}
+                            onError={() => setError('Security check failed. Please try again.')}
+                            theme="dark"
+                        />
+                    </div>
 
                     {/* Error Display */}
                     <ErrorAlert message={error} />

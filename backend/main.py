@@ -2248,7 +2248,7 @@ REQUIRE_EMAIL_VERIFICATION = os.getenv("REQUIRE_EMAIL_VERIFICATION", "true").low
 @app.post("/auth/register")
 @limiter.limit(get_rate_limit("auth_register"))
 @limiter.limit(get_rate_limit("auth_register_hourly"))
-def register_user(
+async def register_user(
     request: Request,
     user_data: UserCreate,
     db: Session = Depends(get_db),
@@ -2265,6 +2265,18 @@ def register_user(
 
     In development mode, returns verification_token for testing.
     """
+    # Verify Turnstile token
+    from turnstile import verify_turnstile_token, TURNSTILE_ENABLED
+    if TURNSTILE_ENABLED:
+        client_ip = request.client.host if request.client else None
+        turnstile_result = await verify_turnstile_token(user_data.turnstile_token, client_ip)
+        if not turnstile_result.get("success"):
+            raise APIError(
+                code=ErrorCode.INVALID_INPUT,
+                message=turnstile_result.get("error", "Security verification failed"),
+                status_code=400
+            )
+
     # Check if username already exists
     existing_user = get_user_by_username(db, user_data.username)
     if existing_user:
@@ -2329,7 +2341,7 @@ def register_user(
 @app.post("/auth/login", response_model=Token)
 @limiter.limit(get_rate_limit("auth_login"))
 @limiter.limit(get_rate_limit("auth_login_hourly"))
-def login(
+async def login(
     request: Request,
     login_data: UserLogin,
     db: Session = Depends(get_db)
@@ -2346,6 +2358,17 @@ def login(
     """
     # Get client IP for security logging
     client_ip = request.client.host if request.client else None
+
+    # Verify Turnstile token
+    from turnstile import verify_turnstile_token, TURNSTILE_ENABLED
+    if TURNSTILE_ENABLED:
+        turnstile_result = await verify_turnstile_token(login_data.turnstile_token, client_ip)
+        if not turnstile_result.get("success"):
+            raise APIError(
+                code=ErrorCode.INVALID_INPUT,
+                message=turnstile_result.get("error", "Security verification failed"),
+                status_code=400
+            )
 
     try:
         user = authenticate_user(

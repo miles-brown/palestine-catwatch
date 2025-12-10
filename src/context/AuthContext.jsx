@@ -230,7 +230,7 @@ export function AuthProvider({ children }) {
         }
     };
 
-    const login = async (username, password) => {
+    const login = async (username, password, turnstileToken = null) => {
         setError(null);
         try {
             const response = await fetch(`${API_URL}/auth/login`, {
@@ -238,7 +238,11 @@ export function AuthProvider({ children }) {
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ username, password }),
+                body: JSON.stringify({
+                    username,
+                    password,
+                    turnstile_token: turnstileToken
+                }),
             });
 
             const data = await response.json();
