@@ -10,8 +10,41 @@ For videos, uses first frame hash plus duration/size.
 """
 import hashlib
 import os
-from typing import Optional, Tuple, List, Dict, Any
+import sys
+from typing import Optional, Tuple, List, Dict, Any, Literal
 from pathlib import Path
+
+# TypedDict for Python 3.8+ compatibility
+if sys.version_info >= (3, 8):
+    from typing import TypedDict
+else:
+    from typing_extensions import TypedDict
+
+
+class DuplicateResult(TypedDict):
+    """Type definition for duplicate detection result."""
+    is_duplicate: bool
+    duplicate_type: Optional[Literal["exact", "similar"]]
+    original_id: Optional[int]
+    content_hash: Optional[str]
+    perceptual_hash: Optional[str]
+    file_size: Optional[int]
+    similarity_score: Optional[int]
+
+
+class DuplicateGroup(TypedDict):
+    """Type definition for duplicate group in find_all_duplicates."""
+    type: Literal["exact"]
+    hash: str
+    original_id: int
+    duplicate_ids: List[int]
+
+
+class BackfillStats(TypedDict):
+    """Type definition for backfill operation statistics."""
+    processed: int
+    success: int
+    failed: int
 
 import cv2
 import numpy as np
@@ -190,7 +223,7 @@ class DuplicateDetector:
         self,
         file_path: str,
         media_type: str = "image"
-    ) -> Dict[str, Any]:
+    ) -> DuplicateResult:
         """
         Check if a file is a duplicate of existing media.
 
@@ -291,7 +324,7 @@ class DuplicateDetector:
 
         return result
 
-    def find_all_duplicates(self) -> List[Dict[str, Any]]:
+    def find_all_duplicates(self) -> List[DuplicateGroup]:
         """
         Scan database and identify all duplicate media.
 
@@ -370,7 +403,7 @@ class DuplicateDetector:
         self.db.commit()
         return True
 
-    def backfill_hashes(self, batch_size: int = 100) -> Dict[str, int]:
+    def backfill_hashes(self, batch_size: int = 100) -> BackfillStats:
         """
         Backfill hashes for existing media without hashes.
 

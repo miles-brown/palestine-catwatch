@@ -13,7 +13,13 @@ import argparse
 import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Set
+from typing import List, Dict, Any, Optional, Set, Literal
+
+# TypedDict for Python 3.8+ compatibility
+if sys.version_info >= (3, 8):
+    from typing import TypedDict
+else:
+    from typing_extensions import TypedDict
 
 from sqlalchemy.orm import Session
 from database import SessionLocal, engine
@@ -22,6 +28,39 @@ import models
 # Structured logging
 from logging_config import get_logger
 logger = get_logger("cleanup")
+
+
+# Type definitions for better code documentation
+class DirectoryStatus(TypedDict):
+    """Status of a single directory."""
+    name: str
+    path: str
+
+
+class DirectoryError(TypedDict):
+    """Error information for a directory."""
+    name: str
+    path: str
+    error: str
+
+
+class DirectoryValidationReport(TypedDict):
+    """Report from validate_directories()."""
+    valid: List[DirectoryStatus]
+    missing: List[DirectoryStatus]
+    errors: List[DirectoryError]
+
+
+class CleanupSummary(TypedDict):
+    """Summary statistics from cleanup operation."""
+    orphaned_media_files: int
+    orphaned_crop_files: int
+    temp_files: int
+    cache_files: int
+    duplicate_files: int
+    total_files: int
+    bytes_freed: int
+    mb_freed: float
 
 
 # Configuration - paths are configurable via environment variables
@@ -40,7 +79,7 @@ MAX_TEMP_AGE_HOURS = int(os.getenv("CLEANUP_MAX_TEMP_AGE_HOURS", "24"))
 MAX_CACHE_AGE_DAYS = int(os.getenv("CLEANUP_MAX_CACHE_AGE_DAYS", "30"))
 
 
-def validate_directories() -> Dict[str, Any]:
+def validate_directories() -> DirectoryValidationReport:
     """
     Validate that configured cleanup directories exist and are accessible.
     Returns a report of directory status.
@@ -170,7 +209,7 @@ class CleanupStats:
             self.duplicate_files.append(filepath)
         self.bytes_freed += size
 
-    def summary(self) -> Dict[str, Any]:
+    def summary(self) -> CleanupSummary:
         """Return summary statistics."""
         return {
             "orphaned_media_files": len(self.orphaned_media_files),
