@@ -226,7 +226,7 @@ const MovementPanel = memo(function MovementPanel({ movements, selectedOfficer, 
       </div>
     </Card>
   );
-};
+});
 
 // Protest List Panel
 const ProtestPanel = ({ protests, selectedProtest, onSelectProtest }) => {

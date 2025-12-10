@@ -121,6 +121,14 @@ export default function LazyOfficerGrid({
       });
     }, options);
 
+    // Clean up refs for officers no longer in the list to prevent memory leaks
+    const currentOfficerIds = new Set(officers.map(o => o.id.toString()));
+    Object.keys(itemRefs.current).forEach(id => {
+      if (!currentOfficerIds.has(id)) {
+        delete itemRefs.current[id];
+      }
+    });
+
     // Observe all officer items
     Object.values(itemRefs.current).forEach(ref => {
       if (ref) {
@@ -136,7 +144,8 @@ export default function LazyOfficerGrid({
       Object.values(cleanupTimersRef.current).forEach(timer => clearTimeout(timer));
       cleanupTimersRef.current = {};
     };
-  }, [officers.length]);
+    // Depend on officers array for proper cleanup when items are removed
+  }, [officers]);
 
   // Set up intersection observer for infinite scroll
   useEffect(() => {

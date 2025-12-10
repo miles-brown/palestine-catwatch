@@ -4,6 +4,24 @@ import { Menu, X, AlertTriangle, Eye, LogIn, LogOut, User, Shield } from 'lucide
 import { Button } from '@/components/ui/button';
 import { useAuth } from '../context/AuthContext';
 
+// Maximum length for displayed user text
+const MAX_DISPLAY_LENGTH = 50;
+
+/**
+ * Sanitize user display text to prevent XSS and ensure safe rendering.
+ * @param {string} text - The text to sanitize
+ * @param {number} maxLength - Maximum allowed length (default: MAX_DISPLAY_LENGTH)
+ * @returns {string} - Sanitized text safe for display
+ */
+const sanitizeDisplayText = (text, maxLength = MAX_DISPLAY_LENGTH) => {
+  if (!text || typeof text !== 'string') return '';
+  // Remove potentially dangerous characters and limit length
+  return text
+    .replace(/[<>&"']/g, '')
+    .trim()
+    .slice(0, maxLength);
+};
+
 const Header = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const location = useLocation();
@@ -104,7 +122,7 @@ const Header = () => {
                     )}
                     <div className="flex items-center gap-2">
                       <User className="h-4 w-4 text-gray-500" />
-                      <span className="text-sm text-gray-700">{user?.username}</span>
+                      <span className="text-sm text-gray-700">{sanitizeDisplayText(user?.username)}</span>
                     </div>
                     <Button
                       variant="ghost"
@@ -158,8 +176,8 @@ const Header = () => {
                     <div className="flex items-center gap-2">
                       <User className="h-5 w-5 text-green-700" />
                       <div>
-                        <p className="font-medium text-gray-900">{user?.full_name || user?.username}</p>
-                        <p className="text-xs text-gray-500">{user?.role}</p>
+                        <p className="font-medium text-gray-900">{sanitizeDisplayText(user?.full_name) || sanitizeDisplayText(user?.username)}</p>
+                        <p className="text-xs text-gray-500">{sanitizeDisplayText(user?.role)}</p>
                       </div>
                     </div>
                   </div>

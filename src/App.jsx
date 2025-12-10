@@ -16,6 +16,12 @@ import DashboardPage from './pages/DashboardPage';
 import AdminPage from './pages/AdminPage';
 import FaceSearchPage from './pages/FaceSearchPage';
 import EquipmentPage from './pages/EquipmentPage';
+import ChainOfCommandPage from './pages/ChainOfCommandPage';
+import GeographicPage from './pages/GeographicPage';
+import EquipmentCorrelationPage from './pages/EquipmentCorrelationPage';
+import TimelinePage from './pages/TimelinePage';
+import LoginPage from './pages/LoginPage';
+import RegisterPage from './pages/RegisterPage';
 import './App.css';
 
 // Mobile Bottom Navigation Component
@@ -78,6 +84,12 @@ function App() {
             <Route path="/admin" element={<AdminPage />} />
             <Route path="/face-search" element={<FaceSearchPage />} />
             <Route path="/equipment" element={<EquipmentPage />} />
+            <Route path="/chain-of-command" element={<ChainOfCommandPage />} />
+            <Route path="/geographic" element={<GeographicPage />} />
+            <Route path="/equipment-correlation" element={<EquipmentCorrelationPage />} />
+            <Route path="/timeline" element={<TimelinePage />} />
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/register" element={<RegisterPage />} />
           </Routes>
           </ErrorBoundary>
         </main>
