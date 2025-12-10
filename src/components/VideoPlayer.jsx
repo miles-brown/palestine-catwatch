@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, forwardRef, useImperativeHandle } from 'react';
 import ReactPlayer from 'react-player';
 import { Play, Pause, Volume2, VolumeX, Maximize, SkipBack, SkipForward, Clock, User } from 'lucide-react';
 import { sanitizeMediaPath } from '../utils/api';
@@ -40,8 +40,11 @@ const formatTime = (seconds) => {
  * - timeline: Array of timeline markers with officer appearances
  * - onMarkerClick: Callback when a marker is clicked
  * - apiBase: API base URL for serving local files
+ *
+ * Ref methods:
+ * - seekTo(timestamp): Seek to timestamp string (e.g., "00:01:30")
  */
-export default function VideoPlayer({ url, timeline = [], onMarkerClick, apiBase }) {
+const VideoPlayer = forwardRef(function VideoPlayer({ url, timeline = [], onMarkerClick, apiBase }, ref) {
   const playerRef = useRef(null);
   const progressBarRef = useRef(null);
   const [playing, setPlaying] = useState(false);
@@ -131,6 +134,17 @@ export default function VideoPlayer({ url, timeline = [], onMarkerClick, apiBase
     }
   }, [duration]);
 
+  // Expose seekTo method via ref for external control
+  useImperativeHandle(ref, () => ({
+    seekTo: (timestamp) => {
+      seekToTimestamp(timestamp);
+    },
+    getCurrentTime: () => played * duration,
+    getDuration: () => duration,
+    play: () => setPlaying(true),
+    pause: () => setPlaying(false)
+  }), [seekToTimestamp, played, duration]);
+
   // Handle marker click
   const handleMarkerClick = (marker) => {
     seekToTimestamp(marker.timestamp);
@@ -138,15 +152,15 @@ export default function VideoPlayer({ url, timeline = [], onMarkerClick, apiBase
     onMarkerClick?.(marker);
   };
 
-  // Skip forward/backward
-  const handleSkip = (seconds) => {
+  // Skip forward/backward - memoized to prevent unnecessary re-renders
+  const handleSkip = useCallback((seconds) => {
     const currentTime = played * duration;
     const newTime = Math.max(0, Math.min(duration, currentTime + seconds));
     playerRef.current?.seekTo(newTime / duration, 'fraction');
-  };
+  }, [played, duration]);
 
-  // Fullscreen toggle
-  const handleFullscreen = () => {
+  // Fullscreen toggle - memoized for stable event listener dependency
+  const handleFullscreen = useCallback(() => {
     if (!document.fullscreenElement) {
       containerRef.current?.requestFullscreen();
       setIsFullscreen(true);
@@ -154,7 +168,7 @@ export default function VideoPlayer({ url, timeline = [], onMarkerClick, apiBase
       document.exitFullscreen();
       setIsFullscreen(false);
     }
-  };
+  }, []);
 
   // Listen for fullscreen changes
   useEffect(() => {
@@ -192,7 +206,7 @@ export default function VideoPlayer({ url, timeline = [], onMarkerClick, apiBase
     };
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [handlePlayPause, handleSkip]);
+  }, [handlePlayPause, handleSkip, handleFullscreen]);
 
   // Calculate marker positions
   const getMarkerPosition = (timestamp) => {
@@ -231,6 +245,10 @@ export default function VideoPlayer({ url, timeline = [], onMarkerClick, apiBase
           config={{
             file: {
               attributes: {
+                // crossOrigin: 'anonymous' enables CORS requests for media files
+                // Required for: canvas operations (thumbnails), subtitle loading,
+                // and accessing video frames from different origins.
+                // Note: The server must send appropriate CORS headers.
                 crossOrigin: 'anonymous'
               }
             }
@@ -461,4 +479,6 @@ export default function VideoPlayer({ url, timeline = [], onMarkerClick, apiBase
       )}
     </div>
   );
-}
+});
+
+export default VideoPlayer;
