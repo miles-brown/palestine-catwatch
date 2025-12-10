@@ -2422,6 +2422,47 @@ def verify_email(
     }
 
 
+@app.post("/auth/verify-by-email")
+@limiter.limit(get_rate_limit("auth_verify"))
+def verify_by_email_address(
+    request: Request,
+    email: str = Form(...),
+    admin_key: str = Form(...),
+    db: Session = Depends(get_db)
+):
+    """
+    Emergency endpoint to verify a user by email address.
+    Requires admin key for security.
+    """
+    import models
+    expected_key = os.getenv("ADMIN_VERIFY_KEY", "")
+    if not expected_key or admin_key != expected_key:
+        raise APIError(
+            code=ErrorCode.FORBIDDEN,
+            message="Invalid admin key",
+            status_code=403
+        )
+
+    user = db.query(models.User).filter(models.User.email == email).first()
+    if not user:
+        raise APIError(
+            code=ErrorCode.NOT_FOUND,
+            message="User not found",
+            status_code=404
+        )
+
+    user.email_verified = True
+    user.is_active = True
+    user.email_verification_token = None
+    db.commit()
+
+    return {
+        "success": True,
+        "message": f"User {user.username} verified successfully",
+        "username": user.username
+    }
+
+
 @app.get("/auth/me", response_model=UserResponse)
 @limiter.limit(get_rate_limit("default"))
 def get_current_user_info(
