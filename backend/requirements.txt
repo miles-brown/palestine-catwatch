@@ -36,4 +36,6 @@ alembic
 anthropic
 # Email sending
 resend
+# Cloudflare R2 storage (S3-compatible)
+boto3
 # bcrypt 4.0.1 pinned for passlib compatibility (4.1+ breaks detect_wrap_bug)

@@ -9,7 +9,7 @@ from database import SessionLocal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from contextlib import contextmanager
-from utils.paths import normalize_for_storage, get_absolute_path, get_web_url
+from utils.paths import normalize_for_storage, get_absolute_path, get_web_url, save_file
 
 # =============================================================================
 # CONFIGURATION CONSTANTS
@@ -234,6 +234,33 @@ FRAMES_DIR = "data/frames"
 os.makedirs(FRAMES_DIR, exist_ok=True)
 
 
+def upload_directory_to_r2(directory_path: str) -> int:
+    """
+    Upload all files in a directory to R2 storage.
+
+    Args:
+        directory_path: Local directory path to upload
+
+    Returns:
+        Number of files uploaded
+    """
+    from utils.r2_storage import R2_ENABLED
+
+    if not R2_ENABLED:
+        return 0
+
+    uploaded = 0
+    for root, dirs, files in os.walk(directory_path):
+        for filename in files:
+            local_path = os.path.join(root, filename)
+            storage_key = normalize_for_storage(local_path)
+            if save_file(local_path, storage_key):
+                uploaded += 1
+
+    print(f"Uploaded {uploaded} files from {directory_path} to R2")
+    return uploaded
+
+
 def run_uniform_analysis(appearance_id: int, image_path: str, db: Session, status_callback=None):
     """
     Run Claude Vision uniform analysis on an officer appearance.
@@ -362,7 +389,14 @@ def process_media(media_id: int, status_callback=None):
     # Phase 3: AI analysis (uses its own sessions internally)
     analyze_frames(media_id, media_frames_dir, status_callback)
 
-    # Phase 4: Mark as processed with a fresh session
+    # Phase 4: Upload frames and crops to R2 if enabled
+    if status_callback:
+        status_callback("log", "Uploading processed files to cloud storage...")
+    uploaded_count = upload_directory_to_r2(media_frames_dir)
+    if uploaded_count > 0:
+        print(f"Uploaded {uploaded_count} files to R2 for media {media_id}")
+
+    # Phase 5: Mark as processed with a fresh session
     db = SessionLocal()
     try:
         media_item = db.query(models.Media).filter(models.Media.id == media_id).first()

@@ -212,6 +212,19 @@ app.mount("/data", StaticFiles(directory="data"), name="data")
 def read_root():
     return {"message": "Palestine Catwatch Backend Operational"}
 
+
+@app.get("/config/storage")
+def get_storage_config():
+    """
+    Get storage configuration for the frontend.
+    Returns the R2 public URL if configured, otherwise null.
+    """
+    from utils.r2_storage import R2_ENABLED, R2_PUBLIC_URL
+    return {
+        "r2_enabled": R2_ENABLED,
+        "r2_public_url": R2_PUBLIC_URL if R2_ENABLED else None,
+    }
+
 @app.get("/officers", response_model=List[schemas.Officer])
 @limiter.limit(get_rate_limit("officers_list"))
 def get_officers(

@@ -10,6 +10,40 @@ if (!API_BASE.startsWith("http")) {
   API_BASE = `https://${API_BASE}`;
 }
 
+// Storage configuration (R2)
+let _storageConfig = null;
+let _storageConfigPromise = null;
+
+/**
+ * Fetch storage configuration from backend.
+ * Cached after first successful fetch.
+ */
+const getStorageConfig = async () => {
+  if (_storageConfig !== null) {
+    return _storageConfig;
+  }
+
+  if (_storageConfigPromise) {
+    return _storageConfigPromise;
+  }
+
+  _storageConfigPromise = fetch(`${API_BASE}/config/storage`)
+    .then(res => res.ok ? res.json() : null)
+    .then(config => {
+      _storageConfig = config || { r2_enabled: false, r2_public_url: null };
+      return _storageConfig;
+    })
+    .catch(() => {
+      _storageConfig = { r2_enabled: false, r2_public_url: null };
+      return _storageConfig;
+    });
+
+  return _storageConfigPromise;
+};
+
+// Pre-fetch storage config on module load
+getStorageConfig();
+
 /**
  * Sanitize a media path to prevent path traversal attacks.
  *
@@ -45,7 +79,8 @@ export const sanitizeMediaPath = (path) => {
 };
 
 /**
- * Get a full media URL from a path.
+ * Get a full media URL from a path (synchronous version).
+ * Uses cached storage config if available, falls back to API_BASE.
  *
  * @param {string} path - The raw path from the API
  * @returns {string|null} - Full URL or null if invalid
@@ -53,6 +88,31 @@ export const sanitizeMediaPath = (path) => {
 export const getMediaUrl = (path) => {
   const sanitized = sanitizeMediaPath(path);
   if (!sanitized) return null;
+
+  // Use R2 public URL if configured and cached
+  if (_storageConfig?.r2_enabled && _storageConfig?.r2_public_url) {
+    return `${_storageConfig.r2_public_url}/data/${sanitized}`;
+  }
+
+  return `${API_BASE}/data/${sanitized}`;
+};
+
+/**
+ * Get a full media URL from a path (async version).
+ * Ensures storage config is loaded before constructing URL.
+ *
+ * @param {string} path - The raw path from the API
+ * @returns {Promise<string|null>} - Full URL or null if invalid
+ */
+export const getMediaUrlAsync = async (path) => {
+  const sanitized = sanitizeMediaPath(path);
+  if (!sanitized) return null;
+
+  const config = await getStorageConfig();
+  if (config?.r2_enabled && config?.r2_public_url) {
+    return `${config.r2_public_url}/data/${sanitized}`;
+  }
+
   return `${API_BASE}/data/${sanitized}`;
 };
 

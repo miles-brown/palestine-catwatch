@@ -9,18 +9,24 @@ The problem: Paths are stored inconsistently throughout the codebase:
 This module provides functions to normalize paths for:
 1. Database storage (always relative to data/ directory)
 2. Filesystem operations (absolute paths)
-3. Web URLs (paths served via FastAPI static files)
+3. Web URLs (paths served via FastAPI static files or R2)
+
+When R2 is enabled, files are stored in Cloudflare R2 and URLs point to R2.
+When R2 is disabled, files are stored locally and served via FastAPI.
 """
 
 import os
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Base directories
 BACKEND_DIR = Path(__file__).parent.parent.absolute()
 PROJECT_ROOT = BACKEND_DIR.parent
 DATA_DIR = BACKEND_DIR / "data"
 
-# Ensure data directories exist
+# Ensure data directories exist (still needed for temporary local processing)
 DATA_SUBDIRS = ["frames", "downloads", "media"]
 for subdir in DATA_SUBDIRS:
     (DATA_DIR / subdir).mkdir(parents=True, exist_ok=True)
@@ -127,3 +133,137 @@ def ensure_directory(path: str) -> str:
     directory = os.path.dirname(abs_path)
     os.makedirs(directory, exist_ok=True)
     return abs_path
+
+
+# ============================================================================
+# R2-aware storage functions
+# ============================================================================
+
+def save_file(local_path: str, storage_key: str = None) -> str:
+    """
+    Save a file to storage (R2 if enabled, otherwise keep local).
+
+    Args:
+        local_path: Path to the local file
+        storage_key: Key for storage. If not provided, derives from local path.
+
+    Returns:
+        Storage key (path) that can be used to retrieve the file
+    """
+    from utils.r2_storage import R2_ENABLED, upload_file
+
+    # Normalize the storage key
+    if not storage_key:
+        storage_key = normalize_for_storage(local_path)
+
+    if R2_ENABLED:
+        result = upload_file(local_path, storage_key)
+        if result:
+            logger.info(f"Saved {local_path} to R2 as {storage_key}")
+            return storage_key
+        else:
+            logger.warning(f"Failed to upload to R2, keeping local: {local_path}")
+            return storage_key
+    else:
+        # Local storage - file is already saved
+        logger.debug(f"R2 disabled, using local storage: {storage_key}")
+        return storage_key
+
+
+def save_bytes(data: bytes, storage_key: str, content_type: str = "application/octet-stream") -> str:
+    """
+    Save bytes to storage (R2 if enabled, otherwise save locally).
+
+    Args:
+        data: Bytes to save
+        storage_key: Key for storage (e.g., "data/frames/1/face_0.jpg")
+        content_type: MIME type
+
+    Returns:
+        Storage key
+    """
+    from utils.r2_storage import R2_ENABLED, upload_bytes
+
+    if R2_ENABLED:
+        result = upload_bytes(data, storage_key, content_type)
+        if result:
+            return storage_key
+
+    # Fall back to local storage
+    local_path = get_absolute_path(storage_key)
+    os.makedirs(os.path.dirname(local_path), exist_ok=True)
+    with open(local_path, 'wb') as f:
+        f.write(data)
+    return storage_key
+
+
+def get_file_url(storage_key: str) -> str:
+    """
+    Get a URL to access a file.
+
+    If R2 is enabled and has a public URL, returns the R2 URL.
+    Otherwise returns the local static files URL.
+
+    Args:
+        storage_key: Storage key (e.g., "data/frames/1/face_0.jpg")
+
+    Returns:
+        URL to access the file
+    """
+    from utils.r2_storage import R2_ENABLED, R2_PUBLIC_URL, get_public_url
+
+    if R2_ENABLED and R2_PUBLIC_URL:
+        return get_public_url(storage_key)
+    else:
+        # Use local URL
+        return get_web_url(storage_key)
+
+
+def delete_storage_file(storage_key: str) -> bool:
+    """
+    Delete a file from storage.
+
+    Args:
+        storage_key: Storage key
+
+    Returns:
+        True if deleted successfully
+    """
+    from utils.r2_storage import R2_ENABLED, delete_file as r2_delete
+
+    success = True
+
+    # Try to delete from R2
+    if R2_ENABLED:
+        r2_delete(storage_key)
+
+    # Also delete local file if it exists
+    local_path = get_absolute_path(storage_key)
+    if os.path.exists(local_path):
+        try:
+            os.remove(local_path)
+        except OSError as e:
+            logger.warning(f"Failed to delete local file {local_path}: {e}")
+            success = False
+
+    return success
+
+
+def file_exists_in_storage(storage_key: str) -> bool:
+    """
+    Check if a file exists in storage.
+
+    Args:
+        storage_key: Storage key
+
+    Returns:
+        True if file exists
+    """
+    from utils.r2_storage import R2_ENABLED, file_exists as r2_exists
+
+    if R2_ENABLED:
+        return r2_exists(storage_key)
+
+    # Check local
+    local_path = get_absolute_path(storage_key)
+    return os.path.exists(local_path)

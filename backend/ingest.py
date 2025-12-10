@@ -10,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from database import SessionLocal, engine
 import models
 from logging_config import get_logger, log_error
+from utils.paths import save_file, normalize_for_storage
 
 logger = get_logger("ingest")
 
@@ -52,9 +53,12 @@ def ingest_media(url: str, protest_id: int, media_type: str, db: Session) -> Opt
 
         logger.info(f"Downloaded media to {filepath}")
 
-        # Save to DB
+        # Upload to R2 if enabled
+        storage_key = save_file(filepath, normalize_for_storage(filepath))
+
+        # Save to DB with normalized storage path
         db_media = models.Media(
-            url=filepath,  # Storing local path for now
+            url=storage_key,  # Store normalized path (works for both local and R2)
             type=media_type,
             protest_id=protest_id,
             timestamp=datetime.now(timezone.utc)
@@ -147,6 +151,9 @@ def save_upload(
 
         logger.info(f"Saved upload to disk", extra_data={"filepath": filepath})
 
+        # Upload to R2 if enabled (do this after saving locally for hash computation)
+        storage_key = normalize_for_storage(filepath)
+
         # Compute hashes for duplicate detection
         content_hash = compute_content_hash(filepath)
         perceptual_hash = compute_perceptual_hash(filepath) if media_type == "image" else None
@@ -173,9 +180,12 @@ def save_upload(
                     models.Media.id == dup_result["original_id"]
                 ).first()
 
+                # Upload to R2 even for duplicates (for consistency)
+                save_file(filepath, storage_key)
+
                 # Still save but mark as duplicate
                 db_media = models.Media(
-                    url=filepath,
+                    url=storage_key,  # Use normalized storage key
                     type=media_type,
                     protest_id=protest_id,
                     timestamp=datetime.now(timezone.utc),
@@ -190,9 +200,12 @@ def save_upload(
                 db.refresh(db_media)
                 return db_media, duplicate_info
 
+        # Upload to R2 if enabled
+        save_file(filepath, storage_key)
+
         # Save to DB (not a duplicate)
         db_media = models.Media(
-            url=filepath,
+            url=storage_key,  # Use normalized storage key
             type=media_type,
             protest_id=protest_id,
             timestamp=datetime.now(timezone.utc),
