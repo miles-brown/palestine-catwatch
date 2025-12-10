@@ -329,7 +329,11 @@ export default function LiveAnalysis({ taskId, onComplete }) {
             if (connectionTimeoutRef.current) clearTimeout(connectionTimeoutRef.current);
             if (staleCheckRef.current) clearInterval(staleCheckRef.current);
         };
-    }, [taskId]); // Only reconnect if taskId changes
+        // NOTE: connectSocket is intentionally omitted from deps to prevent reconnection
+        // on every state change. We only want to reconnect when taskId changes.
+        // The socket handlers access latest state via closures in the callbacks.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [taskId]);
 
     // Auto-scroll logs
     useEffect(() => {

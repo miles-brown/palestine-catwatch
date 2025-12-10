@@ -92,7 +92,18 @@ const HomePage = () => {
     loadMore
   } = useInfiniteOfficers(API_BASE, viewMode === 'infinite' ? infiniteFilters : {});
 
+  // AbortController ref for officers fetch to prevent race conditions
+  const officersAbortRef = useRef(null);
+
   useEffect(() => {
+    // Abort any in-flight request to prevent race conditions
+    if (officersAbortRef.current) {
+      officersAbortRef.current.abort();
+    }
+
+    const abortController = new AbortController();
+    officersAbortRef.current = abortController;
+
     const fetchOfficers = async () => {
       setIsLoading(true);
       try {
@@ -107,8 +118,13 @@ const HomePage = () => {
         if (dateFrom) params.append('date_from', dateFrom);
         if (dateTo) params.append('date_to', dateTo);
 
-        const response = await fetch(`${API_BASE}/officers?${params}`);
+        const response = await fetch(`${API_BASE}/officers?${params}`, {
+          signal: abortController.signal
+        });
         const data = await response.json();
+
+        // Only update state if request wasn't aborted
+        if (abortController.signal.aborted) return;
 
         const mappedOfficers = data.map(off => {
           const mainAppearance = off.appearances?.[0];
@@ -148,13 +164,22 @@ const HomePage = () => {
           });
         }
       } catch (error) {
-        console.error("Failed to fetch officers:", error);
+        // Ignore abort errors, log others
+        if (error.name !== 'AbortError') {
+          console.error("Failed to fetch officers:", error);
+        }
       } finally {
-        setIsLoading(false);
+        if (!abortController.signal.aborted) {
+          setIsLoading(false);
+        }
       }
     };
 
     fetchOfficers();
+
+    return () => {
+      abortController.abort();
+    };
   }, [currentPage, forceFilter, dateFrom, dateTo]);
 
   // Debounce timer ref for count fetch
@@ -228,6 +253,22 @@ const HomePage = () => {
   const handleCloseProfile = () => {
     setSelectedOfficer(null);
   };
+
+  // Memoize filtered officers to prevent expensive filtering on every render
+  const filteredOfficersForMap = useMemo(
+    () => filterOfficers(officers, sanitizedQuery),
+    [officers, sanitizedQuery]
+  );
+
+  const filteredInfiniteOfficers = useMemo(
+    () => filterOfficers(infiniteOfficers, sanitizedQuery, minAppearances),
+    [infiniteOfficers, sanitizedQuery, minAppearances]
+  );
+
+  const filteredOfficersForGrid = useMemo(
+    () => filterOfficers(officers, sanitizedQuery, minAppearances),
+    [officers, sanitizedQuery, minAppearances]
+  );
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -470,14 +511,14 @@ const HomePage = () => {
         {viewMode === 'map' ? (
           <div className="mb-16">
             <MapView
-              officers={filterOfficers(officers, sanitizedQuery)}
+              officers={filteredOfficersForMap}
               onOfficerClick={handleOfficerClick}
             />
           </div>
         ) : viewMode === 'infinite' ? (
           /* Infinite Scroll View with Intersection Observer */
           <LazyOfficerGrid
-            officers={filterOfficers(infiniteOfficers, sanitizedQuery, minAppearances)}
+            officers={filteredInfiniteOfficers}
             onOfficerClick={handleOfficerClick}
             isLoading={infiniteLoading}
             hasMore={hasMore && !sanitizedQuery}
@@ -491,14 +532,13 @@ const HomePage = () => {
             <OfficerGridSkeleton count={8} />
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {filterOfficers(officers, sanitizedQuery, minAppearances)
-                .map((officer) => (
-                  <OfficerCard
-                    key={officer.id}
-                    officer={officer}
-                    onClick={handleOfficerClick}
-                  />
-                ))}
+              {filteredOfficersForGrid.map((officer) => (
+                <OfficerCard
+                  key={officer.id}
+                  officer={officer}
+                  onClick={handleOfficerClick}
+                />
+              ))}
             </div>
           )}
 
