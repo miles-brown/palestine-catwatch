@@ -3,6 +3,7 @@ import { Home, Upload, LayoutDashboard, Search, Shield } from 'lucide-react';
 import Header from './components/Header';
 import HomePage from './components/HomePage';
 import ErrorBoundary from './components/ErrorBoundary';
+import ProtectedRoute, { AdminRoute } from './components/ProtectedRoute';
 import { AuthProvider } from './context/AuthContext';
 import OurStory from './pages/OurStory';
 import WhatWeWant from './pages/WhatWeWant';
@@ -77,17 +78,17 @@ function App() {
             <Route path="/about" element={<About />} />
             <Route path="/terms" element={<Terms />} />
             <Route path="/privacy" element={<Privacy />} />
-            <Route path="/upload" element={<UploadPage />} />
+            <Route path="/upload" element={<ProtectedRoute><UploadPage /></ProtectedRoute>} />
             <Route path="/report/:mediaId" element={<ReportPage />} />
             <Route path="/manifesto" element={<ManifestoPage />} />
-            <Route path="/dashboard" element={<DashboardPage />} />
-            <Route path="/admin" element={<AdminPage />} />
-            <Route path="/face-search" element={<FaceSearchPage />} />
-            <Route path="/equipment" element={<EquipmentPage />} />
-            <Route path="/chain-of-command" element={<ChainOfCommandPage />} />
-            <Route path="/geographic" element={<GeographicPage />} />
-            <Route path="/equipment-correlation" element={<EquipmentCorrelationPage />} />
-            <Route path="/timeline" element={<TimelinePage />} />
+            <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
+            <Route path="/admin" element={<AdminRoute><AdminPage /></AdminRoute>} />
+            <Route path="/face-search" element={<ProtectedRoute><FaceSearchPage /></ProtectedRoute>} />
+            <Route path="/equipment" element={<ProtectedRoute><EquipmentPage /></ProtectedRoute>} />
+            <Route path="/chain-of-command" element={<ProtectedRoute><ChainOfCommandPage /></ProtectedRoute>} />
+            <Route path="/geographic" element={<ProtectedRoute><GeographicPage /></ProtectedRoute>} />
+            <Route path="/equipment-correlation" element={<ProtectedRoute><EquipmentCorrelationPage /></ProtectedRoute>} />
+            <Route path="/timeline" element={<ProtectedRoute><TimelinePage /></ProtectedRoute>} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
           </Routes>

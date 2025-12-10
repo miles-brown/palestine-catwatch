@@ -8,8 +8,28 @@ const TOKEN_KEY = 'catwatch_auth_token';
 const REFRESH_TOKEN_KEY = 'catwatch_refresh_token';
 const USER_KEY = 'catwatch_auth_user';
 const TOKEN_EXPIRY_KEY = 'catwatch_token_expiry';
-// NOTE: CSRF tokens are NOT stored in localStorage for security reasons
-// They are kept in React state only, and the cookie handles persistence
+
+/**
+ * SECURITY NOTE: Token Storage Trade-offs
+ *
+ * Tokens are stored in localStorage for the following reasons:
+ * 1. Persistence across browser sessions (user stays logged in)
+ * 2. Simpler client-side implementation without server-side session management
+ *
+ * Known risks:
+ * - XSS attacks could access localStorage (mitigated by input sanitization throughout the app)
+ * - Tokens persist until explicitly cleared or expired
+ *
+ * Mitigations in place:
+ * - All user inputs are sanitized before display (see Header.jsx sanitizeDisplayText)
+ * - Short token expiry with automatic refresh
+ * - CSRF tokens are NOT stored in localStorage (kept in React state only)
+ *
+ * For higher-security deployments, consider:
+ * - httpOnly cookies managed by the server
+ * - Shorter session durations
+ * - Additional CSP headers
+ */
 
 // Refresh token 2 minutes before expiry to prevent unexpected logouts
 const TOKEN_REFRESH_MARGIN_MS = 2 * 60 * 1000;
@@ -57,6 +77,8 @@ export function AuthProvider({ children }) {
     }, []);
 
     // Schedule token refresh before expiry
+    // Note: clearRefreshTimer is stable (empty deps), so we don't need it in deps array
+    // refreshAccessToken is intentionally excluded to avoid circular dependency
     const scheduleTokenRefresh = useCallback((expiresIn) => {
         clearRefreshTimer();
 
@@ -69,7 +91,8 @@ export function AuthProvider({ children }) {
                 refreshAccessToken();
             }, refreshTime);
         }
-    }, []);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [clearRefreshTimer]);
 
     // Refresh the access token using the refresh token
     const refreshAccessToken = useCallback(async () => {

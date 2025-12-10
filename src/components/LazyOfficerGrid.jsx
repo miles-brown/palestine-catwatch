@@ -49,19 +49,34 @@ const validateStringFilter = (str) => {
   return sanitized.replace(/[<>]/g, '') || null;
 };
 
+// Maximum safety iterations to prevent infinite loops in FIFO cleanup
+const MAX_FIFO_ITERATIONS = 150;
+
 export default function LazyOfficerGrid({
   officers,
   onOfficerClick,
   isLoading = false,
   hasMore = false,
   onLoadMore = null,
-  loadingMore = false
+  loadingMore = false,
+  error = null,
+  onRetry = null
 }) {
   const [visibleItems, setVisibleItems] = useState(new Set());
   const observerRef = useRef(null);
   const loadMoreRef = useRef(null);
   const itemRefs = useRef({});
   const cleanupTimersRef = useRef({});
+  // Track if component is mounted to prevent setState after unmount
+  const isMountedRef = useRef(true);
+
+  // Track mounted state for cleanup
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   // Set up intersection observer for individual cards
   useEffect(() => {
@@ -94,13 +109,16 @@ export default function LazyOfficerGrid({
               // If we exceed the max, remove oldest items (FIFO behavior via Set iteration order)
               if (next.size > MAX_VISIBLE_ITEMS) {
                 const iterator = next.values();
+                let iterations = 0;
                 // Remove the oldest items until we're under the limit
-                while (next.size > MAX_VISIBLE_ITEMS) {
+                // Safety counter prevents infinite loop if all items equal current id
+                while (next.size > MAX_VISIBLE_ITEMS && iterations < MAX_FIFO_ITERATIONS) {
                   const oldest = iterator.next().value;
                   // Don't remove items that are currently intersecting
                   if (oldest !== id) {
                     next.delete(oldest);
                   }
+                  iterations++;
                 }
               }
 
@@ -109,11 +127,14 @@ export default function LazyOfficerGrid({
           } else {
             // Item left viewport - schedule cleanup after delay for smoother scrolling
             cleanupTimersRef.current[id] = setTimeout(() => {
-              setVisibleItems(prev => {
-                const next = new Set(prev);
-                next.delete(id);
-                return next;
-              });
+              // Only update state if component is still mounted
+              if (isMountedRef.current) {
+                setVisibleItems(prev => {
+                  const next = new Set(prev);
+                  next.delete(id);
+                  return next;
+                });
+              }
               delete cleanupTimersRef.current[id];
             }, VISIBILITY_CLEANUP_DELAY);
           }
@@ -185,6 +206,29 @@ export default function LazyOfficerGrid({
 
   if (isLoading && officers.length === 0) {
     return <OfficerGridSkeleton count={8} />;
+  }
+
+  // Show error state with retry option
+  if (error && officers.length === 0) {
+    return (
+      <div className="text-center py-12">
+        <div className="text-red-500 mb-4">
+          <svg className="h-12 w-12 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <p className="font-medium">Failed to load officers</p>
+          <p className="text-sm text-gray-500 mt-1">{error}</p>
+        </div>
+        {onRetry && (
+          <button
+            onClick={onRetry}
+            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+          >
+            Try Again
+          </button>
+        )}
+      </div>
+    );
   }
 
   if (officers.length === 0) {
@@ -356,7 +400,13 @@ export function useInfiniteOfficers(apiBase, filters = {}) {
         setError(null);
       } catch (err) {
         console.error("Failed to fetch officers:", err);
-        setError(err.message || 'Failed to load officers. Please try again.');
+        // Robust error message extraction for various error types
+        const errorMessage = err instanceof Error
+          ? err.message
+          : typeof err === 'string'
+            ? err
+            : 'Failed to load officers. Please try again.';
+        setError(errorMessage);
       } finally {
         setIsLoading(false);
         setLoadingMore(false);

@@ -178,7 +178,11 @@ const HomePage = () => {
     fetchOfficers();
 
     return () => {
-      abortController.abort();
+      // Use the ref to abort, not the captured abortController
+      // This prevents aborting the wrong request if a new render has already started
+      if (officersAbortRef.current) {
+        officersAbortRef.current.abort();
+      }
     };
   }, [currentPage, forceFilter, dateFrom, dateTo]);
 
