@@ -2210,6 +2210,7 @@ from auth import (
     AuthenticationError, ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS,
     log_security_event, revoke_user_tokens, get_current_user, require_admin
 )
+from email_service import send_verification_email, is_email_enabled
 from datetime import timedelta
 
 
@@ -2279,11 +2280,21 @@ def register_user(
     is_development = os.getenv("ENVIRONMENT", "development").lower() in ("development", "dev")
     if REQUIRE_EMAIL_VERIFICATION:
         response["message"] = "Registration successful! Please check your email to verify your account."
-        # TODO: Send actual verification email here
-        if is_development and user.email_verification_token:
-            # Only expose token in dev for testing - never in production
-            response["verification_token"] = user.email_verification_token
-    elif not REQUIRE_EMAIL_VERIFICATION:
+
+        # Send verification email
+        if user.email_verification_token:
+            email_sent = send_verification_email(
+                to_email=user.email,
+                username=user.username,
+                token=user.email_verification_token
+            )
+            response["email_sent"] = email_sent
+
+            if not email_sent and is_development:
+                # In dev mode without email, expose token for testing
+                response["verification_token"] = user.email_verification_token
+                response["message"] = "Registration successful! Email sending not configured - use the token below to verify."
+    else:
         response["message"] = "Registration successful! You can now log in."
 
     return response

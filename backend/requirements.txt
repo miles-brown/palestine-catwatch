@@ -33,3 +33,5 @@ slowapi
 alembic
 # Optional: Uniform analysis with Claude Vision API
 anthropic
+# Email sending
+resend
