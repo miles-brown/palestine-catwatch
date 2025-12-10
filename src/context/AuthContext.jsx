@@ -308,8 +308,12 @@ export function AuthProvider({ children }) {
             const data = await response.json();
 
             if (!response.ok) {
+                // Extract error message from backend response format
+                const errorCode = data.error?.code || data.detail?.code;
+                const errorMessage = data.error?.message || data.detail || 'Registration failed';
+
                 // If CSRF validation failed, refresh token and retry once
-                if (response.status === 403 && data.detail?.code === 'csrf_validation_failed') {
+                if (response.status === 403 && errorCode === 'csrf_validation_failed') {
                     currentCsrfToken = await fetchCsrfToken();
                     if (currentCsrfToken) {
                         headers['X-CSRF-Token'] = currentCsrfToken;
@@ -321,7 +325,8 @@ export function AuthProvider({ children }) {
                         });
                         const retryData = await retryResponse.json();
                         if (!retryResponse.ok) {
-                            throw new Error(retryData.detail || 'Registration failed');
+                            const retryError = retryData.error?.message || retryData.detail || 'Registration failed';
+                            throw new Error(retryError);
                         }
                         return {
                             success: true,
@@ -331,7 +336,7 @@ export function AuthProvider({ children }) {
                         };
                     }
                 }
-                throw new Error(data.detail || 'Registration failed');
+                throw new Error(errorMessage);
             }
 
             return {
