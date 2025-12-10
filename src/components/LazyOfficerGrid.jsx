@@ -225,6 +225,8 @@ export function useInfiniteOfficers(apiBase, filters = {}) {
   const [hasMore, setHasMore] = useState(true);
   const [page, setPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
+  const [error, setError] = useState(null);
+  const [retryCount, setRetryCount] = useState(0);
   const ITEMS_PER_PAGE = 20;
 
   // Extract filter values for stable dependencies
@@ -236,6 +238,7 @@ export function useInfiniteOfficers(apiBase, filters = {}) {
     setPage(1);
     setHasMore(true);
     setIsLoading(true);
+    setError(null);
   }, [force, dateFrom, dateTo]);
 
   // Fetch officers
@@ -300,8 +303,10 @@ export function useInfiniteOfficers(apiBase, filters = {}) {
         }
 
         setHasMore(data.length === ITEMS_PER_PAGE);
-      } catch (error) {
-        console.error("Failed to fetch officers:", error);
+        setError(null);
+      } catch (err) {
+        console.error("Failed to fetch officers:", err);
+        setError(err.message || 'Failed to load officers. Please try again.');
       } finally {
         setIsLoading(false);
         setLoadingMore(false);
@@ -309,7 +314,8 @@ export function useInfiniteOfficers(apiBase, filters = {}) {
     };
 
     fetchOfficers();
-  }, [page, apiBase, force, dateFrom, dateTo]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, apiBase, force, dateFrom, dateTo, retryCount]);
 
   // Fetch total count
   useEffect(() => {
@@ -338,12 +344,20 @@ export function useInfiniteOfficers(apiBase, filters = {}) {
     }
   }, [loadingMore, hasMore]);
 
+  // Retry function to attempt fetching again after an error
+  const retry = useCallback(() => {
+    setError(null);
+    setRetryCount(c => c + 1);
+  }, []);
+
   return {
     officers,
     isLoading,
     loadingMore,
     hasMore,
     totalCount,
-    loadMore
+    error,
+    loadMore,
+    retry
   };
 }

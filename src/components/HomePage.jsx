@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import OfficerCard from './OfficerCard';
 import OfficerProfile from './OfficerProfile';
 import MapView from './MapView';
@@ -125,9 +125,18 @@ const HomePage = () => {
     fetchOfficers();
   }, [currentPage, forceFilter, dateFrom, dateTo]);
 
-  // Fetch total count using dedicated count endpoint
+  // Debounce timer ref for count fetch
+  const countDebounceRef = useRef(null);
+
+  // Fetch total count using dedicated count endpoint (debounced)
   useEffect(() => {
-    const fetchTotalCount = async () => {
+    // Clear previous debounce timer
+    if (countDebounceRef.current) {
+      clearTimeout(countDebounceRef.current);
+    }
+
+    // Debounce the count fetch to reduce API calls during rapid filter changes
+    countDebounceRef.current = setTimeout(async () => {
       try {
         // Build query params to match officers fetch filters
         const params = new URLSearchParams();
@@ -143,8 +152,13 @@ const HomePage = () => {
       } catch (error) {
         console.error("Failed to fetch total count:", error);
       }
+    }, 300); // 300ms debounce
+
+    return () => {
+      if (countDebounceRef.current) {
+        clearTimeout(countDebounceRef.current);
+      }
     };
-    fetchTotalCount();
   }, [forceFilter, dateFrom, dateTo]);
 
   const totalPages = Math.ceil(totalOfficers / ITEMS_PER_PAGE);
