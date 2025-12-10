@@ -17,6 +17,37 @@ import { Loader2 } from 'lucide-react';
 const MAX_VISIBLE_ITEMS = 100;
 // Time in ms to wait before removing an item from visible set after it leaves viewport
 const VISIBILITY_CLEANUP_DELAY = 5000;
+// Maximum length for filter string values
+const MAX_FILTER_LENGTH = 100;
+
+/**
+ * Validate and sanitize a date string for API requests
+ * @param {string} dateStr - Date string to validate
+ * @returns {string|null} - Validated date string or null if invalid
+ */
+const validateDateFilter = (dateStr) => {
+  if (!dateStr || typeof dateStr !== 'string') return null;
+  // Basic ISO date format validation (YYYY-MM-DD)
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+  if (!dateRegex.test(dateStr)) return null;
+  // Verify it's a valid date
+  const date = new Date(dateStr);
+  if (isNaN(date.getTime())) return null;
+  return dateStr;
+};
+
+/**
+ * Validate and sanitize a string filter value
+ * @param {string} str - String to validate
+ * @returns {string|null} - Sanitized string or null if invalid
+ */
+const validateStringFilter = (str) => {
+  if (!str || typeof str !== 'string') return null;
+  // Trim and limit length
+  const sanitized = str.trim().slice(0, MAX_FILTER_LENGTH);
+  // Remove any potentially dangerous characters
+  return sanitized.replace(/[<>]/g, '') || null;
+};
 
 export default function LazyOfficerGrid({
   officers,
@@ -34,6 +65,11 @@ export default function LazyOfficerGrid({
 
   // Set up intersection observer for individual cards
   useEffect(() => {
+    // Disconnect existing observer before creating a new one to prevent duplicate observations
+    if (observerRef.current) {
+      observerRef.current.disconnect();
+    }
+
     const options = {
       root: null, // viewport
       rootMargin: '100px', // pre-load 100px before visible
@@ -258,9 +294,14 @@ export function useInfiniteOfficers(apiBase, filters = {}) {
           limit: ITEMS_PER_PAGE.toString()
         });
 
-        if (force) params.append('force', force);
-        if (dateFrom) params.append('date_from', dateFrom);
-        if (dateTo) params.append('date_to', dateTo);
+        // Validate and sanitize filter values before sending to API
+        const validatedForce = validateStringFilter(force);
+        const validatedDateFrom = validateDateFilter(dateFrom);
+        const validatedDateTo = validateDateFilter(dateTo);
+
+        if (validatedForce) params.append('force', validatedForce);
+        if (validatedDateFrom) params.append('date_from', validatedDateFrom);
+        if (validatedDateTo) params.append('date_to', validatedDateTo);
 
         const response = await fetch(`${apiBase}/officers?${params}`);
         const data = await response.json();
@@ -322,9 +363,14 @@ export function useInfiniteOfficers(apiBase, filters = {}) {
     const fetchCount = async () => {
       try {
         const params = new URLSearchParams();
-        if (force) params.append('force', force);
-        if (dateFrom) params.append('date_from', dateFrom);
-        if (dateTo) params.append('date_to', dateTo);
+        // Use same validation as officers fetch
+        const validatedForce = validateStringFilter(force);
+        const validatedDateFrom = validateDateFilter(dateFrom);
+        const validatedDateTo = validateDateFilter(dateTo);
+
+        if (validatedForce) params.append('force', validatedForce);
+        if (validatedDateFrom) params.append('date_from', validatedDateFrom);
+        if (validatedDateTo) params.append('date_to', validatedDateTo);
 
         const queryString = params.toString();
         const url = `${apiBase}/officers/count${queryString ? '?' + queryString : ''}`;

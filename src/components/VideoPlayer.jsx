@@ -152,15 +152,15 @@ const VideoPlayer = forwardRef(function VideoPlayer({ url, timeline = [], onMark
     onMarkerClick?.(marker);
   };
 
-  // Skip forward/backward
-  const handleSkip = (seconds) => {
+  // Skip forward/backward - memoized to prevent unnecessary re-renders
+  const handleSkip = useCallback((seconds) => {
     const currentTime = played * duration;
     const newTime = Math.max(0, Math.min(duration, currentTime + seconds));
     playerRef.current?.seekTo(newTime / duration, 'fraction');
-  };
+  }, [played, duration]);
 
-  // Fullscreen toggle
-  const handleFullscreen = () => {
+  // Fullscreen toggle - memoized for stable event listener dependency
+  const handleFullscreen = useCallback(() => {
     if (!document.fullscreenElement) {
       containerRef.current?.requestFullscreen();
       setIsFullscreen(true);
@@ -168,7 +168,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({ url, timeline = [], onMark
       document.exitFullscreen();
       setIsFullscreen(false);
     }
-  };
+  }, []);
 
   // Listen for fullscreen changes
   useEffect(() => {
@@ -206,7 +206,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({ url, timeline = [], onMark
     };
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [handlePlayPause, handleSkip]);
+  }, [handlePlayPause, handleSkip, handleFullscreen]);
 
   // Calculate marker positions
   const getMarkerPosition = (timestamp) => {

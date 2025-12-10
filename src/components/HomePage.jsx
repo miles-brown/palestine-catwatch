@@ -159,16 +159,26 @@ const HomePage = () => {
 
   // Debounce timer ref for count fetch
   const countDebounceRef = useRef(null);
+  // AbortController ref to cancel stale requests
+  const countAbortRef = useRef(null);
 
-  // Fetch total count using dedicated count endpoint (debounced)
+  // Fetch total count using dedicated count endpoint (debounced with race condition handling)
   useEffect(() => {
     // Clear previous debounce timer
     if (countDebounceRef.current) {
       clearTimeout(countDebounceRef.current);
     }
+    // Abort any in-flight request to prevent race conditions
+    if (countAbortRef.current) {
+      countAbortRef.current.abort();
+    }
 
     // Debounce the count fetch to reduce API calls during rapid filter changes
     countDebounceRef.current = setTimeout(async () => {
+      // Create new AbortController for this request
+      const abortController = new AbortController();
+      countAbortRef.current = abortController;
+
       try {
         // Build query params to match officers fetch filters
         const params = new URLSearchParams();
@@ -178,17 +188,26 @@ const HomePage = () => {
 
         const queryString = params.toString();
         const url = `${API_BASE}/officers/count${queryString ? '?' + queryString : ''}`;
-        const response = await fetch(url);
+        const response = await fetch(url, { signal: abortController.signal });
         const data = await response.json();
-        setTotalOfficers(data.count || 0);
+        // Only update state if this request wasn't aborted
+        if (!abortController.signal.aborted) {
+          setTotalOfficers(data.count || 0);
+        }
       } catch (error) {
-        console.error("Failed to fetch total count:", error);
+        // Ignore abort errors, log others
+        if (error.name !== 'AbortError') {
+          console.error("Failed to fetch total count:", error);
+        }
       }
     }, COUNT_DEBOUNCE_MS);
 
     return () => {
       if (countDebounceRef.current) {
         clearTimeout(countDebounceRef.current);
+      }
+      if (countAbortRef.current) {
+        countAbortRef.current.abort();
       }
     };
   }, [forceFilter, dateFrom, dateTo]);
