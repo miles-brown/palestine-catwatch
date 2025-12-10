@@ -177,9 +177,22 @@ from errors import setup_error_handlers, APIError, ErrorCode
 setup_error_handlers(app)
 
 # Configure CORS
+# Note: When allow_credentials=True, allow_origins cannot be ["*"]
+# The browser requires explicit origins for credentialed requests
+_allowed_origins = os.getenv("ALLOWED_ORIGINS", "").split(",")
+_allowed_origins = [o.strip() for o in _allowed_origins if o.strip()]
+# Default origins for development and production
+if not _allowed_origins:
+    _allowed_origins = [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "https://palestine-catwatch.vercel.app",
+        "https://www.palestine-catwatch.vercel.app",
+    ]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
