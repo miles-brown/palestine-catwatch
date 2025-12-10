@@ -4,17 +4,18 @@ import {
   Users, Edit2, Trash2, Merge, Save, X, Search,
   ChevronLeft, ChevronRight, AlertTriangle, CheckCircle,
   Download, FileJson, FileSpreadsheet, Shield, Eye, ThumbsUp, ThumbsDown,
-  BarChart3, Clock
+  BarChart3, Clock, Sparkles
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import PasswordGate from '@/components/PasswordGate';
+import BatchAnalysis from '@/components/BatchAnalysis';
 import { API_BASE, getMediaUrl, fetchWithErrorHandling } from '../utils/api';
 
 const ITEMS_PER_PAGE = 20;
 
 const AdminPage = () => {
-  const [activeTab, setActiveTab] = useState('officers'); // 'officers' or 'verification'
+  const [activeTab, setActiveTab] = useState('officers'); // 'officers', 'verification', or 'analysis'
   const [officers, setOfficers] = useState([]);
   const [totalOfficers, setTotalOfficers] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
@@ -387,6 +388,17 @@ const AdminPage = () => {
                   </span>
                 )}
               </button>
+              <button
+                onClick={() => setActiveTab('analysis')}
+                className={`py-4 px-1 text-sm font-medium border-b-2 transition ${
+                  activeTab === 'analysis'
+                    ? 'border-green-600 text-green-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                <Sparkles className="h-4 w-4 inline mr-2" />
+                Batch Analysis
+              </button>
             </div>
           </div>
         </div>
@@ -406,6 +418,11 @@ const AdminPage = () => {
               )}
               {statusMessage.text}
             </div>
+          )}
+
+          {/* BATCH ANALYSIS TAB */}
+          {activeTab === 'analysis' && (
+            <BatchAnalysis />
           )}
 
           {/* VERIFICATION TAB */}
