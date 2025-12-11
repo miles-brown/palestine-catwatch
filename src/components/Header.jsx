@@ -4,11 +4,15 @@ import { Menu, X, LogIn, LogOut, User, Shield } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '../context/AuthContext';
 
-// Maximum length for displayed user text
+// Constants
 const MAX_DISPLAY_LENGTH = 50;
 
 /**
  * Sanitize user display text to prevent XSS and ensure safe rendering.
+ * Removes potentially dangerous characters and truncates to max length.
+ * @param {string|null|undefined} text - The text to sanitize
+ * @param {number} maxLength - Maximum length of output string
+ * @returns {string} Sanitized text safe for rendering
  */
 const sanitizeDisplayText = (text, maxLength = MAX_DISPLAY_LENGTH) => {
   if (!text || typeof text !== 'string') return '';
@@ -16,6 +20,13 @@ const sanitizeDisplayText = (text, maxLength = MAX_DISPLAY_LENGTH) => {
     .replace(/[<>&"']/g, '')
     .trim()
     .slice(0, maxLength);
+};
+
+// Navigation hover color classes for Palestine theme
+const NAV_HOVER_COLORS = {
+  '/our-story': 'hover:bg-red-50', // Red
+  '/what-we-want': 'hover:bg-green-50', // Green
+  '/about': 'hover:bg-slate-100', // Black (using slate as faint black)
 };
 
 const Header = () => {
@@ -44,6 +55,15 @@ const Header = () => {
     return location.pathname === href;
   };
 
+  /**
+   * Get hover color class for navigation item based on Palestine theme.
+   * @param {string} href - The navigation item's href
+   * @returns {string} Tailwind CSS class for hover background
+   */
+  const getNavHoverColor = (href) => {
+    return NAV_HOVER_COLORS[href] || 'hover:bg-slate-50';
+  };
+
   const handleLogout = () => {
     logout();
     setIsMenuOpen(false);
@@ -52,6 +72,12 @@ const Header = () => {
 
   return (
     <header className="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-sm">
+      {/* Palestine Support Ribbon */}
+      <div className="h-1 w-full bg-gradient-to-r from-black via-white to-green-600 relative">
+        <div className="absolute left-0 top-0 h-full w-1/4 bg-gradient-to-r from-black to-transparent" />
+        <div className="absolute left-0 top-0 h-full w-8 bg-red-600" style={{ clipPath: 'polygon(0 0, 100% 0, 70% 100%, 0 100%)' }} />
+      </div>
+
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
           {/* Logo */}
@@ -77,7 +103,7 @@ const Header = () => {
                 to={item.href}
                 className={`px-3 py-2 text-sm font-medium rounded-md transition-colors ${isActive(item.href)
                   ? 'text-slate-900 bg-slate-100'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                  : `text-slate-600 hover:text-slate-900 ${getNavHoverColor(item.href)}`
                   }`}
               >
                 {item.name}
@@ -127,7 +153,7 @@ const Header = () => {
                   </Button>
                 </Link>
                 <Link to="/register">
-                  <Button className="bg-slate-900 hover:bg-slate-800 text-white text-sm">
+                  <Button className="palestine-flag-btn text-white text-sm font-medium px-4 py-2 rounded-md transition-all hover:opacity-90 hover:shadow-md">
                     Get Involved
                   </Button>
                 </Link>
@@ -213,6 +239,13 @@ const Header = () => {
                       Geographic Analysis
                     </Link>
                     <Link
+                      to="/equipment-correlation"
+                      className={`text-base font-medium px-3 py-3 rounded-lg block ${isActive('/equipment-correlation') ? 'text-slate-900 bg-slate-100' : 'text-slate-600'}`}
+                      onClick={() => setIsMenuOpen(false)}
+                    >
+                      Equipment Correlation
+                    </Link>
+                    <Link
                       to="/timeline"
                       className={`text-base font-medium px-3 py-3 rounded-lg block ${isActive('/timeline') ? 'text-slate-900 bg-slate-100' : 'text-slate-600'}`}
                       onClick={() => setIsMenuOpen(false)}
@@ -284,7 +317,7 @@ const Header = () => {
                       </Button>
                     </Link>
                     <Link to="/register" onClick={() => setIsMenuOpen(false)}>
-                      <Button className="w-full bg-slate-900 hover:bg-slate-800 text-white py-3 text-base">
+                      <Button className="w-full palestine-flag-btn text-white py-3 text-base font-medium">
                         Get Involved
                       </Button>
                     </Link>

@@ -15,6 +15,47 @@
     --primary-100: #f1f5f9;
     --primary-50: #f8fafc;
     --accent: #0f172a;
+
+    /* Palestine flag colors (faint versions) */
+    --palestine-black: rgba(0, 0, 0, 0.7);
+    --palestine-white: rgba(255, 255, 255, 0.9);
+    --palestine-green: rgba(0, 122, 61, 0.7);
+    --palestine-red: rgba(206, 17, 38, 0.7);
+}
+
+/* Palestine Flag Button - faint gradient using all 4 colors */
+.palestine-flag-btn {
+    background: linear-gradient(
+        135deg,
+        rgba(0, 0, 0, 0.75) 0%,
+        rgba(0, 0, 0, 0.65) 25%,
+        rgba(255, 255, 255, 0.3) 25%,
+        rgba(255, 255, 255, 0.2) 50%,
+        rgba(0, 122, 61, 0.65) 50%,
+        rgba(0, 122, 61, 0.75) 75%,
+        rgba(206, 17, 38, 0.7) 75%,
+        rgba(206, 17, 38, 0.8) 100%
+    );
+    background-size: 400% 100%;
+    animation: palestine-shimmer 8s ease infinite;
+    border: 1px solid rgba(0, 0, 0, 0.2);
+}
+
+.palestine-flag-btn:hover {
+    background-size: 400% 100%;
+    animation: palestine-shimmer 4s ease infinite;
+}
+
+@keyframes palestine-shimmer {
+    0% {
+        background-position: 0% 50%;
+    }
+    50% {
+        background-position: 100% 50%;
+    }
+    100% {
+        background-position: 0% 50%;
+    }
 }
 
 /* Line clamp utility */

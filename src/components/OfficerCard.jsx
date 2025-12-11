@@ -75,7 +75,17 @@ const OfficerCard = ({ officer, onClick }) => {
     setImageLoaded(true);
   };
 
-  const handleImageError = () => {
+  /**
+   * Handle image load failure with error logging.
+   * @param {Event} event - The error event from the img element
+   */
+  const handleImageError = (event) => {
+    console.warn('[OfficerCard] Image failed to load', {
+      badgeNumber: officer.badgeNumber || 'unknown',
+      photoUrl: officer.photo || 'no URL provided',
+      force: officer.force || 'unknown force',
+      error: event?.type || 'unknown error',
+    });
     setImageError(true);
     setImageLoaded(true);
   };
