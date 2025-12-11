@@ -1,42 +1,70 @@
 import { useState } from 'react';
+import PropTypes from 'prop-types';
 import { Card } from '@/components/ui/card';
 import { User } from 'lucide-react';
 
-// Get country flag for police force
-const getCountryFlag = () => {
-  // All UK police forces use the Union Jack
-  return '🇬🇧';
+// Constants
+const UNKNOWN_BADGE_PLACEHOLDER = 'UNKNOWN';
+const UNKNOWN_FORCE_PLACEHOLDER = 'UNKNOWN FORCE';
+const OFFICER_BADGE_TEXT = 'STATE AGENT';
+const UK_FLAG = '🇬🇧';
+
+// Force name abbreviations for display
+const FORCE_ABBREVIATIONS = {
+  'METROPOLITAN POLICE SERVICE': 'METROPOLITAN POLICE',
+  'POLICE SERVICE OF NORTHERN IRELAND': 'PSNI',
+  'BRITISH TRANSPORT POLICE': 'BTP',
 };
 
-// Format shoulder/warrant number - replace unknown characters with X
-const formatBadgeNumber = (badgeNumber) => {
-  if (!badgeNumber) return 'XXXXXX';
+/**
+ * Get country flag for police force.
+ * Currently all UK police forces use the Union Jack.
+ * @returns {string} Country flag emoji
+ */
+const getCountryFlag = () => UK_FLAG;
 
-  // If it's marked as unknown or partial, format appropriately
+/**
+ * Format shoulder/warrant number for display.
+ * Replaces unknown characters with X and handles null/undefined values.
+ * @param {string|number|null} badgeNumber - The badge number to format
+ * @returns {string} Formatted badge number
+ */
+const formatBadgeNumber = (badgeNumber) => {
+  if (!badgeNumber) return UNKNOWN_BADGE_PLACEHOLDER;
+
   const badge = badgeNumber.toString().toUpperCase();
 
-  // If badge contains question marks or is marked unknown, replace with X
-  if (badge.includes('?') || badge.toLowerCase().includes('unknown')) {
-    return badge.replace(/\?/g, 'X').replace(/unknown/gi, 'XXXXXX');
+  // Check if marked as unknown
+  if (/^UNKNOWN$/i.test(badge)) {
+    return UNKNOWN_BADGE_PLACEHOLDER;
   }
 
-  return badge;
+  // Replace question marks with X for partial numbers
+  return badge.replace(/\?/g, 'X');
 };
 
-// Format force name for display (uppercase, abbreviated if needed)
+/**
+ * Format force name for display (uppercase, abbreviated if needed).
+ * @param {string|null} force - The force name to format
+ * @returns {string} Formatted force name
+ */
 const formatForceName = (force) => {
-  if (!force) return 'UNKNOWN FORCE';
+  if (!force) return UNKNOWN_FORCE_PLACEHOLDER;
 
   const forceUpper = force.toUpperCase();
+  return FORCE_ABBREVIATIONS[forceUpper] || forceUpper;
+};
 
-  // Common abbreviations for long names
-  const abbreviations = {
-    'METROPOLITAN POLICE SERVICE': 'METROPOLITAN POLICE',
-    'POLICE SERVICE OF NORTHERN IRELAND': 'PSNI',
-    'BRITISH TRANSPORT POLICE': 'BTP',
-  };
-
-  return abbreviations[forceUpper] || forceUpper;
+/**
+ * Generate accessible alt text for officer image.
+ * @param {string|null} badgeNumber - The officer's badge number
+ * @returns {string} Alt text for the image
+ */
+const getImageAltText = (badgeNumber) => {
+  if (!badgeNumber) {
+    return 'Police officer with unidentified badge number';
+  }
+  return `Police officer ${badgeNumber}`;
 };
 
 const OfficerCard = ({ officer, onClick }) => {
@@ -52,9 +80,10 @@ const OfficerCard = ({ officer, onClick }) => {
     setImageLoaded(true);
   };
 
-  const countryFlag = getCountryFlag(officer.force);
+  const countryFlag = getCountryFlag();
   const badgeNumber = formatBadgeNumber(officer.badgeNumber);
   const forceName = formatForceName(officer.force);
+  const altText = getImageAltText(officer.badgeNumber);
 
   return (
     <Card
@@ -79,7 +108,7 @@ const OfficerCard = ({ officer, onClick }) => {
         ) : (
           <img
             src={officer.photo}
-            alt={`Officer ${officer.badgeNumber}`}
+            alt={altText}
             className={`h-full w-full object-cover object-center transition-transform duration-300 group-hover:scale-105 ${
               imageLoaded ? 'opacity-100' : 'opacity-0'
             }`}
@@ -110,7 +139,7 @@ const OfficerCard = ({ officer, onClick }) => {
           <div className="bg-red-700/90 backdrop-blur-sm border border-red-500 px-2 py-1 rounded inline-flex items-center gap-1.5">
             <span className="text-base">{countryFlag}</span>
             <span className="text-white font-bold font-mono text-xs tracking-widest">
-              STATE AGENT
+              {OFFICER_BADGE_TEXT}
             </span>
           </div>
         </div>
@@ -133,6 +162,17 @@ const OfficerCard = ({ officer, onClick }) => {
       </div>
     </Card>
   );
+};
+
+OfficerCard.propTypes = {
+  officer: PropTypes.shape({
+    badgeNumber: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+    force: PropTypes.string,
+    photo: PropTypes.string,
+    role: PropTypes.string,
+    sources: PropTypes.arrayOf(PropTypes.object),
+  }).isRequired,
+  onClick: PropTypes.func.isRequired,
 };
 
 export default OfficerCard;
