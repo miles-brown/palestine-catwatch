@@ -60,7 +60,7 @@ const MobileNav = () => {
               key={item.path}
               to={item.path}
               className={`flex flex-col items-center justify-center gap-1 transition-colors ${
-                active ? 'text-green-600' : 'text-gray-500'
+                active ? 'text-slate-900' : 'text-gray-500'
               }`}
             >
               <Icon className={`h-5 w-5 ${active ? 'stroke-[2.5px]' : ''}`} />
@@ -112,27 +112,64 @@ const AppContent = () => {
         </main>
 
         {/* Footer - Hidden on mobile to make room for bottom nav */}
-        <footer className="bg-black text-white py-8 mt-16 hidden md:block">
+        <footer className="bg-slate-900 text-white py-12 mt-16 hidden md:block">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="text-center">
-              <div className="palestine-flag-stripe mb-4"></div>
-              <div className="flex items-center justify-center gap-2 mb-4">
-                <div className="pa-emblem">PA</div>
-                <span className="text-xl font-bold">Palestine Accountability</span>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
+              {/* Brand */}
+              <div className="md:col-span-1">
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="flex items-center justify-center w-8 h-8 rounded bg-white text-slate-900 font-bold text-xs">
+                    PAC
+                  </div>
+                  <span className="font-semibold">Palestine Accountability</span>
+                </div>
+                <p className="text-sm text-slate-400">
+                  An independent research initiative documenting police conduct at public demonstrations in the UK.
+                </p>
               </div>
-              <p className="text-gray-300 mb-4">
-                Documenting state oppression • Defending democratic rights • Free Palestine
-              </p>
-              <div className="flex flex-wrap justify-center gap-4 text-sm text-gray-400">
-                <span>For press freedom</span>
-                <span>•</span>
-                <span>Against fascism</span>
-                <span>•</span>
-                <span>In memory of fallen journalists</span>
+
+              {/* Research */}
+              <div>
+                <h4 className="font-semibold text-sm uppercase tracking-wider text-slate-400 mb-4">Research</h4>
+                <ul className="space-y-2 text-sm">
+                  <li><Link to="/" className="text-slate-300 hover:text-white transition-colors">Officer Database</Link></li>
+                  <li><Link to="/equipment" className="text-slate-300 hover:text-white transition-colors">Equipment Records</Link></li>
+                  <li><Link to="/timeline" className="text-slate-300 hover:text-white transition-colors">Event Timeline</Link></li>
+                  <li><Link to="/geographic" className="text-slate-300 hover:text-white transition-colors">Geographic Analysis</Link></li>
+                </ul>
               </div>
-              <p className="text-xs text-gray-500 mt-4">
-                "The truth will set you free, but first it will piss you off" - Gloria Steinem
-              </p>
+
+              {/* About */}
+              <div>
+                <h4 className="font-semibold text-sm uppercase tracking-wider text-slate-400 mb-4">About</h4>
+                <ul className="space-y-2 text-sm">
+                  <li><Link to="/our-story" className="text-slate-300 hover:text-white transition-colors">Our Mission</Link></li>
+                  <li><Link to="/what-we-want" className="text-slate-300 hover:text-white transition-colors">Our Goals</Link></li>
+                  <li><Link to="/about" className="text-slate-300 hover:text-white transition-colors">Methodology</Link></li>
+                  <li><Link to="/manifesto" className="text-slate-300 hover:text-white transition-colors">Our Approach</Link></li>
+                </ul>
+              </div>
+
+              {/* Legal */}
+              <div>
+                <h4 className="font-semibold text-sm uppercase tracking-wider text-slate-400 mb-4">Legal</h4>
+                <ul className="space-y-2 text-sm">
+                  <li><Link to="/terms" className="text-slate-300 hover:text-white transition-colors">Terms of Use</Link></li>
+                  <li><Link to="/privacy" className="text-slate-300 hover:text-white transition-colors">Privacy Policy</Link></li>
+                </ul>
+              </div>
+            </div>
+
+            {/* Bottom Bar */}
+            <div className="pt-8 border-t border-slate-800">
+              <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+                <p className="text-sm text-slate-400">
+                  &copy; {new Date().getFullYear()} Palestine Accountability Campaign. Independent research project.
+                </p>
+                <p className="text-xs text-slate-500">
+                  This project operates within UK law. All data is collected from public sources.
+                </p>
+              </div>
             </div>
           </div>
         </footer>
