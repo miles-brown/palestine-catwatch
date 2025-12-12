@@ -59,6 +59,13 @@ BLOCKED_SITES = [
     'dailymail.co.uk',  # Uses Akamai with strict bot detection
     'mailonline.co.uk',
     'nytimes.com',  # Uses CAPTCHA/Cloudflare protection
+    'telegraph.co.uk',  # 403 Forbidden
+    'reuters.com',  # 401 Unauthorized
+    'itv.com',  # 403 Forbidden
+    'cnn.com',  # 451 Geo-blocked
+    'inews.co.uk',  # Blocked
+    'thetimes.com',  # Paywall + blocked
+    'thetimes.co.uk',  # Paywall + blocked
 ]
 
 def is_blocked_site(url):
@@ -93,6 +100,16 @@ SOURCE_NAME_MAP = {
     'reuters.com': 'Reuters',
     'apnews.com': 'AP News',
     'middleeasteye.net': 'Middle East Eye',
+    # Additional sites tested
+    'gbnews.com': 'GB News',
+    'timesofisrael.com': 'Times of Israel',
+    'thejc.com': 'The Jewish Chronicle',
+    'channel4.com': 'Channel 4 News',
+    'itv.com': 'ITV News',
+    'cnn.com': 'CNN',
+    'inews.co.uk': 'The i',
+    'thetimes.com': 'The Times',
+    'thetimes.co.uk': 'The Times',
 }
 
 
@@ -545,6 +562,14 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
             # The Argus / Newsquest CDN (theargus.co.uk, brightonandhoveindependent.co.uk)
             r'https://www\.theargus\.co\.uk/resources/images/[\w/-]{1,150}\.(?:jpg|jpeg|png|webp)',
             r'https://[a-z0-9.-]+\.newsquestdigital\.co\.uk/[\w./-]{1,200}\.(?:jpg|jpeg|png|webp)',
+            # GB News (RebelMouse CDN with media-library path)
+            r'https://www\.gbnews\.com/media-library/[\w./-]{1,200}\.(?:jpg|jpeg|png|webp)(?:\?[\w=&%-]{0,200})?',
+            # Times of Israel CDN
+            r'https://static-cdn\.toi-media\.com/www/uploads/\d{4}/\d{2}/[\w._-]{1,200}\.(?:jpg|jpeg|png|webp)',
+            # The Jewish Chronicle (Atex Cloud)
+            r'https://api\.thejc\.atexcloud\.io/image-service/[\w/.-]{1,200}\.(?:jpg|jpeg|png|webp)(?:\?[\w=&%.:-]{0,100})?',
+            # Channel 4 News (AWS S3)
+            r'https://fournews-assets-prod-s3[a-z0-9-]*\.s3\.amazonaws\.com/media/\d{4}/\d{2}/[\w._-]{1,200}\.(?:jpg|jpeg|png|webp)',
             # Generic CloudFront CDN
             r'https://[a-z0-9.-]{1,50}\.cloudfront\.net/[\w./-]{1,200}\.(?:jpg|jpeg|png|webp)',
         ]
