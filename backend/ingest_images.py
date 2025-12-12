@@ -4,6 +4,7 @@ from urllib3.util.ssl_ import create_urllib3_context
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 import os
+import re
 import ssl
 import uuid
 import logging
@@ -59,38 +60,15 @@ def is_blocked_site(url):
 def get_archive_url(url):
     """
     Try to get an archived version of a blocked URL.
-    Checks archive.today and Wayback Machine.
+    Checks Wayback Machine first (more reliable), then archive.today.
     Returns the archive URL if found, None otherwise.
     """
-    import time
-
-    # Try archive.today/archive.is first (usually has fresher content)
-    archive_services = [
-        f"https://archive.today/newest/{url}",
-        f"https://archive.is/newest/{url}",
-        f"https://archive.ph/newest/{url}",
-    ]
-
     session = requests.Session()
     session.headers.update({
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     })
 
-    # Check archive.today variants
-    for archive_url in archive_services:
-        try:
-            response = session.head(archive_url, timeout=10, allow_redirects=True)
-            if response.status_code == 200:
-                # archive.today redirects to the actual archived page
-                final_url = response.url
-                if final_url != archive_url and 'archive' in final_url:
-                    logging.info(f"Found archive at: {final_url}")
-                    return final_url
-        except Exception as e:
-            logging.debug(f"Archive check failed for {archive_url}: {e}")
-            continue
-
-    # Try Wayback Machine
+    # Try Wayback Machine first (more reliable for automated access)
     try:
         wayback_api = f"https://archive.org/wayback/available?url={url}"
         response = session.get(wayback_api, timeout=10)
@@ -105,7 +83,59 @@ def get_archive_url(url):
     except Exception as e:
         logging.debug(f"Wayback Machine check failed: {e}")
 
+    # archive.today variants often require CAPTCHA, try anyway
+    archive_services = [
+        f"https://archive.today/newest/{url}",
+        f"https://archive.is/newest/{url}",
+    ]
+
+    for archive_url in archive_services:
+        try:
+            response = session.head(archive_url, timeout=10, allow_redirects=True)
+            if response.status_code == 200:
+                final_url = response.url
+                # Check we got redirected to an actual archive page (not CAPTCHA)
+                if final_url != archive_url and '/wip/' not in final_url:
+                    # Verify it's not a CAPTCHA page
+                    check_resp = session.get(final_url, timeout=10)
+                    if b'security check' not in check_resp.content.lower() and b'captcha' not in check_resp.content.lower():
+                        logging.info(f"Found archive at: {final_url}")
+                        return final_url
+        except Exception as e:
+            logging.debug(f"Archive check failed for {archive_url}: {e}")
+            continue
+
     return None
+
+
+def is_wayback_url(url):
+    """Check if URL is from Wayback Machine."""
+    return 'web.archive.org' in url.lower()
+
+
+def convert_wayback_image_url(img_url, page_timestamp=None):
+    """
+    Convert a regular image URL found on a Wayback page to the proper Wayback image URL format.
+    Wayback uses /web/TIMESTAMP_im_/URL format for images.
+    """
+    if 'web.archive.org' in img_url:
+        # Already a Wayback URL, ensure it has im_ modifier for images
+        if '/web/' in img_url and 'im_/' not in img_url:
+            # Add im_ modifier before the original URL
+            parts = img_url.split('/web/')
+            if len(parts) == 2:
+                rest = parts[1]
+                # Format: timestamp/original_url
+                if '/' in rest:
+                    timestamp_end = rest.find('/')
+                    timestamp = rest[:timestamp_end]
+                    original = rest[timestamp_end+1:]
+                    return f"https://web.archive.org/web/{timestamp}im_/{original}"
+        return img_url
+    elif page_timestamp:
+        # Convert regular URL to Wayback format
+        return f"https://web.archive.org/web/{page_timestamp}im_/{img_url}"
+    return img_url
 
 
 def request_archive_save(url):
@@ -388,6 +418,16 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
                 if status_callback:
                     status_callback("log", f"Created protest record from article: {clean_title[:50]}...")
 
+            # Extract Wayback timestamp if we're scraping from archive
+            wayback_timestamp = None
+            if is_wayback_url(url):
+                # Extract timestamp from URL like: web.archive.org/web/20241231215734/...
+                match = re.search(r'web\.archive\.org/web/(\d{14})/', url)
+                if match:
+                    wayback_timestamp = match.group(1)
+                    if status_callback:
+                        status_callback("log", f"Scraping from Wayback Machine archive ({wayback_timestamp[:8]})")
+
             # Process each potential image URL
             for img_url_raw in potential_urls:
                 if not img_url_raw:
@@ -396,10 +436,17 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
                 # Resolve relative URLs
                 img_url = urljoin(url, img_url_raw)
 
-                # Deduplicate
-                if img_url in seen_urls:
+                # For Wayback pages, convert image URLs to proper format
+                if wayback_timestamp and 'web.archive.org' not in img_url:
+                    img_url = convert_wayback_image_url(img_url, wayback_timestamp)
+                elif is_wayback_url(img_url):
+                    img_url = convert_wayback_image_url(img_url)
+
+                # Deduplicate (use original URL for dedup to catch Wayback variants)
+                dedup_key = img_url.split('im_/')[-1] if 'im_/' in img_url else img_url
+                if dedup_key in seen_urls:
                     continue
-                seen_urls.add(img_url)
+                seen_urls.add(dedup_key)
 
                 # Filter small icons/pixels (very basic)
                 if 'icon' in img_url.lower() or 'logo' in img_url.lower() or 'tracker' in img_url.lower():
@@ -410,10 +457,24 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
                     if status_callback:
                         status_callback("status_update", "Downloading")
 
-                    img_data = scraper.get(img_url, timeout=5, verify=False).content
+                    # Use a simple requests session for image downloads
+                    # Images are typically served from CDNs that don't need Cloudflare bypass
+                    img_session = requests.Session()
+                    img_session.mount('https://', SSLAdapter())
+                    img_session.headers.update({
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+                        'Referer': url,  # Some CDNs check referer
+                    })
+                    img_data = img_session.get(img_url, timeout=10, verify=False).content
 
                     # Skip small files (likely icons/trackers)
                     if len(img_data) < 5000:  # 5KB minimum
+                        continue
+
+                    # Verify we got actual image data, not HTML error page
+                    if img_data[:5] == b'<!DOC' or img_data[:5] == b'<html':
+                        logging.debug(f"Got HTML instead of image for {img_url[:60]}")
                         continue
 
                     ext = os.path.splitext(img_url)[1].split('?')[0]
