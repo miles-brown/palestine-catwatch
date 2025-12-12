@@ -80,12 +80,14 @@ const OfficerCard = ({ officer, onClick }) => {
    * @param {Event} event - The error event from the img element
    */
   const handleImageError = (event) => {
-    console.warn('[OfficerCard] Image failed to load', {
-      badgeNumber: officer.badgeNumber || 'unknown',
-      photoUrl: officer.photo || 'no URL provided',
-      force: officer.force || 'unknown force',
-      error: event?.type || 'unknown error',
-    });
+    if (process.env.NODE_ENV !== 'production') {
+      console.warn('[OfficerCard] Image failed to load', {
+        badgeNumber: officer.badgeNumber || 'unknown',
+        photoUrl: officer.photo || 'no URL provided',
+        force: officer.force || 'unknown force',
+        error: event?.type || 'unknown error',
+      });
+    }
     setImageError(true);
     setImageLoaded(true);
   };
@@ -119,6 +121,7 @@ const OfficerCard = ({ officer, onClick }) => {
           <img
             src={officer.photo}
             alt={altText}
+            loading="lazy"
             className={`h-full w-full object-cover object-center transition-transform duration-300 group-hover:scale-105 ${
               imageLoaded ? 'opacity-100' : 'opacity-0'
             }`}

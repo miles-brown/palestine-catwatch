@@ -23,6 +23,11 @@
     --palestine-red: rgba(206, 17, 38, 0.7);
 }
 
+/* Palestine ribbon triangle - CSP-safe alternative to inline style */
+.palestine-ribbon-triangle {
+    clip-path: polygon(0 0, 100% 0, 70% 100%, 0 100%);
+}
+
 /* Palestine Flag Button - faint gradient using all 4 colors */
 .palestine-flag-btn {
     background: linear-gradient(
@@ -37,12 +42,11 @@
         rgba(206, 17, 38, 0.8) 100%
     );
     background-size: 400% 100%;
-    animation: palestine-shimmer 8s ease infinite;
     border: 1px solid rgba(0, 0, 0, 0.2);
 }
 
+/* Only animate on hover to save resources */
 .palestine-flag-btn:hover {
-    background-size: 400% 100%;
     animation: palestine-shimmer 4s ease infinite;
 }
 
@@ -55,6 +59,21 @@
     }
     100% {
         background-position: 0% 50%;
+    }
+}
+
+/* Respect user's motion preferences */
+@media (prefers-reduced-motion: reduce) {
+    .palestine-flag-btn,
+    .palestine-flag-btn:hover {
+        animation: none;
+        background-size: 100% 100%;
+    }
+
+    .animate-pulse,
+    .animate-scan,
+    .timeline-marker-active {
+        animation: none;
     }
 }
 

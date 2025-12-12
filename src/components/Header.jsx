@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Menu, X, LogIn, LogOut, User, Shield } from 'lucide-react';
+import DOMPurify from 'dompurify';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '../context/AuthContext';
 import PalestineRibbon from './PalestineRibbon';
@@ -8,26 +9,69 @@ import PalestineRibbon from './PalestineRibbon';
 // Constants
 const MAX_DISPLAY_LENGTH = 50;
 
+// Unified navigation configuration
+const NAVIGATION_CONFIG = {
+  public: [
+    { name: 'Home', href: '/' },
+    { name: 'Our Mission', href: '/our-story' },
+    { name: 'Our Goals', href: '/what-we-want' },
+    { name: 'About', href: '/about' },
+  ],
+  authenticated: [
+    { name: 'Home', href: '/' },
+    { name: 'Dashboard', href: '/dashboard' },
+    { name: 'Database', href: '/equipment' },
+    { name: 'About', href: '/about' },
+  ],
+  tools: [
+    { name: 'Face Search', href: '/face-search' },
+    { name: 'Equipment Database', href: '/equipment' },
+    { name: 'Chain of Command', href: '/chain-of-command' },
+    { name: 'Geographic Analysis', href: '/geographic' },
+    { name: 'Equipment Correlation', href: '/equipment-correlation' },
+    { name: 'Event Timeline', href: '/timeline' },
+  ],
+  info: [
+    { name: 'Our Approach', href: '/manifesto' },
+    { name: 'Terms of Use', href: '/terms' },
+    { name: 'Privacy Policy', href: '/privacy' },
+  ],
+};
+
+// Navigation hover color classes for Palestine theme
+const NAV_HOVER_COLORS = {
+  '/our-story': 'hover:bg-red-50',
+  '/what-we-want': 'hover:bg-green-50',
+  '/about': 'hover:bg-slate-100',
+};
+
 /**
- * Sanitize user display text to prevent XSS and ensure safe rendering.
- * Removes potentially dangerous characters and truncates to max length.
+ * Sanitize user display text to prevent XSS attacks.
+ * Uses DOMPurify for comprehensive sanitization, then truncates.
  * @param {string|null|undefined} text - The text to sanitize
  * @param {number} maxLength - Maximum length of output string
  * @returns {string} Sanitized text safe for rendering
  */
 const sanitizeDisplayText = (text, maxLength = MAX_DISPLAY_LENGTH) => {
   if (!text || typeof text !== 'string') return '';
-  return text
-    .replace(/[<>&"']/g, '')
-    .trim()
-    .slice(0, maxLength);
+
+  // Use DOMPurify with strict config - text only, no HTML
+  const cleaned = DOMPurify.sanitize(text, {
+    ALLOWED_TAGS: [],
+    ALLOWED_ATTR: [],
+    KEEP_CONTENT: true,
+  });
+
+  return cleaned.trim().slice(0, maxLength);
 };
 
-// Navigation hover color classes for Palestine theme
-const NAV_HOVER_COLORS = {
-  '/our-story': 'hover:bg-red-50', // Red
-  '/what-we-want': 'hover:bg-green-50', // Green
-  '/about': 'hover:bg-slate-100', // Black (using slate as faint black)
+/**
+ * Get hover color class for navigation item based on Palestine theme.
+ * @param {string} href - The navigation item's href
+ * @returns {string} Tailwind CSS class for hover background
+ */
+const getNavHoverColor = (href) => {
+  return NAV_HOVER_COLORS[href] || 'hover:bg-slate-50';
 };
 
 const Header = () => {
@@ -36,34 +80,11 @@ const Header = () => {
   const navigate = useNavigate();
   const { isAuthenticated, isAdmin, user, logout } = useAuth();
 
-  const publicNavigation = [
-    { name: 'Home', href: '/' },
-    { name: 'Our Mission', href: '/our-story' },
-    { name: 'Our Goals', href: '/what-we-want' },
-    { name: 'About', href: '/about' },
-  ];
+  const navigation = isAuthenticated
+    ? NAVIGATION_CONFIG.authenticated
+    : NAVIGATION_CONFIG.public;
 
-  const authNavigation = [
-    { name: 'Home', href: '/' },
-    { name: 'Dashboard', href: '/dashboard' },
-    { name: 'Database', href: '/equipment' },
-    { name: 'About', href: '/about' },
-  ];
-
-  const navigation = isAuthenticated ? authNavigation : publicNavigation;
-
-  const isActive = (href) => {
-    return location.pathname === href;
-  };
-
-  /**
-   * Get hover color class for navigation item based on Palestine theme.
-   * @param {string} href - The navigation item's href
-   * @returns {string} Tailwind CSS class for hover background
-   */
-  const getNavHoverColor = (href) => {
-    return NAV_HOVER_COLORS[href] || 'hover:bg-slate-50';
-  };
+  const isActive = (href) => location.pathname === href;
 
   const handleLogout = () => {
     logout();
@@ -71,12 +92,14 @@ const Header = () => {
     navigate('/');
   };
 
+  const closeMenu = () => setIsMenuOpen(false);
+
   return (
     <header className="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-sm">
-      {/* Palestine Support Ribbon */}
+      {/* Palestine Support Ribbon - uses CSS class instead of inline style */}
       <div className="h-1 w-full bg-gradient-to-r from-black via-white to-green-600 relative">
         <div className="absolute left-0 top-0 h-full w-1/4 bg-gradient-to-r from-black to-transparent" />
-        <div className="absolute left-0 top-0 h-full w-8 bg-red-600" style={{ clipPath: 'polygon(0 0, 100% 0, 70% 100%, 0 100%)' }} />
+        <div className="absolute left-0 top-0 h-full w-8 bg-red-600 palestine-ribbon-triangle" />
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -174,6 +197,8 @@ const Header = () => {
             size="icon"
             className="md:hidden"
             onClick={() => setIsMenuOpen(!isMenuOpen)}
+            aria-expanded={isMenuOpen}
+            aria-label="Toggle navigation menu"
           >
             {isMenuOpen ? (
               <X className="h-5 w-5" />
@@ -193,8 +218,12 @@ const Header = () => {
                   <div className="flex items-center gap-2">
                     <User className="h-5 w-5 text-slate-600" />
                     <div>
-                      <p className="font-medium text-slate-900">{sanitizeDisplayText(user?.full_name) || sanitizeDisplayText(user?.username)}</p>
-                      <p className="text-xs text-slate-500 capitalize">{sanitizeDisplayText(user?.role)}</p>
+                      <p className="font-medium text-slate-900">
+                        {sanitizeDisplayText(user?.full_name) || sanitizeDisplayText(user?.username)}
+                      </p>
+                      <p className="text-xs text-slate-500 capitalize">
+                        {sanitizeDisplayText(user?.role)}
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -204,105 +233,68 @@ const Header = () => {
                 <Link
                   key={item.name}
                   to={item.href}
-                  className={`text-base font-medium px-3 py-3 rounded-lg ${isActive(item.href) ? 'text-slate-900 bg-slate-100' : 'text-slate-600'
-                    }`}
-                  onClick={() => setIsMenuOpen(false)}
+                  className={`text-base font-medium px-3 py-3 rounded-lg ${
+                    isActive(item.href) ? 'text-slate-900 bg-slate-100' : 'text-slate-600'
+                  }`}
+                  onClick={closeMenu}
                 >
                   {item.name}
                 </Link>
               ))}
 
               {isAuthenticated && (
-                <>
-                  {/* Tools Section */}
-                  <div className="pt-3 mt-2 border-t border-slate-100">
-                    <p className="px-3 py-1 text-xs font-semibold text-slate-400 uppercase tracking-wider">Research Tools</p>
+                <div className="pt-3 mt-2 border-t border-slate-100">
+                  <p className="px-3 py-1 text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                    Research Tools
+                  </p>
+                  {NAVIGATION_CONFIG.tools.map((item) => (
                     <Link
-                      to="/face-search"
-                      className={`text-base font-medium px-3 py-3 rounded-lg block ${isActive('/face-search') ? 'text-slate-900 bg-slate-100' : 'text-slate-600'}`}
-                      onClick={() => setIsMenuOpen(false)}
+                      key={item.href}
+                      to={item.href}
+                      className={`text-base font-medium px-3 py-3 rounded-lg block ${
+                        isActive(item.href) ? 'text-slate-900 bg-slate-100' : 'text-slate-600'
+                      }`}
+                      onClick={closeMenu}
                     >
-                      Face Search
+                      {item.name}
                     </Link>
+                  ))}
+                  {isAdmin && (
                     <Link
-                      to="/equipment"
-                      className={`text-base font-medium px-3 py-3 rounded-lg block ${isActive('/equipment') ? 'text-slate-900 bg-slate-100' : 'text-slate-600'}`}
-                      onClick={() => setIsMenuOpen(false)}
+                      to="/admin"
+                      className={`text-base font-medium px-3 py-3 rounded-lg block ${
+                        isActive('/admin') ? 'text-slate-900 bg-slate-100' : 'text-slate-600'
+                      }`}
+                      onClick={closeMenu}
                     >
-                      Equipment Database
+                      Admin Panel
                     </Link>
-                    <Link
-                      to="/chain-of-command"
-                      className={`text-base font-medium px-3 py-3 rounded-lg block ${isActive('/chain-of-command') ? 'text-slate-900 bg-slate-100' : 'text-slate-600'}`}
-                      onClick={() => setIsMenuOpen(false)}
-                    >
-                      Chain of Command
-                    </Link>
-                    <Link
-                      to="/geographic"
-                      className={`text-base font-medium px-3 py-3 rounded-lg block ${isActive('/geographic') ? 'text-slate-900 bg-slate-100' : 'text-slate-600'}`}
-                      onClick={() => setIsMenuOpen(false)}
-                    >
-                      Geographic Analysis
-                    </Link>
-                    <Link
-                      to="/equipment-correlation"
-                      className={`text-base font-medium px-3 py-3 rounded-lg block ${isActive('/equipment-correlation') ? 'text-slate-900 bg-slate-100' : 'text-slate-600'}`}
-                      onClick={() => setIsMenuOpen(false)}
-                    >
-                      Equipment Correlation
-                    </Link>
-                    <Link
-                      to="/timeline"
-                      className={`text-base font-medium px-3 py-3 rounded-lg block ${isActive('/timeline') ? 'text-slate-900 bg-slate-100' : 'text-slate-600'}`}
-                      onClick={() => setIsMenuOpen(false)}
-                    >
-                      Event Timeline
-                    </Link>
-                    {isAdmin && (
-                      <Link
-                        to="/admin"
-                        className={`text-base font-medium px-3 py-3 rounded-lg block ${isActive('/admin') ? 'text-slate-900 bg-slate-100' : 'text-slate-600'}`}
-                        onClick={() => setIsMenuOpen(false)}
-                      >
-                        Admin Panel
-                      </Link>
-                    )}
-                  </div>
-                </>
+                  )}
+                </div>
               )}
 
               {/* Info Section */}
               <div className="pt-3 mt-2 border-t border-slate-100">
-                <p className="px-3 py-1 text-xs font-semibold text-slate-400 uppercase tracking-wider">Information</p>
-                <Link
-                  to="/manifesto"
-                  className="text-base font-medium text-slate-600 px-3 py-3 rounded-lg block"
-                  onClick={() => setIsMenuOpen(false)}
-                >
-                  Our Approach
-                </Link>
-                <Link
-                  to="/terms"
-                  className="text-base font-medium text-slate-600 px-3 py-3 rounded-lg block"
-                  onClick={() => setIsMenuOpen(false)}
-                >
-                  Terms of Use
-                </Link>
-                <Link
-                  to="/privacy"
-                  className="text-base font-medium text-slate-600 px-3 py-3 rounded-lg block"
-                  onClick={() => setIsMenuOpen(false)}
-                >
-                  Privacy Policy
-                </Link>
+                <p className="px-3 py-1 text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                  Information
+                </p>
+                {NAVIGATION_CONFIG.info.map((item) => (
+                  <Link
+                    key={item.href}
+                    to={item.href}
+                    className="text-base font-medium text-slate-600 px-3 py-3 rounded-lg block"
+                    onClick={closeMenu}
+                  >
+                    {item.name}
+                  </Link>
+                ))}
               </div>
 
               {/* Action Buttons */}
               <div className="pt-3 mt-2 border-t border-slate-100 space-y-2">
                 {isAuthenticated ? (
                   <>
-                    <Link to="/upload" onClick={() => setIsMenuOpen(false)}>
+                    <Link to="/upload" onClick={closeMenu}>
                       <Button className="w-full bg-slate-900 hover:bg-slate-800 text-white py-3 text-base">
                         Submit Evidence
                       </Button>
@@ -318,12 +310,12 @@ const Header = () => {
                   </>
                 ) : (
                   <>
-                    <Link to="/login" onClick={() => setIsMenuOpen(false)}>
+                    <Link to="/login" onClick={closeMenu}>
                       <Button variant="outline" className="w-full py-3 text-base">
                         Sign In
                       </Button>
                     </Link>
-                    <Link to="/register" onClick={() => setIsMenuOpen(false)}>
+                    <Link to="/register" onClick={closeMenu}>
                       <Button className="w-full palestine-flag-btn text-white py-3 text-base font-medium">
                         Get Involved
                       </Button>
