@@ -39,7 +39,7 @@ CLOUDFLARE_SITES = [
     'independent.co.uk',
 ]
 
-# Sites that completely block automated access (need manual image upload)
+# Sites that completely block automated access (need archive workaround)
 BLOCKED_SITES = [
     'dailymail.co.uk',  # Uses Akamai with strict bot detection
     'mailonline.co.uk',
@@ -48,7 +48,95 @@ BLOCKED_SITES = [
 def is_blocked_site(url):
     """Check if site is known to completely block automated scraping."""
     url_lower = url.lower()
+    # Don't block if already using an archive service
+    if 'archive.is' in url_lower or 'archive.today' in url_lower or 'archive.ph' in url_lower:
+        return False
+    if 'web.archive.org' in url_lower:
+        return False
     return any(site in url_lower for site in BLOCKED_SITES)
+
+
+def get_archive_url(url):
+    """
+    Try to get an archived version of a blocked URL.
+    Checks archive.today and Wayback Machine.
+    Returns the archive URL if found, None otherwise.
+    """
+    import time
+
+    # Try archive.today/archive.is first (usually has fresher content)
+    archive_services = [
+        f"https://archive.today/newest/{url}",
+        f"https://archive.is/newest/{url}",
+        f"https://archive.ph/newest/{url}",
+    ]
+
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    })
+
+    # Check archive.today variants
+    for archive_url in archive_services:
+        try:
+            response = session.head(archive_url, timeout=10, allow_redirects=True)
+            if response.status_code == 200:
+                # archive.today redirects to the actual archived page
+                final_url = response.url
+                if final_url != archive_url and 'archive' in final_url:
+                    logging.info(f"Found archive at: {final_url}")
+                    return final_url
+        except Exception as e:
+            logging.debug(f"Archive check failed for {archive_url}: {e}")
+            continue
+
+    # Try Wayback Machine
+    try:
+        wayback_api = f"https://archive.org/wayback/available?url={url}"
+        response = session.get(wayback_api, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            snapshots = data.get('archived_snapshots', {})
+            closest = snapshots.get('closest', {})
+            if closest.get('available') and closest.get('url'):
+                wayback_url = closest['url']
+                logging.info(f"Found Wayback Machine archive: {wayback_url}")
+                return wayback_url
+    except Exception as e:
+        logging.debug(f"Wayback Machine check failed: {e}")
+
+    return None
+
+
+def request_archive_save(url):
+    """
+    Request archive.today to save a new snapshot of the URL.
+    Returns the job URL to check status, or None if failed.
+    """
+    try:
+        # archive.today submit endpoint
+        submit_url = "https://archive.today/submit/"
+        session = requests.Session()
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Content-Type': 'application/x-www-form-urlencoded',
+        })
+
+        response = session.post(
+            submit_url,
+            data={'url': url},
+            timeout=30,
+            allow_redirects=True
+        )
+
+        if response.status_code == 200:
+            # Returns the archived page URL
+            return response.url
+
+    except Exception as e:
+        logging.warning(f"Failed to request archive save: {e}")
+
+    return None
 
 class SSLAdapter(HTTPAdapter):
     """Custom SSL adapter that disables certificate verification."""
@@ -137,18 +225,35 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
     """
     Scrapes images from a web page (news article, etc.) and processes them.
     Uses cloudscraper for Cloudflare-protected sites.
+    For blocked sites, attempts to use archive.is/archive.org as fallback.
     """
+    original_url = url
+
     # Check if site is known to block all automated access
     if is_blocked_site(url):
-        error_msg = (
-            "This site (Daily Mail) blocks automated scraping. "
-            "Please download images manually and upload them directly, "
-            "or try a different news source covering the same event."
-        )
         if status_callback:
-            status_callback("log", error_msg)
-            status_callback("complete", {"message": error_msg, "media_id": None})
-        return
+            status_callback("log", "This site blocks direct scraping. Checking for archived version...")
+            status_callback("status_update", "Checking Archives")
+
+        # Try to find an archived version
+        archive_url = get_archive_url(url)
+
+        if archive_url:
+            if status_callback:
+                status_callback("log", f"Found archived version! Using: {archive_url[:60]}...")
+            url = archive_url
+        else:
+            # No archive found - give user options
+            error_msg = (
+                "This site blocks automated scraping and no archive was found. "
+                "Options: 1) Archive the page at archive.today first, then submit the archive URL. "
+                "2) Download images manually and upload directly. "
+                "3) Try a different news source covering the same event."
+            )
+            if status_callback:
+                status_callback("log", error_msg)
+                status_callback("complete", {"message": error_msg, "media_id": None})
+            return
 
     if status_callback:
         status_callback("status_update", "Connecting")
