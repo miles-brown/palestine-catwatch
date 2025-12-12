@@ -44,6 +44,7 @@ CLOUDFLARE_SITES = [
 BLOCKED_SITES = [
     'dailymail.co.uk',  # Uses Akamai with strict bot detection
     'mailonline.co.uk',
+    'nytimes.com',  # Uses CAPTCHA/Cloudflare protection
 ]
 
 def is_blocked_site(url):
@@ -379,9 +380,13 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
         # Pattern for common news site CDN image URLs (high quality versions)
         # Matches URLs like: https://i2-prod.mirror.co.uk/incoming/article123.ece/ALTERNATES/s1200/image.jpg
         cdn_patterns = [
+            # Mirror/Reach PLC sites
             r'https://i[0-9]-prod\.[a-z]+\.co\.uk/[^"\'\s>]+/ALTERNATES/s(?:1200|810|615)[^"\'\s>]*\.(?:jpg|jpeg|png|webp)',
-            r'https://[a-z0-9.-]+\.cloudfront\.net/[^"\'\s>]+\.(?:jpg|jpeg|png|webp)',
             r'https://[a-z0-9.-]+/incoming/article[0-9]+\.ece/[^"\'\s>]+\.(?:jpg|jpeg|png|webp)',
+            # NY Times CDN (high quality: superJumbo, jumbo, videoSixteenByNine3000, threeByTwoLargeAt2X)
+            r'https://static01\.nyt\.com/images/[^"\'\s>]+(?:superJumbo|jumbo|videoSixteenByNine3000|threeByTwoLargeAt2X)[^"\'\s>]*\.(?:jpg|jpeg|png|webp)',
+            # Generic CloudFront CDN
+            r'https://[a-z0-9.-]+\.cloudfront\.net/[^"\'\s>]+\.(?:jpg|jpeg|png|webp)',
         ]
 
         # Collect all matches, prioritizing images from the same article
@@ -392,6 +397,17 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
 
         # Sort: prioritize images with article IDs close to the main article
         def article_relevance(img_url):
+            img_url_lower = img_url.lower()
+
+            # NY Times: prioritize by size (superJumbo > jumbo > others)
+            if 'static01.nyt.com' in img_url_lower:
+                if 'superjumbo' in img_url_lower:
+                    return 0  # Highest quality
+                elif 'jumbo' in img_url_lower:
+                    return 1
+                return 2
+
+            # Mirror/Reach: Match article ID
             match = re.search(r'article(\d+)', img_url)
             if match and article_id:
                 img_article_id = int(match.group(1))
@@ -401,10 +417,26 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
                     return 0  # High priority
                 elif diff < 100000:
                     return 1  # Medium priority
+
             return 2  # Low priority (unrelated articles)
 
         all_cdn_urls.sort(key=article_relevance)
-        potential_urls.extend(all_cdn_urls)
+
+        # Deduplicate NY Times images - keep only highest quality version of each unique image
+        seen_nyt_bases = set()
+        deduped_urls = []
+        for img_url in all_cdn_urls:
+            if 'static01.nyt.com' in img_url:
+                # Extract base image ID (e.g., "11uk-protest-mjgv" from the path)
+                base_match = re.search(r'/multimedia/([^/]+)/\1-', img_url)
+                if base_match:
+                    base_id = base_match.group(1)
+                    if base_id in seen_nyt_bases:
+                        continue  # Skip duplicate (lower quality version)
+                    seen_nyt_bases.add(base_id)
+            deduped_urls.append(img_url)
+
+        potential_urls.extend(deduped_urls)
 
         if status_callback and len(potential_urls) > 1:
             status_callback("log", f"Found {len(potential_urls)} potential images in page.")
