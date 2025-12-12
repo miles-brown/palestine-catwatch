@@ -367,6 +367,48 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
             if src:
                 potential_urls.append(src)
 
+        # 3. Extract images from JSON data, data attributes, and inline scripts
+        # Many modern sites embed image URLs in JSON or data attributes for lazy loading
+        html_text = html_content.decode('utf-8', errors='ignore') if isinstance(html_content, bytes) else html_content
+
+        # Extract article ID from URL to prioritize related images
+        # Handles formats like: /article-12345678, /article12345678.ece, or /story-name-12345678
+        article_id_match = re.search(r'(?:article-?|-)(\d{7,})(?:$|[/?#])', url)
+        article_id = int(article_id_match.group(1)) if article_id_match else None
+
+        # Pattern for common news site CDN image URLs (high quality versions)
+        # Matches URLs like: https://i2-prod.mirror.co.uk/incoming/article123.ece/ALTERNATES/s1200/image.jpg
+        cdn_patterns = [
+            r'https://i[0-9]-prod\.[a-z]+\.co\.uk/[^"\'\s>]+/ALTERNATES/s(?:1200|810|615)[^"\'\s>]*\.(?:jpg|jpeg|png|webp)',
+            r'https://[a-z0-9.-]+\.cloudfront\.net/[^"\'\s>]+\.(?:jpg|jpeg|png|webp)',
+            r'https://[a-z0-9.-]+/incoming/article[0-9]+\.ece/[^"\'\s>]+\.(?:jpg|jpeg|png|webp)',
+        ]
+
+        # Collect all matches, prioritizing images from the same article
+        all_cdn_urls = []
+        for pattern in cdn_patterns:
+            matches = re.findall(pattern, html_text, re.IGNORECASE)
+            all_cdn_urls.extend(matches)
+
+        # Sort: prioritize images with article IDs close to the main article
+        def article_relevance(img_url):
+            match = re.search(r'article(\d+)', img_url)
+            if match and article_id:
+                img_article_id = int(match.group(1))
+                # Images from same article or nearby (within 10000) are likely related
+                diff = abs(img_article_id - article_id)
+                if diff < 10000:
+                    return 0  # High priority
+                elif diff < 100000:
+                    return 1  # Medium priority
+            return 2  # Low priority (unrelated articles)
+
+        all_cdn_urls.sort(key=article_relevance)
+        potential_urls.extend(all_cdn_urls)
+
+        if status_callback and len(potential_urls) > 1:
+            status_callback("log", f"Found {len(potential_urls)} potential images in page.")
+
         saved_count = 0
         seen_urls = set()
         db = SessionLocal()
@@ -448,8 +490,21 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
                     continue
                 seen_urls.add(dedup_key)
 
-                # Filter small icons/pixels (very basic)
-                if 'icon' in img_url.lower() or 'logo' in img_url.lower() or 'tracker' in img_url.lower():
+                # Filter out irrelevant images
+                img_url_lower = img_url.lower()
+
+                # Skip icons, logos, trackers
+                if any(x in img_url_lower for x in ['icon', 'logo', 'tracker', 'pixel', 'badge', 'avatar']):
+                    continue
+
+                # Skip unrelated content sections (celebrity, sports, entertainment, etc.)
+                # These are often in sidebar/related articles on news sites
+                unrelated_keywords = [
+                    '/royals/', '/celeb', '/sport/', '/football/', '/showbiz/',
+                    '/tv-news/', '/lifestyle/', '/money/', '/travel/',
+                    'meghan', 'kardashian', 'taylor-swift', 'strictly',
+                ]
+                if any(kw in img_url_lower for kw in unrelated_keywords):
                     continue
 
                 # Download image
