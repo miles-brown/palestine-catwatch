@@ -377,6 +377,12 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
         article_id_match = re.search(r'(?:article-?|-)(\d{7,})(?:$|[/?#])', url)
         article_id = int(article_id_match.group(1)) if article_id_match else None
 
+        # Extract Sky News video ID from URL (e.g., -13444801 at end)
+        sky_video_id = None
+        sky_match = re.search(r'-(\d{7,})$', url.split('?')[0])
+        if sky_match and 'sky.com' in url.lower():
+            sky_video_id = sky_match.group(1)
+
         # Pattern for common news site CDN image URLs (high quality versions)
         # Matches URLs like: https://i2-prod.mirror.co.uk/incoming/article123.ece/ALTERNATES/s1200/image.jpg
         cdn_patterns = [
@@ -385,6 +391,10 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
             r'https://[a-z0-9.-]+/incoming/article[0-9]+\.ece/[^"\'\s>]+\.(?:jpg|jpeg|png|webp)',
             # NY Times CDN (high quality: superJumbo, jumbo, videoSixteenByNine3000, threeByTwoLargeAt2X)
             r'https://static01\.nyt\.com/images/[^"\'\s>]+(?:superJumbo|jumbo|videoSixteenByNine3000|threeByTwoLargeAt2X)[^"\'\s>]*\.(?:jpg|jpeg|png|webp)',
+            # Evening Standard CDN (static.standard.co.uk)
+            r'https://static\.standard\.co\.uk/\d{4}/\d{2}/\d{2}/[^"\'\s>]+\.(?:jpg|jpeg|png|webp)',
+            # Sky News CDN (e3.365dm.com) - capture various sizes
+            r'https://e3\.365dm\.com/\d{2}/\d{2}/[^"\'\s>]+\.(?:jpg|jpeg|png|webp)',
             # Generic CloudFront CDN
             r'https://[a-z0-9.-]+\.cloudfront\.net/[^"\'\s>]+\.(?:jpg|jpeg|png|webp)',
         ]
@@ -394,6 +404,25 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
         for pattern in cdn_patterns:
             matches = re.findall(pattern, html_text, re.IGNORECASE)
             all_cdn_urls.extend(matches)
+
+        # Upgrade image URLs to highest quality versions
+        def upgrade_image_url(img_url):
+            """Upgrade image URL to highest quality version available."""
+            # Evening Standard: upgrade width parameter to 1200
+            if 'static.standard.co.uk' in img_url:
+                # Remove existing width param and add width=1200
+                base_url = re.sub(r'[?&]width=\d+', '', img_url)
+                if '?' in base_url:
+                    return base_url + '&width=1200'
+                else:
+                    return base_url + '?width=1200&quality=75&auto=webp'
+
+            # Sky News: upgrade to 1600x900 (largest size)
+            if 'e3.365dm.com' in img_url:
+                # Replace size pattern with 1600x900
+                return re.sub(r'/\d+x\d+/', '/1600x900/', img_url)
+
+            return img_url
 
         # Sort: prioritize images with article IDs close to the main article
         def article_relevance(img_url):
@@ -406,6 +435,20 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
                 elif 'jumbo' in img_url_lower:
                     return 1
                 return 2
+
+            # Sky News: prioritize images matching article ID, then by size
+            if 'e3.365dm.com' in img_url_lower:
+                # Check if image ID matches the video/article ID
+                img_id_match = re.search(r'_(\d{7,})\.', img_url)
+                if img_id_match and sky_video_id:
+                    if img_id_match.group(1) == sky_video_id:
+                        return 0  # Exact match - highest priority
+                # Fallback to size-based priority
+                if '1600x900' in img_url:
+                    return 1
+                elif '768x432' in img_url:
+                    return 2
+                return 3
 
             # Mirror/Reach: Match article ID
             match = re.search(r'article(\d+)', img_url)
@@ -422,19 +465,41 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
 
         all_cdn_urls.sort(key=article_relevance)
 
-        # Deduplicate NY Times images - keep only highest quality version of each unique image
-        seen_nyt_bases = set()
+        # Deduplicate images - keep only highest quality version of each unique image
+        seen_bases = set()
         deduped_urls = []
         for img_url in all_cdn_urls:
+            # NY Times deduplication
             if 'static01.nyt.com' in img_url:
-                # Extract base image ID (e.g., "11uk-protest-mjgv" from the path)
                 base_match = re.search(r'/multimedia/([^/]+)/\1-', img_url)
                 if base_match:
                     base_id = base_match.group(1)
-                    if base_id in seen_nyt_bases:
-                        continue  # Skip duplicate (lower quality version)
-                    seen_nyt_bases.add(base_id)
-            deduped_urls.append(img_url)
+                    if base_id in seen_bases:
+                        continue
+                    seen_bases.add(base_id)
+
+            # Sky News deduplication (by image name without size)
+            elif 'e3.365dm.com' in img_url:
+                # Extract base name: skynews-xxx_id or hash_id
+                base_match = re.search(r'/\d+x\d+/([^?]+)', img_url)
+                if base_match:
+                    base_id = base_match.group(1)
+                    if base_id in seen_bases:
+                        continue
+                    seen_bases.add(base_id)
+
+            # Evening Standard deduplication (by filename)
+            elif 'static.standard.co.uk' in img_url:
+                # Extract filename before query params
+                base_match = re.search(r'/([^/?]+\.(?:jpg|jpeg|png|webp))', img_url, re.IGNORECASE)
+                if base_match:
+                    base_id = base_match.group(1)
+                    if base_id in seen_bases:
+                        continue
+                    seen_bases.add(base_id)
+
+            # Upgrade URL to highest quality and add
+            deduped_urls.append(upgrade_image_url(img_url))
 
         potential_urls.extend(deduped_urls)
 
