@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Menu, X, LogIn, LogOut, User, Shield } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '../context/AuthContext';
+import PalestineRibbon from './PalestineRibbon';
 
 // Constants
 const MAX_DISPLAY_LENGTH = 50;
@@ -80,10 +81,16 @@ const Header = () => {
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
-          {/* Logo */}
+          {/* Logo with Ribbon */}
           <Link to="/" className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-slate-900 text-white font-bold text-sm">
-              PAC
+            <div className="relative">
+              <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-slate-900 text-white font-bold text-sm">
+                PAC
+              </div>
+              {/* Solidarity ribbon on logo */}
+              <div className="absolute -top-1 -right-1">
+                <PalestineRibbon size="sm" />
+              </div>
             </div>
             <div>
               <div className="text-lg font-semibold text-slate-900">

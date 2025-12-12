@@ -4,6 +4,7 @@ import Header from './components/Header';
 import HomePage from './components/HomePage';
 import ErrorBoundary from './components/ErrorBoundary';
 import ProtectedRoute, { AdminRoute } from './components/ProtectedRoute';
+import PalestineRibbon from './components/PalestineRibbon';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import OurStory from './pages/OurStory';
 import WhatWeWant from './pages/WhatWeWant';
@@ -117,14 +118,22 @@ const AppContent = () => {
             <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
               {/* Brand */}
               <div className="md:col-span-1">
-                <div className="flex items-center gap-2 mb-4">
-                  <div className="flex items-center justify-center w-8 h-8 rounded bg-white text-slate-900 font-bold text-xs">
-                    PAC
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="relative">
+                    <div className="flex items-center justify-center w-8 h-8 rounded bg-white text-slate-900 font-bold text-xs">
+                      PAC
+                    </div>
                   </div>
                   <span className="font-semibold">Palestine Accountability</span>
+                  {/* Solidarity ribbon */}
+                  <PalestineRibbon size="md" className="ml-1" />
                 </div>
                 <p className="text-sm text-slate-400">
                   An independent research initiative documenting police conduct at public demonstrations in the UK.
+                </p>
+                <p className="text-xs text-slate-500 mt-3 flex items-center gap-2">
+                  <span>In solidarity with Palestine</span>
+                  <span className="text-base">🇵🇸</span>
                 </p>
               </div>
 
