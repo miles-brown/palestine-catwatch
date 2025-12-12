@@ -13,12 +13,42 @@ from database import SessionLocal
 import models
 from process import process_media
 
+# Try to import cloudscraper for bypassing Cloudflare protection
+try:
+    import cloudscraper
+    HAS_CLOUDSCRAPER = True
+except ImportError:
+    HAS_CLOUDSCRAPER = False
+    logging.warning("cloudscraper not installed - some sites may block scraping")
+
 # Disable SSL warnings for development
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Directory to store downloads
 DOWNLOAD_DIR = "data/downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
+# Sites known to use Cloudflare or aggressive bot protection
+CLOUDFLARE_SITES = [
+    'dailymail.co.uk',
+    'mirror.co.uk',
+    'express.co.uk',
+    'thesun.co.uk',
+    'metro.co.uk',
+    'standard.co.uk',
+    'independent.co.uk',
+]
+
+# Sites that completely block automated access (need manual image upload)
+BLOCKED_SITES = [
+    'dailymail.co.uk',  # Uses Akamai with strict bot detection
+    'mailonline.co.uk',
+]
+
+def is_blocked_site(url):
+    """Check if site is known to completely block automated scraping."""
+    url_lower = url.lower()
+    return any(site in url_lower for site in BLOCKED_SITES)
 
 class SSLAdapter(HTTPAdapter):
     """Custom SSL adapter that disables certificate verification."""
@@ -29,8 +59,36 @@ class SSLAdapter(HTTPAdapter):
         kwargs['ssl_context'] = ctx
         return super().init_poolmanager(*args, **kwargs)
 
-def create_scraper_session():
-    """Create a requests session with SSL bypass and browser-like headers."""
+def needs_cloudscraper(url):
+    """Check if URL is from a site that needs cloudscraper."""
+    url_lower = url.lower()
+    return any(site in url_lower for site in CLOUDFLARE_SITES)
+
+def create_scraper_session(url=None):
+    """
+    Create a scraper session appropriate for the target URL.
+    Uses cloudscraper for Cloudflare-protected sites, regular requests otherwise.
+    """
+    # Use cloudscraper for protected sites
+    if url and needs_cloudscraper(url) and HAS_CLOUDSCRAPER:
+        logging.info(f"Using cloudscraper for protected site: {url}")
+        try:
+            scraper = cloudscraper.create_scraper(
+                browser={
+                    'browser': 'chrome',
+                    'platform': 'windows',
+                    'desktop': True
+                },
+                # Disable SSL verification for sites with cert issues
+                # This is safe since we're just scraping public news pages
+            )
+            # Try to set SSL verify to False at session level
+            scraper.verify = False
+            return scraper
+        except Exception as e:
+            logging.warning(f"Failed to create cloudscraper: {e}, falling back to requests")
+
+    # Fallback to regular requests with browser headers
     session = requests.Session()
     session.mount('https://', SSLAdapter())
     session.headers.update({
@@ -40,31 +98,97 @@ def create_scraper_session():
         'Accept-Encoding': 'gzip, deflate, br',
         'Connection': 'keep-alive',
         'Upgrade-Insecure-Requests': '1',
+        'Cache-Control': 'max-age=0',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
     })
     return session
+
+
+def fetch_with_curl_fallback(url, timeout=15):
+    """
+    Fallback to curl subprocess if Python requests fail.
+    Used for stubborn sites that block all Python HTTP libraries.
+    """
+    import subprocess
+    import tempfile
+
+    try:
+        # Use curl with browser-like headers
+        result = subprocess.run([
+            'curl', '-s', '-L',
+            '-H', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            '-H', 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            '-H', 'Accept-Language: en-US,en;q=0.9',
+            '--connect-timeout', str(timeout),
+            url
+        ], capture_output=True, text=True, timeout=timeout + 5)
+
+        if result.returncode == 0:
+            return result.stdout
+    except Exception as e:
+        logging.warning(f"curl fallback failed: {e}")
+
+    return None
 
 def scrape_images_from_url(url, protest_id=None, status_callback=None):
     """
     Scrapes images from a web page (news article, etc.) and processes them.
+    Uses cloudscraper for Cloudflare-protected sites.
     """
+    # Check if site is known to block all automated access
+    if is_blocked_site(url):
+        error_msg = (
+            "This site (Daily Mail) blocks automated scraping. "
+            "Please download images manually and upload them directly, "
+            "or try a different news source covering the same event."
+        )
+        if status_callback:
+            status_callback("log", error_msg)
+            status_callback("complete", {"message": error_msg, "media_id": None})
+        return
+
     if status_callback:
         status_callback("status_update", "Connecting")
 
-    # Create session with SSL bypass
-    scraper = create_scraper_session()
+    # Create appropriate scraper session for the URL
+    scraper = create_scraper_session(url)
 
+    # Log which scraper is being used
+    using_cloudscraper = needs_cloudscraper(url) and HAS_CLOUDSCRAPER
     if status_callback:
-        status_callback("log", "Attempting to scrape images from page...")
+        if using_cloudscraper:
+            status_callback("log", "Using advanced scraper to bypass site protection...")
+        else:
+            status_callback("log", "Attempting to scrape images from page...")
 
     try:
         if status_callback:
             status_callback("status_update", "Scraping")
 
-        response = scraper.get(url, timeout=15, verify=False)
-        response.raise_for_status()
+        html_content = None
+
+        # Try scraper first
+        try:
+            response = scraper.get(url, timeout=15, verify=False)
+            response.raise_for_status()
+            html_content = response.content
+        except Exception as e:
+            logging.warning(f"Primary scraper failed: {e}, trying curl fallback...")
+            if status_callback:
+                status_callback("log", "Primary method blocked, trying alternative...")
+
+            # Fallback to curl
+            html_text = fetch_with_curl_fallback(url)
+            if html_text:
+                html_content = html_text.encode('utf-8')
+            else:
+                raise Exception(f"All scraping methods failed for {url}")
 
         # Parse content
-        soup = BeautifulSoup(response.content, 'html.parser')
+        soup = BeautifulSoup(html_content, 'html.parser')
 
         # Extract meaningful text for description
         article_text = ""
