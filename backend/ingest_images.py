@@ -395,6 +395,8 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
             r'https://static\.standard\.co\.uk/\d{4}/\d{2}/\d{2}/[^"\'\s>]+\.(?:jpg|jpeg|png|webp)',
             # Sky News CDN (e3.365dm.com) - capture various sizes
             r'https://e3\.365dm\.com/\d{2}/\d{2}/[^"\'\s>]+\.(?:jpg|jpeg|png|webp)',
+            # Al Jazeera (wp-content/uploads)
+            r'https://www\.aljazeera\.com/wp-content/uploads/\d{4}/\d{2}/[^"\'\s>]+\.(?:jpg|jpeg|png|webp)',
             # Generic CloudFront CDN
             r'https://[a-z0-9.-]+\.cloudfront\.net/[^"\'\s>]+\.(?:jpg|jpeg|png|webp)',
         ]
@@ -421,6 +423,12 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
             if 'e3.365dm.com' in img_url:
                 # Replace size pattern with 1600x900
                 return re.sub(r'/\d+x\d+/', '/1600x900/', img_url)
+
+            # Al Jazeera: upgrade to highest quality (1920x1440)
+            if 'aljazeera.com/wp-content/uploads' in img_url:
+                # Remove existing resize params and set to max quality
+                base_url = img_url.split('?')[0]
+                return base_url + '?resize=1920%2C1440&quality=80'
 
             return img_url
 
@@ -490,6 +498,16 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
 
             # Evening Standard deduplication (by filename)
             elif 'static.standard.co.uk' in img_url:
+                # Extract filename before query params
+                base_match = re.search(r'/([^/?]+\.(?:jpg|jpeg|png|webp))', img_url, re.IGNORECASE)
+                if base_match:
+                    base_id = base_match.group(1)
+                    if base_id in seen_bases:
+                        continue
+                    seen_bases.add(base_id)
+
+            # Al Jazeera deduplication (by filename)
+            elif 'aljazeera.com/wp-content/uploads' in img_url:
                 # Extract filename before query params
                 base_match = re.search(r'/([^/?]+\.(?:jpg|jpeg|png|webp))', img_url, re.IGNORECASE)
                 if base_match:
