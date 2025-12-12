@@ -72,6 +72,54 @@ def is_blocked_site(url):
     return any(site in url_lower for site in BLOCKED_SITES)
 
 
+# Source name mapping for provenance tracking
+SOURCE_NAME_MAP = {
+    'bbc.co.uk': 'BBC News',
+    'bbc.com': 'BBC News',
+    'theguardian.com': 'The Guardian',
+    'mirror.co.uk': 'Daily Mirror',
+    'independent.co.uk': 'The Independent',
+    'standard.co.uk': 'Evening Standard',
+    'mylondon.news': 'MyLondon',
+    'theargus.co.uk': 'The Argus',
+    'sky.com': 'Sky News',
+    'aljazeera.com': 'Al Jazeera',
+    'nytimes.com': 'The New York Times',
+    'express.co.uk': 'Daily Express',
+    'telegraph.co.uk': 'The Telegraph',
+    'metro.co.uk': 'Metro',
+    'dailymail.co.uk': 'Daily Mail',
+    'thesun.co.uk': 'The Sun',
+    'reuters.com': 'Reuters',
+    'apnews.com': 'AP News',
+    'middleeasteye.net': 'Middle East Eye',
+}
+
+
+def get_source_name(url: str) -> str:
+    """
+    Extract source name from URL for provenance tracking.
+
+    Args:
+        url: The article URL
+
+    Returns:
+        Human-readable source name or domain if unknown
+    """
+    url_lower = url.lower()
+    for domain, name in SOURCE_NAME_MAP.items():
+        if domain in url_lower:
+            return name
+
+    # Fallback: extract domain name
+    try:
+        parsed = urlparse(url)
+        domain = parsed.netloc.replace('www.', '')
+        return domain.split('.')[0].title()
+    except Exception:
+        return "Unknown Source"
+
+
 def get_archive_url(url):
     """
     Try to get an archived version of a blocked URL.
@@ -382,7 +430,82 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
             if src:
                 potential_urls.append(src)
 
-        # 3. Extract images from JSON data, data attributes, and inline scripts
+        # 3. Extract captions and credits for images
+        # Build a map of image URL -> caption/credit info
+        image_captions = {}  # Maps image URL (or partial) to caption
+        image_credits = {}   # Maps image URL (or partial) to rights holder/photographer
+
+        # Extract from <figure> elements (most common pattern)
+        for figure in soup.find_all('figure'):
+            # Find image in figure
+            img = figure.find('img')
+            if not img:
+                continue
+
+            img_src = img.get('data-src') or img.get('src') or ''
+
+            # Find figcaption
+            figcaption = figure.find('figcaption')
+            if figcaption:
+                caption_text = figcaption.get_text(strip=True)
+                if caption_text and len(caption_text) > 10:
+                    image_captions[img_src] = caption_text
+
+                    # Try to extract credit (often in parentheses or after "Credit:", "Photo:", etc.)
+                    credit_match = re.search(
+                        r'(?:Credit|Photo|Image|Source|©|\()?:?\s*([A-Z][A-Za-z\s]+(?:Images?|News|Media|Photos?|Press|Agency|Pictures)?)\)?$',
+                        caption_text
+                    )
+                    if credit_match:
+                        image_credits[img_src] = credit_match.group(1).strip()
+
+            # Also check for data-caption attribute
+            data_caption = img.get('data-caption') or figure.get('data-caption')
+            if data_caption and img_src not in image_captions:
+                image_captions[img_src] = data_caption
+
+        # Extract credits from dedicated credit elements
+        for credit_elem in soup.find_all(['span', 'div', 'p'], class_=re.compile(r'credit|source|photographer', re.I)):
+            credit_text = credit_elem.get_text(strip=True)
+            if credit_text and len(credit_text) < 100:
+                # Try to associate with nearby image
+                parent = credit_elem.find_parent(['figure', 'div'])
+                if parent:
+                    img = parent.find('img')
+                    if img:
+                        img_src = img.get('data-src') or img.get('src') or ''
+                        if img_src:
+                            image_credits[img_src] = credit_text
+
+        if status_callback and (image_captions or image_credits):
+            status_callback("log", f"Extracted {len(image_captions)} captions, {len(image_credits)} credits")
+
+        def find_caption_for_url(target_url: str) -> tuple:
+            """
+            Find caption and credit for an image URL.
+
+            Args:
+                target_url: The image URL to look up
+
+            Returns:
+                Tuple of (caption, rights_holder) - either may be None
+            """
+            # Try exact match first
+            if target_url in image_captions:
+                return (image_captions.get(target_url), image_credits.get(target_url))
+
+            # Try partial match (URLs may differ in params or protocol)
+            target_lower = target_url.lower()
+            for stored_url, caption in image_captions.items():
+                # Match by filename
+                stored_filename = stored_url.split('/')[-1].split('?')[0].lower()
+                target_filename = target_lower.split('/')[-1].split('?')[0]
+                if stored_filename and target_filename and stored_filename == target_filename:
+                    return (caption, image_credits.get(stored_url))
+
+            return (None, None)
+
+        # 4. Extract images from JSON data, data attributes, and inline scripts
         # Many modern sites embed image URLs in JSON or data attributes for lazy loading
         html_text = html_content.decode('utf-8', errors='ignore') if isinstance(html_content, bytes) else html_content
 
@@ -403,8 +526,9 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
         # - https://cdn.images.express.co.uk/img/dynamic/1/1200x712/secondary/London-5674436.webp
         # Note: Using length-limited patterns to prevent ReDoS attacks
         cdn_patterns = [
-            # Mirror/Reach PLC sites
+            # Mirror/Reach PLC sites (mirror.co.uk, mylondon.news, etc.)
             r'https://i[0-9]-prod\.[a-z]+\.co\.uk/[\w./-]{1,200}/ALTERNATES/s(?:1200|810|615)[\w./-]{0,100}\.(?:jpg|jpeg|png|webp)',
+            r'https://i[0-9]-prod\.mylondon\.news/[\w./-]{1,200}/ALTERNATES/s(?:1200|810|615)[\w./-]{0,100}\.(?:jpg|jpeg|png|webp)',
             r'https://[a-z0-9.-]+/incoming/article[0-9]+\.ece/[\w./-]{1,200}\.(?:jpg|jpeg|png|webp)',
             # NY Times CDN (high quality: superJumbo, jumbo, videoSixteenByNine3000, threeByTwoLargeAt2X)
             r'https://static01\.nyt\.com/images/[\w./-]{1,200}(?:superJumbo|jumbo|videoSixteenByNine3000|threeByTwoLargeAt2X)[\w.-]{0,50}\.(?:jpg|jpeg|png|webp)',
@@ -416,6 +540,11 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
             r'https://www\.aljazeera\.com/wp-content/uploads/\d{4}/\d{2}/[\w._-]{1,200}\.(?:jpg|jpeg|png|webp)',
             # Express CDN (high quality versions: 1200x, 940x, 674x)
             r'https://cdn\.images\.express\.co\.uk/img/dynamic/[\w/-]{1,100}(?:1200|940|674)[\w/-]{0,50}\.(?:jpg|jpeg|png|webp)',
+            # Independent CDN (static.independent.co.uk)
+            r'https://static\.independent\.co\.uk/[\d/]{1,30}/[\w._()-]{1,200}\.(?:jpg|jpeg|png|webp)(?:\?[\w=&%]{0,100})?',
+            # The Argus / Newsquest CDN (theargus.co.uk, brightonandhoveindependent.co.uk)
+            r'https://www\.theargus\.co\.uk/resources/images/[\w/-]{1,150}\.(?:jpg|jpeg|png|webp)',
+            r'https://[a-z0-9.-]+\.newsquestdigital\.co\.uk/[\w./-]{1,200}\.(?:jpg|jpeg|png|webp)',
             # Generic CloudFront CDN
             r'https://[a-z0-9.-]{1,50}\.cloudfront\.net/[\w./-]{1,200}\.(?:jpg|jpeg|png|webp)',
         ]
@@ -464,6 +593,15 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
                     'resize': IMAGE_QUALITY_SETTINGS['aljazeera_resize'],
                     'quality': IMAGE_QUALITY_SETTINGS['aljazeera_quality']
                 })
+                return urlunparse(parsed._replace(query=new_query, fragment=''))
+
+            # Independent: upgrade quality parameter
+            if 'static.independent.co.uk' in img_url_lower:
+                parsed = urlparse(img_url)
+                params = parse_qs(parsed.query)
+                params['width'] = [str(IMAGE_QUALITY_SETTINGS['standard_width'])]
+                params['quality'] = [str(IMAGE_QUALITY_SETTINGS['standard_quality'])]
+                new_query = urlencode(params, doseq=True)
                 return urlunparse(parsed._replace(query=new_query, fragment=''))
 
             return img_url
@@ -572,6 +710,33 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
                             continue
                         seen_bases.add(base_id)
 
+                # Independent deduplication (by filename)
+                elif 'static.independent.co.uk' in img_url_lower:
+                    base_match = re.search(r'/([^/?]+\.(?:jpg|jpeg|png|webp))', img_url, re.IGNORECASE)
+                    if base_match:
+                        base_id = base_match.group(1).lower()
+                        if base_id in seen_bases:
+                            continue
+                        seen_bases.add(base_id)
+
+                # The Argus / Newsquest deduplication (by filename)
+                elif 'theargus.co.uk' in img_url_lower or 'newsquestdigital.co.uk' in img_url_lower:
+                    base_match = re.search(r'/([^/?]+\.(?:jpg|jpeg|png|webp))', img_url, re.IGNORECASE)
+                    if base_match:
+                        base_id = base_match.group(1).lower()
+                        if base_id in seen_bases:
+                            continue
+                        seen_bases.add(base_id)
+
+                # MyLondon deduplication (same as Mirror/Reach)
+                elif 'mylondon.news' in img_url_lower:
+                    base_match = re.search(r'article(\d+)', img_url)
+                    if base_match:
+                        base_id = base_match.group(1)
+                        if base_id in seen_bases:
+                            continue
+                        seen_bases.add(base_id)
+
                 # Upgrade URL to highest quality and add
                 deduped_urls.append(upgrade_image_url(img_url))
             except (re.error, AttributeError):
@@ -588,28 +753,26 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
         db = SessionLocal()
 
         try:
+            # Extract article metadata for provenance tracking (always needed)
+            og_title = soup.find('meta', property='og:title')
+            title = og_title['content'] if og_title else (soup.title.string if soup.title else "Scraped Article")
+            clean_title = title.strip() if title else "Scraped Article"
+
+            # Extract publication date
+            pub_time = soup.find('meta', property='article:published_time') or \
+                       soup.find('meta', {'name': 'date'}) or \
+                       soup.find('meta', {'name': 'parsely-pub-date'})
+            event_date = datetime.now(timezone.utc)
+            if pub_time and pub_time.get('content'):
+                try:
+                    dt_str = pub_time['content'].split('T')[0]
+                    event_date = datetime.strptime(dt_str, "%Y-%m-%d")
+                except Exception:
+                    pass
+
             # Create a protest placeholder if needed
             if not protest_id:
-                # Metadata extraction (Smart)
-                # 1. Title
-                og_title = soup.find('meta', property='og:title')
-                title = og_title['content'] if og_title else (soup.title.string if soup.title else "Scraped Article")
-                clean_title = title.strip() if title else "Scraped Article"
-
-                # 2. Date
-                pub_time = soup.find('meta', property='article:published_time') or \
-                           soup.find('meta', {'name': 'date'}) or \
-                           soup.find('meta', {'name': 'parsely-pub-date'})
-                event_date = datetime.now(timezone.utc)
-                if pub_time and pub_time.get('content'):
-                    try:
-                        # Handle ISO formats roughly
-                        dt_str = pub_time['content'].split('T')[0]
-                        event_date = datetime.strptime(dt_str, "%Y-%m-%d")
-                    except:
-                        pass
-
-                # 3. Location (Naive Heuristic via Title/Desc)
+                # Location detection (Naive Heuristic via Title/Desc)
                 loc = "Unknown"
                 text_lower = (clean_title + description_text[:200]).lower()
                 if "london" in text_lower: loc = "London, UK"
@@ -727,13 +890,24 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
                         })
                         status_callback("log", f"Scraped image: {filename}")
 
-                    # Create Media Record
+                    # Look up caption and credit for this image
+                    img_caption, img_credit = find_caption_for_url(img_url_raw)
+
+                    # Create Media Record with provenance tracking
                     new_media = models.Media(
                         url=filepath,
                         type='image',
                         protest_id=protest_id,
                         timestamp=datetime.now(timezone.utc),
-                        processed=False
+                        processed=False,
+                        # Provenance fields
+                        source_url=original_url,
+                        source_name=get_source_name(original_url),
+                        caption=img_caption,
+                        rights_holder=img_credit,
+                        article_headline=clean_title[:500] if clean_title else None,
+                        article_summary=description_text[:1000] if description_text else None,
+                        scraped_at=datetime.now(timezone.utc)
                     )
                     db.add(new_media)
                     db.commit()

@@ -95,6 +95,16 @@ class Media(Base):
     is_duplicate = Column(Boolean, default=False)  # Marked as duplicate
     duplicate_of_id = Column(Integer, ForeignKey("media.id"), nullable=True)  # Original media if duplicate
 
+    # Provenance tracking fields - source attribution for scraped media
+    source_url = Column(String, nullable=True, index=True)  # Original article URL
+    source_name = Column(String(100), nullable=True, index=True)  # Publisher name: "BBC News", "The Guardian"
+    caption = Column(Text, nullable=True)  # Photo caption from article
+    rights_holder = Column(String(200), nullable=True)  # Copyright holder: "PA Images", "Reuters"
+    photographer = Column(String(200), nullable=True)  # Individual photographer credit
+    article_headline = Column(String(500), nullable=True)  # Article title for context
+    article_summary = Column(Text, nullable=True)  # Brief article summary
+    scraped_at = Column(DateTime, nullable=True)  # When the media was scraped
+
     protest = relationship("Protest", back_populates="media")
     appearances = relationship("OfficerAppearance", back_populates="media")
     uploaded_by_user = relationship("User", back_populates="uploads", foreign_keys=[uploaded_by])
