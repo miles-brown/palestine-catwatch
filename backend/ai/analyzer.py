@@ -10,6 +10,9 @@ import ssl
 from logging_config import get_logger, log_performance
 logger = get_logger("analyzer")
 
+# Import path validation for security
+from cleanup import is_safe_path
+
 try:
     _create_unverified_https_context = ssl._create_unverified_context
 except AttributeError:
@@ -249,7 +252,10 @@ def get_body_roi(img, face_box):
 # Minimum dimensions for quality control
 MIN_FACE_CROP_SIZE = 100  # Minimum face crop dimension
 MIN_BODY_CROP_SIZE = 150  # Minimum body crop dimension
-FACE_CONFIDENCE_THRESHOLD = 0.6  # Minimum face detection confidence
+
+# Detection thresholds from environment variables
+FACE_CONFIDENCE_THRESHOLD = float(os.environ.get('FACE_DETECTION_CONFIDENCE', '0.6'))
+PERSON_CONFIDENCE_THRESHOLD = float(os.environ.get('PERSON_DETECTION_CONFIDENCE', '0.4'))
 
 
 def generate_face_crop(img, face_box, output_path, expand_ratio=0.3):
@@ -293,6 +299,11 @@ def generate_face_crop(img, face_box, output_path, expand_ratio=0.3):
     if face_crop.size == 0:
         return None
 
+    # Security: Validate output path before writing
+    if not is_safe_path(output_path):
+        logger.error(f"Path traversal attempt blocked for face crop: {output_path}")
+        return None
+
     # Save crop
     try:
         cv2.imwrite(output_path, face_crop)
@@ -323,21 +334,35 @@ def generate_body_crop(img, face_box, person_box, output_path):
     face_x, face_y, face_w, face_h = face_box
 
     if person_box:
-        # Use YOLO person detection box
-        px, py, pw, ph = person_box
-
-        # Validate that face is within person box (sanity check)
-        face_center_x = face_x + face_w / 2
-        face_center_y = face_y + face_h / 2
-
-        if (px <= face_center_x <= px + pw and
-            py <= face_center_y <= py + ph):
-            # Face is within person box - use it directly
-            crop_x1, crop_y1 = px, py
-            crop_x2, crop_y2 = px + pw, py + ph
-        else:
-            # Face not in person box - use face-based estimation
+        # Validate person_box format before unpacking
+        if not isinstance(person_box, (list, tuple)) or len(person_box) != 4:
+            logger.warning(f"Invalid person_box format: {person_box}, using face-based estimation")
             person_box = None
+        else:
+            try:
+                # Use YOLO person detection box
+                px, py, pw, ph = [int(v) for v in person_box]
+
+                # Validate coordinates are reasonable
+                if pw <= 0 or ph <= 0 or px < 0 or py < 0:
+                    logger.warning(f"Invalid person_box coordinates: {person_box}")
+                    person_box = None
+                else:
+                    # Validate that face is within person box (sanity check)
+                    face_center_x = face_x + face_w / 2
+                    face_center_y = face_y + face_h / 2
+
+                    if (px <= face_center_x <= px + pw and
+                        py <= face_center_y <= py + ph):
+                        # Face is within person box - use it directly
+                        crop_x1, crop_y1 = px, py
+                        crop_x2, crop_y2 = px + pw, py + ph
+                    else:
+                        # Face not in person box - use face-based estimation
+                        person_box = None
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Failed to parse person_box {person_box}: {e}")
+                person_box = None
 
     if not person_box:
         # Estimate full body from face using human proportions
@@ -371,6 +396,11 @@ def generate_body_crop(img, face_box, person_box, output_path):
     body_crop = img[crop_y1:crop_y2, crop_x1:crop_x2]
 
     if body_crop.size == 0:
+        return None
+
+    # Security: Validate output path before writing
+    if not is_safe_path(output_path):
+        logger.error(f"Path traversal attempt blocked for body crop: {output_path}")
         return None
 
     # Save crop
@@ -439,7 +469,21 @@ def find_person_for_face(face_box, person_detections, iou_threshold=0.3):
         if detection.get('label') != 'person':
             continue
 
-        px, py, pw, ph = detection['box']
+        # Validate box exists and has correct format
+        box = detection.get('box')
+        if not isinstance(box, (list, tuple)) or len(box) != 4:
+            logger.warning(f"Invalid detection box format: {box}")
+            continue
+
+        try:
+            px, py, pw, ph = [int(v) for v in box]
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Failed to parse detection box {box}: {e}")
+            continue
+
+        # Validate coordinates are reasonable
+        if pw <= 0 or ph <= 0:
+            continue
 
         # Check if face center is within person box
         if (px <= face_center_x <= px + pw and
@@ -455,7 +499,7 @@ def find_person_for_face(face_box, person_detections, iou_threshold=0.3):
 
                 if score > best_score:
                     best_score = score
-                    best_match = detection['box']
+                    best_match = box
 
     return best_match
 
@@ -679,7 +723,7 @@ def process_image_ai(image_path, output_dir):
 
     # 1. Object Detection (YOLO) - Run first to get person boxes for body crops
     yolo_detections = detect_objects(image_path)
-    person_detections = [d for d in yolo_detections if d['label'] == 'person' and d['confidence'] > 0.4]
+    person_detections = [d for d in yolo_detections if d['label'] == 'person' and d['confidence'] > PERSON_CONFIDENCE_THRESHOLD]
     objects_found = list(set([d['label'] for d in yolo_detections]))
 
     # 2. Face Detection (Primary)
@@ -762,6 +806,12 @@ def process_image_ai(image_path, output_dir):
             person_img = img[y:y+h, x:x+w]
             body_filename = f"body_{base_filename}_person_{i}.jpg"
             body_path = os.path.join(output_dir, body_filename)
+
+            # Security: Validate output path before writing
+            if not is_safe_path(body_path):
+                logger.error(f"Path traversal attempt blocked for person crop: {body_path}")
+                continue
+
             cv2.imwrite(body_path, person_img)
 
             analyzed_data.append({

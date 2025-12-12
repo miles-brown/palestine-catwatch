@@ -51,6 +51,19 @@ def upgrade() -> None:
         # Keep image_crop_path for backwards compatibility (legacy field)
         # It will continue to store the primary crop path
 
+        # Data migration: populate new fields from existing image_crop_path
+        # For existing records, use image_crop_path as face_crop_path
+        # (since original crops were face-focused)
+        if 'image_crop_path' in existing_columns:
+            conn.execute(
+                sa.text("""
+                    UPDATE officer_appearances
+                    SET face_crop_path = image_crop_path
+                    WHERE face_crop_path IS NULL
+                    AND image_crop_path IS NOT NULL
+                """)
+            )
+
 
 def downgrade() -> None:
     """Remove face_crop_path and body_crop_path columns."""

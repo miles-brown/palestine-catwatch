@@ -16,6 +16,10 @@ from dataclasses import dataclass
 # UK police shoulder numbers follow predictable patterns based on force
 # Format: 1-2 letter prefix + 2-5 digit number (e.g., U1234, AB123)
 
+# Rank prefixes that should NOT be used for force detection
+# These indicate rank, not force
+RANK_PREFIXES = {"PC", "PS", "PCSO", "SGT", "INSP", "INS", "CI", "CHINSP", "SUPT"}
+
 BADGE_PREFIX_FORCES = {
     # Metropolitan Police Service (MPS)
     # Uses single letters for boroughs/units
@@ -333,19 +337,44 @@ class ForceDetector:
         if not prefix:
             return None, 0.0, []
 
+        # Skip rank prefixes entirely - they indicate rank, not force
+        # This prevents "PS123" matching Police Scotland when PS means Sergeant
+        if prefix.upper() in RANK_PREFIXES:
+            return None, 0.0, []
+
+        # Validate we have a proper badge number (prefix + digits)
+        if not number or len(number) < 2:
+            return None, 0.0, []
+
         # Check progressively shorter prefixes
+        # Start from full prefix to catch more specific matches first
         for length in range(len(prefix), 0, -1):
             test_prefix = prefix[:length]
+
+            # Skip if this shortened prefix is a rank prefix
+            if test_prefix.upper() in RANK_PREFIXES:
+                continue
+
             if test_prefix in BADGE_PREFIX_FORCES:
                 force = BADGE_PREFIX_FORCES[test_prefix]
-                # Confidence based on prefix length match
-                confidence = min(0.95, 0.7 + (length * 0.1))
-                indicators = [f"Badge prefix '{test_prefix}' matches {force}"]
 
-                # Higher confidence for longer, more specific prefixes
-                if length >= 2:
-                    confidence = min(0.98, confidence + 0.1)
-                    indicators.append(f"Full prefix match: {prefix}")
+                # Confidence based on prefix length and specificity
+                # Single-letter prefixes get lower confidence (more ambiguous)
+                if length == 1:
+                    # Single letters could be ambiguous - require more digits
+                    if len(number) < 3:
+                        continue  # Skip, not confident enough
+                    confidence = 0.65  # Lower confidence for single-letter
+                    indicators = [f"Badge prefix '{test_prefix}' suggests {force} (verify)"]
+                else:
+                    # Multi-letter prefixes are more reliable
+                    confidence = min(0.95, 0.75 + (length * 0.08))
+                    indicators = [f"Badge prefix '{test_prefix}' matches {force}"]
+
+                    # Exact full prefix match gets higher confidence
+                    if test_prefix == prefix:
+                        confidence = min(0.98, confidence + 0.1)
+                        indicators.append(f"Full prefix match: {prefix}")
 
                 return force, confidence, indicators
 

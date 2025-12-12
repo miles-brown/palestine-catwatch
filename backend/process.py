@@ -73,6 +73,10 @@ MIN_IMAGE_SIZE_BYTES = 5000
 ENABLE_AUTO_UNIFORM_ANALYSIS = os.environ.get('ENABLE_AUTO_UNIFORM_ANALYSIS', 'false').lower() == 'true'
 UNIFORM_ANALYSIS_RATE_LIMIT = int(os.environ.get('UNIFORM_ANALYSIS_RATE_LIMIT', '10'))  # per minute
 
+# AI Detection confidence thresholds (configurable via environment)
+FORCE_DETECTION_CONFIDENCE = float(os.environ.get('FORCE_DETECTION_CONFIDENCE', '0.6'))
+RANK_DETECTION_CONFIDENCE = float(os.environ.get('RANK_DETECTION_CONFIDENCE', '0.6'))
+
 
 def calculate_face_similarity(embedding1, embedding2, return_tier=False):
     """
@@ -347,11 +351,11 @@ def run_uniform_analysis(
                 )
                 db.add(detection)
 
-        # Update officer force if high confidence (>= 60%)
+        # Update officer force if above configured confidence threshold
         force_name = result.get("force")
         force_conf = result.get("force_confidence", 0)
 
-        if force_name and force_conf >= 0.6:
+        if force_name and force_conf >= FORCE_DETECTION_CONFIDENCE:
             appearance = db.query(models.OfficerAppearance).filter(
                 models.OfficerAppearance.id == appearance_id
             ).first()
@@ -363,11 +367,11 @@ def run_uniform_analysis(
                     officer.force = force_name
                     print(f"Updated officer force to: {force_name}")
 
-        # Update officer rank if detected
+        # Update officer rank if above configured confidence threshold
         rank_name = result.get("rank")
         rank_conf = result.get("rank_confidence", 0)
 
-        if rank_name and rank_conf >= 0.6:
+        if rank_name and rank_conf >= RANK_DETECTION_CONFIDENCE:
             appearance = db.query(models.OfficerAppearance).filter(
                 models.OfficerAppearance.id == appearance_id
             ).first()
@@ -657,9 +661,9 @@ def analyze_frames(media_id, media_frames_dir, status_callback=None):
                 try:
                     from ai.force_detector import detect_force as quick_force_detect
                     quick_result = quick_force_detect(badge_text=badge_text)
-                    if quick_result.force and quick_result.force_confidence >= 0.6:
+                    if quick_result.force and quick_result.force_confidence >= FORCE_DETECTION_CONFIDENCE:
                         detected_force = quick_result.force
-                    if quick_result.rank and quick_result.rank_confidence >= 0.6:
+                    if quick_result.rank and quick_result.rank_confidence >= RANK_DETECTION_CONFIDENCE:
                         detected_rank = quick_result.rank
                 except Exception as e:
                     print(f"Quick force detection error: {e}")
