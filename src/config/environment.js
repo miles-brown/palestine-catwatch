@@ -51,10 +51,7 @@ export const config = {
 
         if (!isValidUrl(url)) {
             console.error(`Invalid API URL: ${url}. Expected format: http(s)://hostname:port`);
-            // Return default in development, throw in production
-            if (import.meta.env.PROD) {
-                throw new Error(`Invalid VITE_API_URL: ${url}`);
-            }
+            // Return default instead of crashing - API calls will fail gracefully
             return OPTIONAL_VARS.VITE_API_URL;
         }
 
@@ -95,14 +92,11 @@ export function validateEnvironment() {
         errors.push(`Invalid VITE_API_URL format: ${apiUrl}`);
     }
 
-    // Log warnings in development
-    if (errors.length > 0 && import.meta.env.DEV) {
-        console.warn('Environment validation warnings:', errors);
-    }
-
-    // Throw in production
-    if (errors.length > 0 && import.meta.env.PROD) {
-        throw new Error(`Environment validation failed:\n${errors.join('\n')}`);
+    // Log warnings/errors but don't crash the app
+    if (errors.length > 0) {
+        console.error('Environment validation errors:', errors);
+        // Don't throw - let the app try to load with defaults
+        // API calls will fail gracefully with user-friendly error messages
     }
 
     return errors.length === 0;
