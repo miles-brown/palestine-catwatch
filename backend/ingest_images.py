@@ -377,11 +377,17 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
         article_id = int(article_id_match.group(1)) if article_id_match else None
 
         # Pattern for common news site CDN image URLs (high quality versions)
-        # Matches URLs like: https://i2-prod.mirror.co.uk/incoming/article123.ece/ALTERNATES/s1200/image.jpg
+        # Matches URLs like:
+        # - https://i2-prod.mirror.co.uk/incoming/article123.ece/ALTERNATES/s1200/image.jpg
+        # - https://cdn.images.express.co.uk/img/dynamic/1/1200x712/secondary/London-5674436.webp
         cdn_patterns = [
+            # Mirror/Reach PLC sites
             r'https://i[0-9]-prod\.[a-z]+\.co\.uk/[^"\'\s>]+/ALTERNATES/s(?:1200|810|615)[^"\'\s>]*\.(?:jpg|jpeg|png|webp)',
-            r'https://[a-z0-9.-]+\.cloudfront\.net/[^"\'\s>]+\.(?:jpg|jpeg|png|webp)',
             r'https://[a-z0-9.-]+/incoming/article[0-9]+\.ece/[^"\'\s>]+\.(?:jpg|jpeg|png|webp)',
+            # Express CDN (high quality versions: 1200x, 940x, 674x)
+            r'https://cdn\.images\.express\.co\.uk/img/dynamic/[^"\'\s>]+(?:1200|940|674)[^"\'\s>]*\.(?:jpg|jpeg|png|webp)',
+            # Generic CloudFront CDN
+            r'https://[a-z0-9.-]+\.cloudfront\.net/[^"\'\s>]+\.(?:jpg|jpeg|png|webp)',
         ]
 
         # Collect all matches, prioritizing images from the same article
@@ -390,8 +396,16 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
             matches = re.findall(pattern, html_text, re.IGNORECASE)
             all_cdn_urls.extend(matches)
 
-        # Sort: prioritize images with article IDs close to the main article
+        # Sort: prioritize images with article/image IDs that appear multiple times
+        # or are in the "secondary" folder (main article images on Express)
         def article_relevance(img_url):
+            img_url_lower = img_url.lower()
+
+            # Express: "secondary" images are main article images
+            if '/secondary/' in img_url_lower:
+                return 0  # High priority
+
+            # Mirror/Reach: Match article ID
             match = re.search(r'article(\d+)', img_url)
             if match and article_id:
                 img_article_id = int(match.group(1))
@@ -401,6 +415,7 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
                     return 0  # High priority
                 elif diff < 100000:
                     return 1  # Medium priority
+
             return 2  # Low priority (unrelated articles)
 
         all_cdn_urls.sort(key=article_relevance)
