@@ -2,7 +2,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.ssl_ import create_urllib3_context
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse, urlunparse, parse_qs, urlencode
 import os
 import re
 import ssl
@@ -28,6 +28,20 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # Directory to store downloads
 DOWNLOAD_DIR = "data/downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
+# Image quality settings for URL upgrades
+IMAGE_QUALITY_SETTINGS = {
+    'standard_width': 1200,
+    'standard_quality': 75,
+    'sky_resolution': '1600x900',
+    'aljazeera_resize': '1920,1440',
+    'aljazeera_quality': 80,
+}
+
+# Article ID matching thresholds for image relevance
+# Images with article IDs within these ranges are considered related
+ARTICLE_ID_HIGH_PRIORITY_THRESHOLD = 10000    # Within 10k = same article cluster
+ARTICLE_ID_MEDIUM_PRIORITY_THRESHOLD = 100000  # Within 100k = related content
 
 # Sites known to use Cloudflare or aggressive bot protection
 CLOUDFLARE_SITES = [
@@ -387,23 +401,23 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
         # Matches URLs like:
         # - https://i2-prod.mirror.co.uk/incoming/article123.ece/ALTERNATES/s1200/image.jpg
         # - https://cdn.images.express.co.uk/img/dynamic/1/1200x712/secondary/London-5674436.webp
-        # Note: Using [\w./-]+ for safer path matching where possible
+        # Note: Using length-limited patterns to prevent ReDoS attacks
         cdn_patterns = [
             # Mirror/Reach PLC sites
-            r'https://i[0-9]-prod\.[a-z]+\.co\.uk/[\w./-]+/ALTERNATES/s(?:1200|810|615)[\w./-]*\.(?:jpg|jpeg|png|webp)',
-            r'https://[a-z0-9.-]+/incoming/article[0-9]+\.ece/[\w./-]+\.(?:jpg|jpeg|png|webp)',
+            r'https://i[0-9]-prod\.[a-z]+\.co\.uk/[\w./-]{1,200}/ALTERNATES/s(?:1200|810|615)[\w./-]{0,100}\.(?:jpg|jpeg|png|webp)',
+            r'https://[a-z0-9.-]+/incoming/article[0-9]+\.ece/[\w./-]{1,200}\.(?:jpg|jpeg|png|webp)',
             # NY Times CDN (high quality: superJumbo, jumbo, videoSixteenByNine3000, threeByTwoLargeAt2X)
-            r'https://static01\.nyt\.com/images/[\w./-]+(?:superJumbo|jumbo|videoSixteenByNine3000|threeByTwoLargeAt2X)[\w.-]*\.(?:jpg|jpeg|png|webp)',
+            r'https://static01\.nyt\.com/images/[\w./-]{1,200}(?:superJumbo|jumbo|videoSixteenByNine3000|threeByTwoLargeAt2X)[\w.-]{0,50}\.(?:jpg|jpeg|png|webp)',
             # Evening Standard CDN (static.standard.co.uk) - date + time path
-            r'https://static\.standard\.co\.uk/\d{4}/\d{2}/\d{2}/\d{1,2}/\d{2}/[\w.()\-]+\.(?:jpg|jpeg|png|webp)(?:\?[\w=&%]+)?',
+            r'https://static\.standard\.co\.uk/\d{4}/\d{2}/\d{2}/\d{1,2}/\d{2}/[\w.()\-]{1,150}\.(?:jpg|jpeg|png|webp)(?:\?[\w=&%]{0,100})?',
             # Sky News CDN (e3.365dm.com) - capture various sizes
-            r'https://e3\.365dm\.com/\d{2}/\d{2}/[\w/x]+/[\w._-]+\.(?:jpg|jpeg|png|webp)(?:\?\d+)?',
-            # Al Jazeera (wp-content/uploads)
-            r'https://www\.aljazeera\.com/wp-content/uploads/\d{4}/\d{2}/[\w._-]+\.(?:jpg|jpeg|png|webp)',
+            r'https://e3\.365dm\.com/\d{2}/\d{2}/[\w/x]{1,20}/[\w._-]{1,100}\.(?:jpg|jpeg|png|webp)(?:\?\d{0,20})?',
+            # Al Jazeera (wp-content/uploads) - length limited to prevent ReDoS
+            r'https://www\.aljazeera\.com/wp-content/uploads/\d{4}/\d{2}/[\w._-]{1,200}\.(?:jpg|jpeg|png|webp)',
             # Express CDN (high quality versions: 1200x, 940x, 674x)
-            r'https://cdn\.images\.express\.co\.uk/img/dynamic/[\w/-]+(?:1200|940|674)[\w/-]*\.(?:jpg|jpeg|png|webp)',
+            r'https://cdn\.images\.express\.co\.uk/img/dynamic/[\w/-]{1,100}(?:1200|940|674)[\w/-]{0,50}\.(?:jpg|jpeg|png|webp)',
             # Generic CloudFront CDN
-            r'https://[a-z0-9.-]+\.cloudfront\.net/[\w./-]+\.(?:jpg|jpeg|png|webp)',
+            r'https://[a-z0-9.-]{1,50}\.cloudfront\.net/[\w./-]{1,200}\.(?:jpg|jpeg|png|webp)',
         ]
 
         # Collect all matches, prioritizing images from the same article
@@ -413,32 +427,58 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
             all_cdn_urls.extend(matches)
 
         # Upgrade image URLs to highest quality versions
-        def upgrade_image_url(img_url):
-            """Upgrade image URL to highest quality version available."""
-            # Evening Standard: upgrade width parameter to 1200
-            if 'static.standard.co.uk' in img_url:
-                # Remove existing width param and add width=1200
-                base_url = re.sub(r'[?&]width=\d+', '', img_url)
-                if '?' in base_url:
-                    return base_url + '&width=1200'
-                else:
-                    return base_url + '?width=1200&quality=75&auto=webp'
+        def upgrade_image_url(img_url: str) -> str:
+            """
+            Upgrade image URL to highest quality version available.
 
-            # Sky News: upgrade to 1600x900 (largest size)
-            if 'e3.365dm.com' in img_url:
-                # Replace size pattern with 1600x900
-                return re.sub(r'/\d+x\d+/', '/1600x900/', img_url)
+            Args:
+                img_url: Original image URL from the page
 
-            # Al Jazeera: upgrade to highest quality (1920x1440)
-            if 'aljazeera.com/wp-content/uploads' in img_url:
-                # Remove existing resize params and set to max quality
-                base_url = img_url.split('?')[0]
-                return base_url + '?resize=1920%2C1440&quality=80'
+            Returns:
+                Modified URL with parameters for highest quality version
+            """
+            img_url_lower = img_url.lower()
+
+            # Evening Standard: upgrade width parameter using proper URL parsing
+            if 'static.standard.co.uk' in img_url_lower:
+                parsed = urlparse(img_url)
+                params = parse_qs(parsed.query)
+                params['width'] = [str(IMAGE_QUALITY_SETTINGS['standard_width'])]
+                params['quality'] = [str(IMAGE_QUALITY_SETTINGS['standard_quality'])]
+                params['auto'] = ['webp']
+                new_query = urlencode(params, doseq=True)
+                return urlunparse(parsed._replace(query=new_query, fragment=''))
+
+            # Sky News: upgrade to highest resolution
+            if 'e3.365dm.com' in img_url_lower:
+                return re.sub(
+                    r'/\d+x\d+/',
+                    f'/{IMAGE_QUALITY_SETTINGS["sky_resolution"]}/',
+                    img_url
+                )
+
+            # Al Jazeera: upgrade to highest quality using proper URL parsing
+            if 'aljazeera.com/wp-content/uploads' in img_url_lower:
+                parsed = urlparse(img_url)
+                new_query = urlencode({
+                    'resize': IMAGE_QUALITY_SETTINGS['aljazeera_resize'],
+                    'quality': IMAGE_QUALITY_SETTINGS['aljazeera_quality']
+                })
+                return urlunparse(parsed._replace(query=new_query, fragment=''))
 
             return img_url
 
         # Sort: prioritize images by relevance (all return 0-2 for consistent sorting)
-        def article_relevance(img_url):
+        def article_relevance(img_url: str) -> int:
+            """
+            Calculate relevance score for an image URL.
+
+            Args:
+                img_url: Image URL to evaluate
+
+            Returns:
+                Priority score: 0 = high priority, 1 = medium, 2 = low
+            """
             img_url_lower = img_url.lower()
 
             # NY Times: prioritize by size (superJumbo > jumbo > others)
@@ -469,15 +509,15 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
             if '/secondary/' in img_url_lower:
                 return 0  # High priority
 
-            # Mirror/Reach: Match article ID
+            # Mirror/Reach: Match article ID using defined thresholds
             try:
                 match = re.search(r'article(\d+)', img_url)
                 if match and article_id:
                     img_article_id = int(match.group(1))
                     diff = abs(img_article_id - article_id)
-                    if diff < 10000:
+                    if diff < ARTICLE_ID_HIGH_PRIORITY_THRESHOLD:
                         return 0  # High priority
-                    elif diff < 100000:
+                    elif diff < ARTICLE_ID_MEDIUM_PRIORITY_THRESHOLD:
                         return 1  # Medium priority
             except (re.error, ValueError):
                 pass
