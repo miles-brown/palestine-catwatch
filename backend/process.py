@@ -77,6 +77,11 @@ UNIFORM_ANALYSIS_RATE_LIMIT = int(os.environ.get('UNIFORM_ANALYSIS_RATE_LIMIT', 
 FORCE_DETECTION_CONFIDENCE = float(os.environ.get('FORCE_DETECTION_CONFIDENCE', '0.6'))
 RANK_DETECTION_CONFIDENCE = float(os.environ.get('RANK_DETECTION_CONFIDENCE', '0.6'))
 
+# Processing limits (DoS protection) - configurable via environment
+MAX_OFFICERS_PER_IMAGE = int(os.environ.get('MAX_OFFICERS_PER_IMAGE', '50'))
+# Override MAX_FRAMES_PER_VIDEO from env if set, otherwise keep default
+MAX_FRAMES_PER_VIDEO = int(os.environ.get('MAX_FRAMES_PER_VIDEO', str(MAX_FRAMES_PER_VIDEO)))
+
 
 def calculate_face_similarity(embedding1, embedding2, return_tier=False):
     """
@@ -633,6 +638,13 @@ def analyze_frames(media_id, media_frames_dir, status_callback=None):
 
         # AI analysis (CPU intensive, no DB)
         results = analyzer.process_image_ai(frame_path, media_frames_dir)
+
+        # DoS protection: limit officers processed per image
+        if len(results) > MAX_OFFICERS_PER_IMAGE:
+            print(f"Warning: Limiting detections from {len(results)} to {MAX_OFFICERS_PER_IMAGE} (DoS protection)")
+            if status_callback:
+                status_callback("log", f"Warning: Too many detections ({len(results)}), limiting to {MAX_OFFICERS_PER_IMAGE}")
+            results = results[:MAX_OFFICERS_PER_IMAGE]
 
         if len(results) > 0:
             if status_callback:

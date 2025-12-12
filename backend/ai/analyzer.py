@@ -368,6 +368,10 @@ def generate_body_crop(img, face_box, person_box, output_path):
         # Estimate full body from face using human proportions
         # Average adult: head is ~1/7.5 to 1/8 of total height
         # We'll use 1/7 for slightly generous estimate
+        logger.info(
+            f"Using fallback body estimation from face at ({face_x}, {face_y}). "
+            "Note: May fail for seated/crouching officers."
+        )
 
         estimated_height = face_h * 7
         estimated_width = face_w * 3  # Body is roughly 3x face width
@@ -464,6 +468,7 @@ def find_person_for_face(face_box, person_detections, iou_threshold=0.3):
 
     best_match = None
     best_score = -1
+    matching_persons = []  # Track all matches for ambiguity warning
 
     for detection in person_detections:
         if detection.get('label') != 'person':
@@ -496,10 +501,19 @@ def find_person_for_face(face_box, person_detections, iou_threshold=0.3):
             # Prefer detections where face is in top 30% of body
             if relative_y < 0.3:
                 score = detection.get('confidence', 0.5) * (1 - relative_y)
+                matching_persons.append((box, score))
 
                 if score > best_score:
                     best_score = score
                     best_match = box
+
+    # Warn about ambiguous matches (multiple valid candidates)
+    if len(matching_persons) > 1:
+        logger.warning(
+            f"Ambiguous face-to-person match: {len(matching_persons)} persons "
+            f"contain face at ({face_center_x:.0f}, {face_center_y:.0f}). "
+            f"Selected best score: {best_score:.3f}"
+        )
 
     return best_match
 

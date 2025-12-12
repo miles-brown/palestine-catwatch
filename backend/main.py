@@ -2012,6 +2012,84 @@ def get_force_statistics(
     }
 
 
+@app.get("/reference/forces")
+@limiter.limit(get_rate_limit("default"))
+def get_police_forces_reference(request: Request):
+    """
+    Get reference data for UK police forces.
+
+    Returns the canonical list of UK police forces for use in dropdowns
+    and forms. This eliminates duplication between frontend and backend.
+    """
+    from ai.force_detector import BADGE_PREFIX_FORCES
+
+    # Build unique force list from badge prefix mapping
+    unique_forces = sorted(set(BADGE_PREFIX_FORCES.values()))
+
+    return {
+        "forces": [
+            {"value": force, "label": force}
+            for force in unique_forces
+        ],
+        "count": len(unique_forces)
+    }
+
+
+@app.get("/reference/ranks")
+@limiter.limit(get_rate_limit("default"))
+def get_police_ranks_reference(request: Request):
+    """
+    Get reference data for UK police ranks.
+
+    Returns the canonical list of UK police ranks for use in dropdowns
+    and forms.
+    """
+    # Canonical UK police rank hierarchy
+    UK_POLICE_RANKS = [
+        {"value": "Police Constable", "label": "Police Constable (PC)", "abbreviation": "PC"},
+        {"value": "Sergeant", "label": "Sergeant (Sgt)", "abbreviation": "Sgt"},
+        {"value": "Inspector", "label": "Inspector (Insp)", "abbreviation": "Insp"},
+        {"value": "Chief Inspector", "label": "Chief Inspector (CI)", "abbreviation": "CI"},
+        {"value": "Superintendent", "label": "Superintendent (Supt)", "abbreviation": "Supt"},
+        {"value": "Chief Superintendent", "label": "Chief Superintendent (Ch Supt)", "abbreviation": "Ch Supt"},
+        {"value": "Assistant Chief Constable", "label": "Assistant Chief Constable (ACC)", "abbreviation": "ACC"},
+        {"value": "Deputy Chief Constable", "label": "Deputy Chief Constable (DCC)", "abbreviation": "DCC"},
+        {"value": "Chief Constable", "label": "Chief Constable (CC)", "abbreviation": "CC"},
+        {"value": "PCSO", "label": "Police Community Support Officer (PCSO)", "abbreviation": "PCSO"},
+    ]
+
+    return {
+        "ranks": UK_POLICE_RANKS,
+        "count": len(UK_POLICE_RANKS)
+    }
+
+
+@app.get("/reference/unit-types")
+@limiter.limit(get_rate_limit("default"))
+def get_unit_types_reference(request: Request):
+    """
+    Get reference data for UK police unit types.
+
+    Returns the canonical list of unit types for identification.
+    """
+    from ai.force_detector import UNIT_INDICATORS
+
+    unit_types = [
+        {
+            "value": unit_type,
+            "label": unit_type,
+            "equipment": indicators.get("equipment", []),
+            "uniform": indicators.get("uniform", [])
+        }
+        for unit_type, indicators in UNIT_INDICATORS.items()
+    ]
+
+    return {
+        "unit_types": unit_types,
+        "count": len(unit_types)
+    }
+
+
 @app.get("/stats/equipment-correlation")
 @limiter.limit(get_rate_limit("officers_list"))
 def get_equipment_correlation(
