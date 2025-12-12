@@ -387,22 +387,23 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
         # Matches URLs like:
         # - https://i2-prod.mirror.co.uk/incoming/article123.ece/ALTERNATES/s1200/image.jpg
         # - https://cdn.images.express.co.uk/img/dynamic/1/1200x712/secondary/London-5674436.webp
+        # Note: Using [\w./-]+ for safer path matching where possible
         cdn_patterns = [
             # Mirror/Reach PLC sites
-            r'https://i[0-9]-prod\.[a-z]+\.co\.uk/[^"\'\s>]+/ALTERNATES/s(?:1200|810|615)[^"\'\s>]*\.(?:jpg|jpeg|png|webp)',
-            r'https://[a-z0-9.-]+/incoming/article[0-9]+\.ece/[^"\'\s>]+\.(?:jpg|jpeg|png|webp)',
+            r'https://i[0-9]-prod\.[a-z]+\.co\.uk/[\w./-]+/ALTERNATES/s(?:1200|810|615)[\w./-]*\.(?:jpg|jpeg|png|webp)',
+            r'https://[a-z0-9.-]+/incoming/article[0-9]+\.ece/[\w./-]+\.(?:jpg|jpeg|png|webp)',
             # NY Times CDN (high quality: superJumbo, jumbo, videoSixteenByNine3000, threeByTwoLargeAt2X)
-            r'https://static01\.nyt\.com/images/[^"\'\s>]+(?:superJumbo|jumbo|videoSixteenByNine3000|threeByTwoLargeAt2X)[^"\'\s>]*\.(?:jpg|jpeg|png|webp)',
-            # Evening Standard CDN (static.standard.co.uk)
-            r'https://static\.standard\.co\.uk/\d{4}/\d{2}/\d{2}/[^"\'\s>]+\.(?:jpg|jpeg|png|webp)',
+            r'https://static01\.nyt\.com/images/[\w./-]+(?:superJumbo|jumbo|videoSixteenByNine3000|threeByTwoLargeAt2X)[\w.-]*\.(?:jpg|jpeg|png|webp)',
+            # Evening Standard CDN (static.standard.co.uk) - date + time path
+            r'https://static\.standard\.co\.uk/\d{4}/\d{2}/\d{2}/\d{1,2}/\d{2}/[\w.()\-]+\.(?:jpg|jpeg|png|webp)(?:\?[\w=&%]+)?',
             # Sky News CDN (e3.365dm.com) - capture various sizes
-            r'https://e3\.365dm\.com/\d{2}/\d{2}/[^"\'\s>]+\.(?:jpg|jpeg|png|webp)',
+            r'https://e3\.365dm\.com/\d{2}/\d{2}/[\w/x]+/[\w._-]+\.(?:jpg|jpeg|png|webp)(?:\?\d+)?',
             # Al Jazeera (wp-content/uploads)
-            r'https://www\.aljazeera\.com/wp-content/uploads/\d{4}/\d{2}/[^"\'\s>]+\.(?:jpg|jpeg|png|webp)',
+            r'https://www\.aljazeera\.com/wp-content/uploads/\d{4}/\d{2}/[\w._-]+\.(?:jpg|jpeg|png|webp)',
             # Express CDN (high quality versions: 1200x, 940x, 674x)
-            r'https://cdn\.images\.express\.co\.uk/img/dynamic/[^"\'\s>]+(?:1200|940|674)[^"\'\s>]*\.(?:jpg|jpeg|png|webp)',
+            r'https://cdn\.images\.express\.co\.uk/img/dynamic/[\w/-]+(?:1200|940|674)[\w/-]*\.(?:jpg|jpeg|png|webp)',
             # Generic CloudFront CDN
-            r'https://[a-z0-9.-]+\.cloudfront\.net/[^"\'\s>]+\.(?:jpg|jpeg|png|webp)',
+            r'https://[a-z0-9.-]+\.cloudfront\.net/[\w./-]+\.(?:jpg|jpeg|png|webp)',
         ]
 
         # Collect all matches, prioritizing images from the same article
@@ -436,7 +437,7 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
 
             return img_url
 
-        # Sort: prioritize images with article IDs close to the main article
+        # Sort: prioritize images by relevance (all return 0-2 for consistent sorting)
         def article_relevance(img_url):
             img_url_lower = img_url.lower()
 
@@ -450,36 +451,36 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
 
             # Sky News: prioritize images matching article ID, then by size
             if 'e3.365dm.com' in img_url_lower:
-                # Check if image ID matches the video/article ID
-                img_id_match = re.search(r'_(\d{7,})\.', img_url)
-                if img_id_match and sky_video_id:
-                    if img_id_match.group(1) == sky_video_id:
-                        return 0  # Exact match - highest priority
-                # Fallback to size-based priority
+                try:
+                    img_id_match = re.search(r'_(\d{7,})\.', img_url)
+                    if img_id_match and sky_video_id:
+                        if img_id_match.group(1) == sky_video_id:
+                            return 0  # Exact match - highest priority
+                except re.error:
+                    pass
+                # Fallback to size-based priority (normalized to 0-2)
                 if '1600x900' in img_url:
-                    return 1
+                    return 0
                 elif '768x432' in img_url:
-                    return 2
-                return 3
-        # Sort: prioritize images with article/image IDs that appear multiple times
-        # or are in the "secondary" folder (main article images on Express)
-        def article_relevance(img_url):
-            img_url_lower = img_url.lower()
+                    return 1
+                return 2
 
             # Express: "secondary" images are main article images
             if '/secondary/' in img_url_lower:
                 return 0  # High priority
 
             # Mirror/Reach: Match article ID
-            match = re.search(r'article(\d+)', img_url)
-            if match and article_id:
-                img_article_id = int(match.group(1))
-                # Images from same article or nearby (within 10000) are likely related
-                diff = abs(img_article_id - article_id)
-                if diff < 10000:
-                    return 0  # High priority
-                elif diff < 100000:
-                    return 1  # Medium priority
+            try:
+                match = re.search(r'article(\d+)', img_url)
+                if match and article_id:
+                    img_article_id = int(match.group(1))
+                    diff = abs(img_article_id - article_id)
+                    if diff < 10000:
+                        return 0  # High priority
+                    elif diff < 100000:
+                        return 1  # Medium priority
+            except (re.error, ValueError):
+                pass
 
             return 2  # Low priority (unrelated articles)
 
@@ -489,47 +490,53 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
         seen_bases = set()
         deduped_urls = []
         for img_url in all_cdn_urls:
-            # NY Times deduplication
-            if 'static01.nyt.com' in img_url:
-                base_match = re.search(r'/multimedia/([^/]+)/\1-', img_url)
-                if base_match:
-                    base_id = base_match.group(1)
-                    if base_id in seen_bases:
-                        continue
-                    seen_bases.add(base_id)
+            try:
+                img_url_lower = img_url.lower()
 
-            # Sky News deduplication (by image name without size)
-            elif 'e3.365dm.com' in img_url:
-                # Extract base name: skynews-xxx_id or hash_id
-                base_match = re.search(r'/\d+x\d+/([^?]+)', img_url)
-                if base_match:
-                    base_id = base_match.group(1)
-                    if base_id in seen_bases:
-                        continue
-                    seen_bases.add(base_id)
+                # NY Times deduplication - extract base name without size suffix
+                if 'static01.nyt.com' in img_url_lower:
+                    base_match = re.search(
+                        r'/([^/]+?)(?:-superJumbo|-jumbo|-videoSixteenByNine3000|-threeByTwoLargeAt2X)',
+                        img_url, re.IGNORECASE
+                    )
+                    if base_match:
+                        base_id = base_match.group(1).lower()
+                        if base_id in seen_bases:
+                            continue
+                        seen_bases.add(base_id)
 
-            # Evening Standard deduplication (by filename)
-            elif 'static.standard.co.uk' in img_url:
-                # Extract filename before query params
-                base_match = re.search(r'/([^/?]+\.(?:jpg|jpeg|png|webp))', img_url, re.IGNORECASE)
-                if base_match:
-                    base_id = base_match.group(1)
-                    if base_id in seen_bases:
-                        continue
-                    seen_bases.add(base_id)
+                # Sky News deduplication (by image name without size)
+                elif 'e3.365dm.com' in img_url_lower:
+                    base_match = re.search(r'/\d+x\d+/([^?]+)', img_url)
+                    if base_match:
+                        base_id = base_match.group(1).lower()
+                        if base_id in seen_bases:
+                            continue
+                        seen_bases.add(base_id)
 
-            # Al Jazeera deduplication (by filename)
-            elif 'aljazeera.com/wp-content/uploads' in img_url:
-                # Extract filename before query params
-                base_match = re.search(r'/([^/?]+\.(?:jpg|jpeg|png|webp))', img_url, re.IGNORECASE)
-                if base_match:
-                    base_id = base_match.group(1)
-                    if base_id in seen_bases:
-                        continue
-                    seen_bases.add(base_id)
+                # Evening Standard deduplication (by filename)
+                elif 'static.standard.co.uk' in img_url_lower:
+                    base_match = re.search(r'/([^/?]+\.(?:jpg|jpeg|png|webp))', img_url, re.IGNORECASE)
+                    if base_match:
+                        base_id = base_match.group(1).lower()
+                        if base_id in seen_bases:
+                            continue
+                        seen_bases.add(base_id)
 
-            # Upgrade URL to highest quality and add
-            deduped_urls.append(upgrade_image_url(img_url))
+                # Al Jazeera deduplication (by filename)
+                elif 'aljazeera.com/wp-content/uploads' in img_url_lower:
+                    base_match = re.search(r'/([^/?]+\.(?:jpg|jpeg|png|webp))', img_url, re.IGNORECASE)
+                    if base_match:
+                        base_id = base_match.group(1).lower()
+                        if base_id in seen_bases:
+                            continue
+                        seen_bases.add(base_id)
+
+                # Upgrade URL to highest quality and add
+                deduped_urls.append(upgrade_image_url(img_url))
+            except (re.error, AttributeError):
+                # Skip URLs that cause regex errors, still add them unprocessed
+                deduped_urls.append(img_url)
 
         potential_urls.extend(deduped_urls)
 
