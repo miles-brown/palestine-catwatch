@@ -73,6 +73,15 @@ MIN_IMAGE_SIZE_BYTES = 5000
 ENABLE_AUTO_UNIFORM_ANALYSIS = os.environ.get('ENABLE_AUTO_UNIFORM_ANALYSIS', 'false').lower() == 'true'
 UNIFORM_ANALYSIS_RATE_LIMIT = int(os.environ.get('UNIFORM_ANALYSIS_RATE_LIMIT', '10'))  # per minute
 
+# AI Detection confidence thresholds (configurable via environment)
+FORCE_DETECTION_CONFIDENCE = float(os.environ.get('FORCE_DETECTION_CONFIDENCE', '0.6'))
+RANK_DETECTION_CONFIDENCE = float(os.environ.get('RANK_DETECTION_CONFIDENCE', '0.6'))
+
+# Processing limits (DoS protection) - configurable via environment
+MAX_OFFICERS_PER_IMAGE = int(os.environ.get('MAX_OFFICERS_PER_IMAGE', '50'))
+# Override MAX_FRAMES_PER_VIDEO from env if set, otherwise keep default
+MAX_FRAMES_PER_VIDEO = int(os.environ.get('MAX_FRAMES_PER_VIDEO', str(MAX_FRAMES_PER_VIDEO)))
+
 
 def calculate_face_similarity(embedding1, embedding2, return_tier=False):
     """
@@ -261,47 +270,82 @@ def upload_directory_to_r2(directory_path: str) -> int:
     return uploaded
 
 
-def run_uniform_analysis(appearance_id: int, image_path: str, db: Session, status_callback=None):
+def run_uniform_analysis(
+    appearance_id: int,
+    image_path: str,
+    db: Session,
+    badge_text: str = None,
+    ocr_texts: list = None,
+    status_callback=None
+):
     """
-    Run Claude Vision uniform analysis on an officer appearance.
-    Only runs if ENABLE_AUTO_UNIFORM_ANALYSIS is True and ANTHROPIC_API_KEY is set.
+    Run combined uniform analysis (Claude Vision + rule-based) on an officer appearance.
+
+    Uses Claude Vision API when ENABLE_AUTO_UNIFORM_ANALYSIS is True and API key is set,
+    otherwise falls back to rule-based detection using badge/OCR data.
     """
-    if not ENABLE_AUTO_UNIFORM_ANALYSIS:
-        return
-
-    api_key = os.environ.get('ANTHROPIC_API_KEY')
-    if not api_key:
-        print("Uniform analysis skipped: ANTHROPIC_API_KEY not set")
-        return
-
     try:
-        from ai.uniform_analyzer import UniformAnalyzer
+        from ai.uniform_analyzer import analyze_officer_combined, UniformAnalyzer
+        from ai.force_detector import detect_force
 
-        if status_callback:
-            status_callback("log", "Running uniform analysis...")
+        # Determine analysis mode
+        api_key = os.environ.get('ANTHROPIC_API_KEY')
+        use_vision = ENABLE_AUTO_UNIFORM_ANALYSIS and api_key
 
-        analyzer = UniformAnalyzer(api_key=api_key, rate_limit=UNIFORM_ANALYSIS_RATE_LIMIT)
-        result = analyzer.analyze_uniform_sync(image_path)
+        if use_vision:
+            if status_callback:
+                status_callback("log", "Analyzing uniform...")
 
-        if not result.get('success'):
-            print(f"Uniform analysis failed: {result.get('error')}")
-            return
+            # Run combined analysis
+            result = analyze_officer_combined(
+                image_path=image_path,
+                badge_text=badge_text,
+                ocr_texts=ocr_texts,
+                api_key=api_key,
+                rate_limit=UNIFORM_ANALYSIS_RATE_LIMIT
+            )
+        else:
+            # Rule-based only
+            rule_result = detect_force(
+                badge_text=badge_text,
+                ocr_texts=ocr_texts
+            )
+            result = {
+                "force": rule_result.force,
+                "force_confidence": rule_result.force_confidence,
+                "force_indicators": rule_result.force_indicators,
+                "unit_type": rule_result.unit_type,
+                "unit_confidence": rule_result.unit_confidence,
+                "rank": rule_result.rank,
+                "rank_confidence": rule_result.rank_confidence,
+                "shoulder_number": rule_result.shoulder_number,
+                "shoulder_number_confidence": rule_result.shoulder_number_confidence,
+                "detection_method": rule_result.method,
+                "equipment": []
+            }
 
-        # Parse to DB format
-        db_data = analyzer.parse_to_db_format(result, appearance_id)
-        if not db_data:
-            return
+        # Save uniform analysis to database
+        uniform_data = {
+            "appearance_id": appearance_id,
+            "detected_force": result.get("force"),
+            "force_confidence": result.get("force_confidence"),
+            "force_indicators": json.dumps(result.get("force_indicators", [])),
+            "unit_type": result.get("unit_type"),
+            "unit_confidence": result.get("unit_confidence"),
+            "detected_rank": result.get("rank"),
+            "rank_confidence": result.get("rank_confidence"),
+            "shoulder_number": result.get("shoulder_number"),
+            "shoulder_number_confidence": result.get("shoulder_number_confidence"),
+            "api_cost_tokens": result.get("tokens_used", 0),
+        }
 
-        # Save uniform analysis
-        uniform_analysis = models.UniformAnalysis(**db_data)
+        uniform_analysis = models.UniformAnalysis(**uniform_data)
         db.add(uniform_analysis)
 
         # Save equipment detections
-        equipment_items = analyzer.extract_equipment(result)
-        for eq_item in equipment_items:
-            # Find equipment by name
+        for eq_item in result.get("equipment", []):
             equip = db.query(models.Equipment).filter(
-                models.Equipment.name == eq_item['name']
+                models.Equipment.name == eq_item.get('name')
             ).first()
 
             if equip:
@@ -312,10 +356,11 @@ def run_uniform_analysis(appearance_id: int, image_path: str, db: Session, statu
                 )
                 db.add(detection)
 
-        # Update officer force if high confidence
-        analysis_data = result.get('analysis', {})
-        force_info = analysis_data.get('force', {})
-        if force_info.get('confidence', 0) >= 0.8 and force_info.get('name'):
+        # Update officer force if above configured confidence threshold
+        force_name = result.get("force")
+        force_conf = result.get("force_confidence", 0)
+
+        if force_name and force_conf >= FORCE_DETECTION_CONFIDENCE:
             appearance = db.query(models.OfficerAppearance).filter(
                 models.OfficerAppearance.id == appearance_id
             ).first()
@@ -324,21 +369,40 @@ def run_uniform_analysis(appearance_id: int, image_path: str, db: Session, statu
                     models.Officer.id == appearance.officer_id
                 ).first()
                 if officer and (not officer.force or officer.force == 'Unknown'):
-                    officer.force = force_info['name']
-                    print(f"Updated officer force to: {force_info['name']}")
+                    officer.force = force_name
+                    print(f"Updated officer force to: {force_name}")
+
+        # Update officer rank if above configured confidence threshold
+        rank_name = result.get("rank")
+        rank_conf = result.get("rank_confidence", 0)
+
+        if rank_name and rank_conf >= RANK_DETECTION_CONFIDENCE:
+            appearance = db.query(models.OfficerAppearance).filter(
+                models.OfficerAppearance.id == appearance_id
+            ).first()
+            if appearance:
+                officer = db.query(models.Officer).filter(
+                    models.Officer.id == appearance.officer_id
+                ).first()
+                if officer and not officer.rank:
+                    officer.rank = rank_name
+                    print(f"Updated officer rank to: {rank_name}")
 
         db.commit()
 
-        if status_callback:
-            force_name = force_info.get('name', 'Unknown')
-            status_callback("log", f"Uniform analysis complete: {force_name}")
+        if status_callback and force_name:
+            method = "AI" if result.get("vision_success") else "badge"
+            status_callback("log", f"Force: {force_name} ({method})")
 
         print(f"Uniform analysis saved for appearance {appearance_id}")
+        return result
 
     except ImportError as e:
         print(f"Uniform analysis skipped: {e}")
+        return None
     except Exception as e:
         print(f"Uniform analysis error: {e}")
+        return None
 
 def process_media(media_id: int, status_callback=None):
     """
@@ -575,6 +639,13 @@ def analyze_frames(media_id, media_frames_dir, status_callback=None):
         # AI analysis (CPU intensive, no DB)
         results = analyzer.process_image_ai(frame_path, media_frames_dir)
 
+        # DoS protection: limit officers processed per image
+        if len(results) > MAX_OFFICERS_PER_IMAGE:
+            print(f"Warning: Limiting detections from {len(results)} to {MAX_OFFICERS_PER_IMAGE} (DoS protection)")
+            if status_callback:
+                status_callback("log", f"Warning: Too many detections ({len(results)}), limiting to {MAX_OFFICERS_PER_IMAGE}")
+            results = results[:MAX_OFFICERS_PER_IMAGE]
+
         if len(results) > 0:
             if status_callback:
                 status_callback("log", f"AI Scan: Found {len(results)} targets in {os.path.basename(frame_path)}")
@@ -585,24 +656,54 @@ def analyze_frames(media_id, media_frames_dir, status_callback=None):
             if res.get('is_scene_summary'):
                 objs = ", ".join(res.get('objects', []))
                 print(f"Scene summary for {frame_path}: {objs}")
-                if status_callback: status_callback("log", f"AI Context: Detected {objs}")
                 continue
 
             print(f"Found officer in {frame_path} at {timestamp_str}")
-            if status_callback:
-                # Normalize path and convert to web URL
-                image_url = get_web_url(normalize_for_storage(res['crop_path']))
-                status_callback("candidate_officer", {
-                    "image_url": image_url,
-                    "timestamp": timestamp_str,
-                    "confidence": res.get('confidence', 0.9),
-                    "badge": res.get('badge'),
-                    "quality": res.get('quality'),
-                })
-                status_callback("log", f"Found officer at {timestamp_str}")
 
-            # Generate embedding (CPU intensive, no DB)
-            embedding = analyzer.generate_embedding(res['crop_path'])
+            # Get crop paths (face and body)
+            face_crop = res.get('face_crop_path')
+            body_crop = res.get('body_crop_path')
+            primary_crop = res.get('crop_path')
+            badge_text = res.get('badge')
+
+            # Run quick force detection from badge for immediate feedback
+            detected_force = None
+            detected_rank = None
+            if badge_text:
+                try:
+                    from ai.force_detector import detect_force as quick_force_detect
+                    quick_result = quick_force_detect(badge_text=badge_text)
+                    if quick_result.force and quick_result.force_confidence >= FORCE_DETECTION_CONFIDENCE:
+                        detected_force = quick_result.force
+                    if quick_result.rank and quick_result.rank_confidence >= RANK_DETECTION_CONFIDENCE:
+                        detected_rank = quick_result.rank
+                except Exception as e:
+                    print(f"Quick force detection error: {e}")
+
+            if status_callback:
+                # Use face crop for display, fall back to body or primary
+                display_crop = face_crop or body_crop or primary_crop
+                if display_crop:
+                    image_url = get_web_url(normalize_for_storage(display_crop))
+                    status_callback("candidate_officer", {
+                        "image_url": image_url,
+                        "face_url": get_web_url(normalize_for_storage(face_crop)) if face_crop else None,
+                        "body_url": get_web_url(normalize_for_storage(body_crop)) if body_crop else None,
+                        "timestamp": timestamp_str,
+                        "confidence": res.get('confidence', 0.9),
+                        "badge": badge_text,
+                        "quality": res.get('quality'),
+                        "force": detected_force,
+                        "rank": detected_rank,
+                        "meta": {
+                            "uniform_guess": detected_force,
+                            "rank_guess": detected_rank,
+                        }
+                    })
+
+            # Generate embedding from face crop (CPU intensive, no DB)
+            crop_for_embedding = face_crop or primary_crop
+            embedding = analyzer.generate_embedding(crop_for_embedding) if crop_for_embedding else None
 
             # DB operation: Find matching officer or create new one
             db = _get_fresh_session()
@@ -625,27 +726,23 @@ def analyze_frames(media_id, media_frames_dir, status_callback=None):
                                 best_match_confidence = confidence
                                 matched_officer = off
                                 matched_officer_id = off.id
-                                print(f"Face {i}: Potential match with Officer {off.id} "
-                                      f"(conf={confidence:.3f}, dist={dist_euc:.3f}, cos_sim={sim_cos:.3f})")
 
                         except json.JSONDecodeError:
-                            print(f"Warning: Could not decode visual_id for officer {off.id}")
+                            pass
                         except Exception as e:
                             print(f"Error comparing embeddings for officer {off.id}: {e}")
 
                     if matched_officer:
-                        print(f"Face {i}: Best match is Officer {matched_officer_id} with confidence {best_match_confidence:.3f}")
-                    else:
-                        print(f"Face {i}: No matching officer found (new face)")
+                        print(f"Matched Officer {matched_officer_id} (conf={best_match_confidence:.3f})")
 
                 if matched_officer:
-                    print(f"Matched existing Officer {matched_officer_id} (Confidence: {best_match_confidence:.4f})")
                     officer_id = matched_officer_id
                 else:
                     print("Creating new Officer.")
                     new_officer = models.Officer(
-                        badge_number=None,
-                        force="Unknown",
+                        badge_number=badge_text if badge_text else None,
+                        force=detected_force or "Unknown",
+                        rank=detected_rank,
                         visual_id=json.dumps(embedding) if embedding is not None else None,
                         notes="Auto-detected from media."
                     )
@@ -654,30 +751,26 @@ def analyze_frames(media_id, media_frames_dir, status_callback=None):
                     db.refresh(new_officer)
                     officer_id = new_officer.id
 
-                # Extract badge text (CPU, no DB)
-                badge_text = analyzer.extract_text(res['crop_path'])
-                badge_str = ", ".join(badge_text) if badge_text else None
-                if badge_str:
-                    print(f"OCR found text: {badge_str}")
-
-                # Object detection (CPU, no DB)
+                # Object detection for context
                 objects = analyzer.detect_objects(frame_path)
                 relevant_labels = [obj['label'] for obj in objects if obj['label'] in
                                    ['baseball bat', 'knife', 'cell phone', 'handbag', 'backpack', 'umbrella', 'tie']]
                 action_desc = "Observed"
                 if relevant_labels:
                     action_desc += f"; Holding: {', '.join(relevant_labels)}"
-                    print(f"Detected objects: {relevant_labels}")
 
-                # Record appearance with normalized path for consistent storage
-                normalized_crop_path = normalize_for_storage(res['crop_path'])
+                # Record appearance with dual crop paths
                 appearance = models.OfficerAppearance(
                     officer_id=officer_id,
                     media_id=media_id,
                     timestamp_in_video=timestamp_str,
-                    image_crop_path=normalized_crop_path,
+                    # Store normalized paths for both crops
+                    face_crop_path=normalize_for_storage(face_crop) if face_crop else None,
+                    body_crop_path=normalize_for_storage(body_crop) if body_crop else None,
+                    image_crop_path=normalize_for_storage(primary_crop) if primary_crop else None,
                     role="Unknown",
-                    action=action_desc
+                    action=action_desc,
+                    confidence=res.get('confidence')
                 )
                 db.add(appearance)
                 db.commit()
@@ -691,11 +784,24 @@ def analyze_frames(media_id, media_frames_dir, status_callback=None):
             finally:
                 db.close()
 
-            # Run uniform analysis with its own session
-            if res['crop_path'] and os.path.exists(res['crop_path']):
+            # Run uniform analysis with badge text for rule-based detection
+            analysis_crop = face_crop or body_crop or primary_crop
+            if analysis_crop and os.path.exists(analysis_crop):
                 try:
                     db = _get_fresh_session()
-                    run_uniform_analysis(appearance_id, res['crop_path'], db, status_callback)
+                    # Extract additional OCR texts from body crop for more context
+                    ocr_texts = []
+                    if body_crop and os.path.exists(body_crop):
+                        ocr_texts = analyzer.extract_text(body_crop) or []
+
+                    run_uniform_analysis(
+                        appearance_id=appearance_id,
+                        image_path=analysis_crop,
+                        db=db,
+                        badge_text=badge_text,
+                        ocr_texts=ocr_texts,
+                        status_callback=status_callback
+                    )
                     db.close()
                 except Exception as e:
                     print(f"Uniform analysis error: {e}")

@@ -7,19 +7,22 @@ Analyzes images of police officers to identify:
 - Rank (Constable, Sergeant, Inspector, etc.)
 - Equipment (shields, batons, tasers, etc.)
 - Shoulder number (identification)
+
+Integrates with rule-based force detection for fallback/combined detection.
 """
 import os
 import json
 import base64
 import asyncio
 import hashlib
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 
 import anthropic
 
 from .analysis_cache import AnalysisCache
+from .force_detector import detect_force, combine_detections, ForceDetectionResult
 
 
 # UK Police Force identifiers
@@ -407,3 +410,133 @@ class UniformAnalyzer:
             for item in equipment_list
             if item.get("name")
         ]
+
+    def analyze_with_fallback(
+        self,
+        image_path: str,
+        badge_text: Optional[str] = None,
+        ocr_texts: Optional[List[str]] = None,
+        force_reanalyze: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Analyze uniform with combined Claude Vision + rule-based detection.
+
+        This method:
+        1. Attempts Claude Vision analysis if API key is available
+        2. Runs rule-based detection using badge/OCR data
+        3. Combines results, preferring high-confidence Vision results
+
+        Args:
+            image_path: Path to officer image
+            badge_text: Detected badge/shoulder number from OCR
+            ocr_texts: Additional OCR texts found in image
+            force_reanalyze: Skip cache and re-analyze
+
+        Returns:
+            Combined detection result with best available data
+        """
+        # Try Claude Vision first
+        vision_result = None
+        try:
+            vision_result = self.analyze_uniform_sync(image_path, force_reanalyze)
+        except Exception as e:
+            print(f"Vision analysis failed: {e}")
+
+        # Run rule-based detection
+        equipment_list = []
+        uniform_desc = None
+
+        if vision_result and vision_result.get("success"):
+            # Extract equipment names for rule-based analysis
+            analysis = vision_result.get("analysis", {})
+            equipment_list = [
+                eq.get("name", "")
+                for eq in analysis.get("equipment", [])
+            ]
+            uniform_info = analysis.get("uniform_type", {})
+            uniform_desc = uniform_info.get("description", "")
+
+        rule_result = detect_force(
+            badge_text=badge_text,
+            equipment_list=equipment_list,
+            uniform_description=uniform_desc,
+            ocr_texts=ocr_texts
+        )
+
+        # Combine results
+        combined = combine_detections(vision_result, rule_result)
+
+        # Add metadata
+        combined["vision_success"] = vision_result.get("success", False) if vision_result else False
+        combined["vision_cached"] = vision_result.get("cached", False) if vision_result else False
+        combined["tokens_used"] = vision_result.get("tokens_used", 0) if vision_result else 0
+        combined["rule_method"] = rule_result.method
+
+        # Keep equipment list from vision
+        if vision_result and vision_result.get("success"):
+            combined["equipment"] = self.extract_equipment(vision_result)
+        else:
+            combined["equipment"] = []
+
+        return combined
+
+
+def analyze_officer_combined(
+    image_path: str,
+    badge_text: Optional[str] = None,
+    ocr_texts: Optional[List[str]] = None,
+    api_key: Optional[str] = None,
+    rate_limit: int = 10
+) -> Dict[str, Any]:
+    """
+    Convenience function for combined uniform analysis.
+
+    Uses Claude Vision when available, with rule-based fallback.
+
+    Args:
+        image_path: Path to officer image
+        badge_text: Detected badge number
+        ocr_texts: Additional OCR texts
+        api_key: Anthropic API key (optional, uses env var)
+        rate_limit: API rate limit per minute
+
+    Returns:
+        Combined analysis result
+    """
+    # Check if we have API key
+    key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+
+    if key:
+        try:
+            analyzer = UniformAnalyzer(api_key=key, rate_limit=rate_limit)
+            return analyzer.analyze_with_fallback(
+                image_path=image_path,
+                badge_text=badge_text,
+                ocr_texts=ocr_texts
+            )
+        except Exception as e:
+            print(f"Combined analysis failed: {e}")
+
+    # Fallback to pure rule-based detection
+    rule_result = detect_force(
+        badge_text=badge_text,
+        ocr_texts=ocr_texts
+    )
+
+    return {
+        "force": rule_result.force,
+        "force_confidence": rule_result.force_confidence,
+        "force_indicators": rule_result.force_indicators,
+        "force_source": "rule_based",
+        "unit_type": rule_result.unit_type,
+        "unit_confidence": rule_result.unit_confidence,
+        "rank": rule_result.rank,
+        "rank_confidence": rule_result.rank_confidence,
+        "shoulder_number": rule_result.shoulder_number,
+        "shoulder_number_confidence": rule_result.shoulder_number_confidence,
+        "detection_method": rule_result.method,
+        "vision_success": False,
+        "vision_cached": False,
+        "tokens_used": 0,
+        "equipment": []
+    }

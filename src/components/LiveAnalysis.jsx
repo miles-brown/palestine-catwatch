@@ -1,13 +1,59 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { io } from 'socket.io-client';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Terminal, Cpu, Shield, AlertTriangle, Check, X, Server, Activity, ZoomIn, RefreshCw, WifiOff, Clock, XCircle, CheckCircle } from 'lucide-react';
+import { Terminal, Cpu, Shield, AlertTriangle, Check, X, Activity, ZoomIn, RefreshCw, WifiOff, Clock, CheckCircle, User, MapPin, Calendar, Image as ImageIcon, FileCheck } from 'lucide-react';
 
 let API_URL = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 if (!API_URL.startsWith("http")) {
     API_URL = `https://${API_URL}`;
 }
+
+// UK Police Forces for dropdown
+const UK_POLICE_FORCES = [
+    { value: "", label: "Select Force..." },
+    { value: "Metropolitan Police Service", label: "Metropolitan Police" },
+    { value: "City of London Police", label: "City of London Police" },
+    { value: "British Transport Police", label: "British Transport Police" },
+    { value: "Greater Manchester Police", label: "Greater Manchester Police" },
+    { value: "West Midlands Police", label: "West Midlands Police" },
+    { value: "West Yorkshire Police", label: "West Yorkshire Police" },
+    { value: "Merseyside Police", label: "Merseyside Police" },
+    { value: "South Yorkshire Police", label: "South Yorkshire Police" },
+    { value: "Thames Valley Police", label: "Thames Valley Police" },
+    { value: "Hampshire Constabulary", label: "Hampshire Constabulary" },
+    { value: "Kent Police", label: "Kent Police" },
+    { value: "Essex Police", label: "Essex Police" },
+    { value: "Sussex Police", label: "Sussex Police" },
+    { value: "Surrey Police", label: "Surrey Police" },
+    { value: "Avon and Somerset Police", label: "Avon and Somerset" },
+    { value: "Devon and Cornwall Police", label: "Devon and Cornwall" },
+    { value: "Dorset Police", label: "Dorset Police" },
+    { value: "Wiltshire Police", label: "Wiltshire Police" },
+    { value: "South Wales Police", label: "South Wales Police" },
+    { value: "Gwent Police", label: "Gwent Police" },
+    { value: "Dyfed-Powys Police", label: "Dyfed-Powys Police" },
+    { value: "North Wales Police", label: "North Wales Police" },
+    { value: "Police Scotland", label: "Police Scotland" },
+    { value: "Police Service of Northern Ireland", label: "PSNI" },
+    { value: "Ministry of Defence Police", label: "MOD Police" },
+    { value: "Civil Nuclear Constabulary", label: "Civil Nuclear" },
+    { value: "Unknown", label: "Unknown" },
+];
+
+// UK Police Ranks
+const UK_POLICE_RANKS = [
+    { value: "", label: "Select Rank..." },
+    { value: "Police Constable", label: "Police Constable (PC)" },
+    { value: "Sergeant", label: "Sergeant (Sgt)" },
+    { value: "Inspector", label: "Inspector (Insp)" },
+    { value: "Chief Inspector", label: "Chief Inspector (CI)" },
+    { value: "Superintendent", label: "Superintendent (Supt)" },
+    { value: "Chief Superintendent", label: "Chief Superintendent" },
+    { value: "PCSO", label: "PCSO" },
+    { value: "Special Constable", label: "Special Constable" },
+    { value: "Unknown", label: "Unknown" },
+];
 
 const MAX_RECONNECT_ATTEMPTS = 5;
 const CONNECTION_TIMEOUT = 20000; // 20 seconds
@@ -335,10 +381,27 @@ export default function LiveAnalysis({ taskId, onComplete }) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [taskId]);
 
-    // Auto-scroll logs
+    // Auto-scroll logs - only scroll if user is near bottom
+    const logContainerRef = useRef(null);
+    const userScrolledUp = useRef(false);
+
     useEffect(() => {
-        logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        const container = logContainerRef.current;
+        if (!container || userScrolledUp.current) return;
+
+        // Only auto-scroll if user is near the bottom
+        const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
+        if (isNearBottom) {
+            logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        }
     }, [logs]);
+
+    // Track if user scrolled up
+    const handleLogScroll = useCallback((e) => {
+        const container = e.target;
+        const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
+        userScrolledUp.current = !isNearBottom;
+    }, []);
 
     const handleDecision = (id, decision) => {
         // In a real app, send API call to update DB
@@ -551,24 +614,35 @@ export default function LiveAnalysis({ taskId, onComplete }) {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 min-h-[500px] lg:h-[700px]">
                 {/* Terminal Log */}
                 <Card className="bg-slate-900 border-slate-800 col-span-1 flex flex-col h-full overflow-hidden shadow-2xl shadow-blue-900/5">
-                    <div className="p-3 border-b border-slate-800 bg-slate-950 flex items-center gap-2">
-                        <Terminal className="h-4 w-4 text-slate-400" />
-                        <span className="text-xs font-semibold text-slate-400">SYSTEM LOG</span>
+                    <div className="p-3 border-b border-slate-800 bg-slate-950 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                            <Terminal className="h-4 w-4 text-slate-400" />
+                            <span className="text-xs font-semibold text-slate-400">SYSTEM LOG</span>
+                        </div>
+                        <span className="text-[10px] text-slate-600">{logs.length} entries</span>
                     </div>
-                    <div className="flex-1 overflow-y-auto p-4 font-mono text-xs space-y-2">
+                    <div
+                        ref={logContainerRef}
+                        onScroll={handleLogScroll}
+                        className="flex-1 overflow-y-auto p-4 font-mono text-xs space-y-1"
+                    >
                         {logs.length === 0 && (
                             <div className="text-slate-500 italic p-4 text-center opacity-50">
-                                Waiting for connection... <br />
-                                If this persists, check your network or server logs.
+                                Waiting for connection...
                             </div>
                         )}
-                        {logs.map((log, i) => (
-                            <div key={i} className="flex gap-2">
-                                <span className="text-slate-600">[{log.time}]</span>
-                                <span className={`${log.source === 'Error' ? 'text-red-400' : 'text-blue-400'} font-bold`}>
+                        {logs.slice(-50).map((log, i) => (
+                            <div key={i} className="flex gap-2 py-0.5">
+                                <span className="text-slate-600 flex-shrink-0">[{log.time}]</span>
+                                <span className={`flex-shrink-0 ${
+                                    log.source === 'Error' ? 'text-red-400' :
+                                    log.source === 'AI' ? 'text-green-400' :
+                                    log.source === 'Warning' ? 'text-yellow-400' :
+                                    'text-blue-400'
+                                } font-bold`}>
                                     {log.source}:
                                 </span>
-                                <span className="text-slate-300">{log.message}</span>
+                                <span className="text-slate-300 break-words">{log.message}</span>
                             </div>
                         ))}
                         <div ref={logEndRef} />
@@ -630,78 +704,163 @@ export default function LiveAnalysis({ taskId, onComplete }) {
                             )}
 
                             {candidates.map((c) => (
-                                <Card key={c.id} className={`bg-slate-950 border ${c.reviewed ? (c.decision === 'yes' ? 'border-green-500/50' : 'border-red-500/50') : 'border-slate-700'} overflow-hidden`}>
-                                    <div className="relative aspect-video bg-slate-900 group">
-                                        <img src={`${API_URL}${c.image_url}`} className="w-full h-full object-cover" alt="Candidate" />
-                                        <div className="absolute top-2 left-2 bg-black/70 px-2 py-1 rounded text-xs text-white">
-                                            {c.timestamp}
+                                <Card key={c.id} className={`bg-slate-950 border ${c.reviewed ? (c.decision === 'yes' ? 'border-green-500/50' : 'border-red-500/30 opacity-50') : 'border-slate-700'} overflow-hidden transition-all`}>
+                                    {/* Officer Images - Face and Body */}
+                                    <div className="relative bg-slate-900">
+                                        <div className="flex">
+                                            {/* Face Crop (Primary) */}
+                                            <div className="flex-1 aspect-square bg-slate-800 relative">
+                                                <img
+                                                    src={`${API_URL}${c.face_url || c.image_url}`}
+                                                    className="w-full h-full object-cover"
+                                                    alt="Face"
+                                                    onError={(e) => {
+                                                        e.target.src = `${API_URL}${c.image_url}`;
+                                                    }}
+                                                />
+                                                <div className="absolute bottom-1 left-1 bg-black/80 px-1.5 py-0.5 rounded text-[10px] text-slate-300">
+                                                    Face
+                                                </div>
+                                            </div>
+                                            {/* Body Crop (if available) */}
+                                            {c.body_url && (
+                                                <div className="w-1/3 bg-slate-800 relative border-l border-slate-700">
+                                                    <img
+                                                        src={`${API_URL}${c.body_url}`}
+                                                        className="w-full h-full object-cover object-top"
+                                                        alt="Body"
+                                                    />
+                                                    <div className="absolute bottom-1 left-1 bg-black/80 px-1.5 py-0.5 rounded text-[10px] text-slate-300">
+                                                        Body
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                        {/* Timestamp & Confidence Badge */}
+                                        <div className="absolute top-2 left-2 flex gap-1">
+                                            <span className="bg-black/80 px-2 py-0.5 rounded text-[10px] text-white font-mono">
+                                                {c.timestamp}
+                                            </span>
+                                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                                c.confidence >= 0.8 ? 'bg-green-500/90 text-white' :
+                                                c.confidence >= 0.6 ? 'bg-yellow-500/90 text-black' :
+                                                'bg-red-500/90 text-white'
+                                            }`}>
+                                                {(c.confidence * 100).toFixed(0)}%
+                                            </span>
                                         </div>
                                         {c.quality?.is_blurry && (
-                                            <div className="absolute top-2 right-2 bg-yellow-500/90 text-black px-2 py-1 rounded text-xs font-bold flex items-center gap-1">
-                                                <AlertTriangle className="h-3 w-3" /> BLURRY
+                                            <div className="absolute top-2 right-2 bg-yellow-500/90 text-black px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1">
+                                                <AlertTriangle className="h-3 w-3" /> Blurry
                                             </div>
                                         )}
                                     </div>
+
                                     <div className="p-3 space-y-3">
-                                        {/* Status Bar */}
-                                        <div className="flex justify-between items-center text-xs">
-                                            <span className="text-slate-400">Confidence</span>
-                                            <span className="font-bold text-green-400">{(c.confidence * 100).toFixed(0)}%</span>
+                                        {/* Badge/Shoulder Number */}
+                                        <div>
+                                            <label className="text-[10px] uppercase text-slate-500 font-bold block mb-1">
+                                                Shoulder Number / Badge
+                                            </label>
+                                            <input
+                                                type="text"
+                                                defaultValue={c.badge || ""}
+                                                placeholder="e.g. U1234"
+                                                className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-200 font-mono focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 outline-none"
+                                                onChange={(e) => {
+                                                    setCandidates(prev => prev.map(cand =>
+                                                        cand.id === c.id ? { ...cand, badge: e.target.value } : cand
+                                                    ));
+                                                }}
+                                            />
                                         </div>
 
-                                        {/* Analysis Data */}
-                                        <div className="space-y-2 bg-slate-900 p-2 rounded border border-slate-800">
-                                            {/* Badge OCR */}
-                                            <div>
-                                                <label className="text-[10px] uppercase text-slate-500 font-bold block mb-1">Badge Number (OCR)</label>
-                                                <input
-                                                    type="text"
-                                                    defaultValue={c.badge || ""}
-                                                    placeholder="Not detected"
-                                                    className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-blue-500 outline-none"
-                                                />
-                                            </div>
-
-                                            {/* Uniform / Force */}
-                                            <div className="grid grid-cols-2 gap-2">
-                                                <div>
-                                                    <label className="text-[10px] uppercase text-slate-500 font-bold block mb-1">Force</label>
-                                                    <select className="w-full bg-slate-950 border border-slate-700 rounded px-1 py-1 text-xs text-slate-200 outline-none">
-                                                        <option>{c.meta?.uniform_guess || "Unknown"}</option>
-                                                        <option>Metropolitan Police</option>
-                                                        <option>City of London</option>
-                                                        <option>BTP</option>
-                                                        <option>Other</option>
-                                                    </select>
-                                                </div>
-                                                <div>
-                                                    <label className="text-[10px] uppercase text-slate-500 font-bold block mb-1">Rank</label>
-                                                    <select className="w-full bg-slate-950 border border-slate-700 rounded px-1 py-1 text-xs text-slate-200 outline-none">
-                                                        <option>{c.meta?.rank_guess || "Unknown"}</option>
-                                                        <option>Constable</option>
-                                                        <option>Sergeant</option>
-                                                        <option>Inspector</option>
-                                                        <option>Commander</option>
-                                                    </select>
-                                                </div>
-                                            </div>
+                                        {/* Force Selection */}
+                                        <div>
+                                            <label className="text-[10px] uppercase text-slate-500 font-bold block mb-1">
+                                                Police Force
+                                                {(c.force || c.meta?.uniform_guess) && (
+                                                    <span className="ml-2 text-green-400 font-normal">(AI detected)</span>
+                                                )}
+                                            </label>
+                                            <select
+                                                className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-200 focus:border-blue-500 outline-none"
+                                                value={c.force || c.meta?.uniform_guess || ""}
+                                                onChange={(e) => {
+                                                    setCandidates(prev => prev.map(cand =>
+                                                        cand.id === c.id ? { ...cand, force: e.target.value } : cand
+                                                    ));
+                                                }}
+                                            >
+                                                {UK_POLICE_FORCES.map(force => (
+                                                    <option key={force.value} value={force.value}>
+                                                        {force.label}
+                                                    </option>
+                                                ))}
+                                            </select>
                                         </div>
 
-                                        {/* Actions */}
+                                        {/* Rank Selection */}
+                                        <div>
+                                            <label className="text-[10px] uppercase text-slate-500 font-bold block mb-1">
+                                                Rank
+                                                {(c.rank || c.meta?.rank_guess) && (
+                                                    <span className="ml-2 text-green-400 font-normal">(AI detected)</span>
+                                                )}
+                                            </label>
+                                            <select
+                                                className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-200 focus:border-blue-500 outline-none"
+                                                value={c.rank || c.meta?.rank_guess || ""}
+                                                onChange={(e) => {
+                                                    setCandidates(prev => prev.map(cand =>
+                                                        cand.id === c.id ? { ...cand, rank: e.target.value } : cand
+                                                    ));
+                                                }}
+                                            >
+                                                {UK_POLICE_RANKS.map(rank => (
+                                                    <option key={rank.value} value={rank.value}>
+                                                        {rank.label}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </div>
+
+                                        {/* Approve/Delete Actions */}
                                         {!c.reviewed ? (
-                                            <div className="flex gap-2 pt-1">
-                                                <Button size="sm" onClick={() => handleDecision(c.id, 'no')} variant="outline" className="flex-1 border-red-900/30 hover:bg-red-900/20 text-red-400 hover:text-red-300 h-8 text-xs">
-                                                    <X className="h-3 w-3 mr-1" />
-                                                    Discard
+                                            <div className="flex gap-2 pt-2">
+                                                <Button
+                                                    size="sm"
+                                                    onClick={() => handleDecision(c.id, 'no')}
+                                                    variant="outline"
+                                                    className="flex-1 border-red-500/50 hover:bg-red-500/20 text-red-400 hover:text-red-300 h-9"
+                                                >
+                                                    <X className="h-4 w-4 mr-1" />
+                                                    Delete
                                                 </Button>
-                                                <Button size="sm" onClick={() => handleDecision(c.id, 'yes')} className="flex-1 bg-green-600/20 hover:bg-green-600/30 text-green-400 border border-green-600/30 h-8 text-xs">
-                                                    <Check className="h-3 w-3 mr-1" />
-                                                    Confirm
+                                                <Button
+                                                    size="sm"
+                                                    onClick={() => handleDecision(c.id, 'yes')}
+                                                    className="flex-1 bg-green-600 hover:bg-green-500 text-white h-9"
+                                                >
+                                                    <Check className="h-4 w-4 mr-1" />
+                                                    Approve
                                                 </Button>
                                             </div>
                                         ) : (
-                                            <div className={`text-center py-1 text-xs font-bold uppercase ${c.decision === 'yes' ? 'text-green-500' : 'text-red-500'}`}>
-                                                {c.decision === 'yes' ? 'Confirmed Officer' : 'Discarded'}
+                                            <div className={`text-center py-2 text-sm font-bold uppercase rounded ${
+                                                c.decision === 'yes'
+                                                    ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                                                    : 'bg-red-500/20 text-red-400 border border-red-500/30'
+                                            }`}>
+                                                {c.decision === 'yes' ? (
+                                                    <span className="flex items-center justify-center gap-1">
+                                                        <CheckCircle className="h-4 w-4" /> Approved
+                                                    </span>
+                                                ) : (
+                                                    <span className="flex items-center justify-center gap-1">
+                                                        <X className="h-4 w-4" /> Deleted
+                                                    </span>
+                                                )}
                                             </div>
                                         )}
                                     </div>
@@ -712,11 +871,88 @@ export default function LiveAnalysis({ taskId, onComplete }) {
                 </Card>
             </div>
 
+            {/* Scan Complete Summary */}
             {status === 'complete' && (
-                <div className="mt-6 flex justify-end">
-                    <Button onClick={() => onComplete(mediaId)} className="bg-blue-600 hover:bg-blue-500">
-                        Generate Report & Return
-                    </Button>
+                <div className="mt-6 space-y-4">
+                    {/* Summary Stats Card */}
+                    <Card className="bg-gradient-to-br from-green-900/30 to-slate-900 border-green-500/30 p-6">
+                        <div className="flex items-center gap-3 mb-4">
+                            <div className="p-3 bg-green-500/20 rounded-full">
+                                <FileCheck className="h-8 w-8 text-green-400" />
+                            </div>
+                            <div>
+                                <h3 className="text-xl font-bold text-green-400">Scan Complete</h3>
+                                <p className="text-slate-400 text-sm">Analysis finished successfully</p>
+                            </div>
+                        </div>
+
+                        {/* Quick Stats */}
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                            <div className="bg-slate-800/50 rounded-lg p-3 text-center">
+                                <Shield className="h-5 w-5 text-blue-400 mx-auto mb-1" />
+                                <p className="text-2xl font-bold text-white">{candidates.filter(c => c.decision === 'yes').length}</p>
+                                <p className="text-xs text-slate-400">Officers Approved</p>
+                            </div>
+                            <div className="bg-slate-800/50 rounded-lg p-3 text-center">
+                                <ImageIcon className="h-5 w-5 text-purple-400 mx-auto mb-1" />
+                                <p className="text-2xl font-bold text-white">{scrapedMedia.length}</p>
+                                <p className="text-xs text-slate-400">Images Processed</p>
+                            </div>
+                            <div className="bg-slate-800/50 rounded-lg p-3 text-center">
+                                <User className="h-5 w-5 text-yellow-400 mx-auto mb-1" />
+                                <p className="text-2xl font-bold text-white">{candidates.length}</p>
+                                <p className="text-xs text-slate-400">Total Detections</p>
+                            </div>
+                            <div className="bg-slate-800/50 rounded-lg p-3 text-center">
+                                <Cpu className="h-5 w-5 text-green-400 mx-auto mb-1" />
+                                <p className="text-2xl font-bold text-white">{(stats.confidence_avg * 100).toFixed(0)}%</p>
+                                <p className="text-xs text-slate-400">Avg Confidence</p>
+                            </div>
+                        </div>
+
+                        {/* Recon Data Summary */}
+                        {reconData && (
+                            <div className="bg-slate-800/30 rounded-lg p-4 mb-6 border border-slate-700">
+                                <h4 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2">
+                                    <ZoomIn className="h-4 w-4" /> Source Analysis
+                                </h4>
+                                <div className="grid grid-cols-2 gap-4 text-sm">
+                                    {reconData.meta?.date && (
+                                        <div className="flex items-center gap-2 text-slate-400">
+                                            <Calendar className="h-4 w-4" />
+                                            <span>{reconData.meta.date}</span>
+                                        </div>
+                                    )}
+                                    {reconData.meta?.location && (
+                                        <div className="flex items-center gap-2 text-slate-400">
+                                            <MapPin className="h-4 w-4" />
+                                            <span>{reconData.meta.location}</span>
+                                        </div>
+                                    )}
+                                    {reconData.category && (
+                                        <div className="text-slate-400">
+                                            <span className="text-slate-500">Type:</span> {reconData.category}
+                                        </div>
+                                    )}
+                                    {reconData.score !== undefined && (
+                                        <div className="text-slate-400">
+                                            <span className="text-slate-500">Relevance:</span> {reconData.score}/100
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Action Button */}
+                        <Button
+                            onClick={() => onComplete(mediaId)}
+                            className="w-full bg-green-600 hover:bg-green-500 text-white py-6 text-lg font-semibold"
+                            size="lg"
+                        >
+                            <FileCheck className="h-5 w-5 mr-2" />
+                            View Full Report
+                        </Button>
+                    </Card>
                 </div>
             )}
         </div>

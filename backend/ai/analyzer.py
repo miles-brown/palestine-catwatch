@@ -10,6 +10,9 @@ import ssl
 from logging_config import get_logger, log_performance
 logger = get_logger("analyzer")
 
+# Import path validation for security
+from cleanup import is_safe_path
+
 try:
     _create_unverified_https_context = ssl._create_unverified_context
 except AttributeError:
@@ -239,6 +242,282 @@ def get_body_roi(img, face_box):
     return img[roi_y1:roi_y2, roi_x1:roi_x2]
 
 
+# =============================================================================
+# DUAL CROP GENERATION
+# =============================================================================
+# Generate two types of crops per officer:
+# 1. Face crop - Close-up for Officer Card display (head/shoulders)
+# 2. Body crop - Full body (head to toe) for evidence documentation
+
+# Minimum dimensions for quality control
+MIN_FACE_CROP_SIZE = 100  # Minimum face crop dimension
+MIN_BODY_CROP_SIZE = 150  # Minimum body crop dimension
+
+# Detection thresholds from environment variables
+FACE_CONFIDENCE_THRESHOLD = float(os.environ.get('FACE_DETECTION_CONFIDENCE', '0.6'))
+PERSON_CONFIDENCE_THRESHOLD = float(os.environ.get('PERSON_DETECTION_CONFIDENCE', '0.4'))
+
+
+def generate_face_crop(img, face_box, output_path, expand_ratio=0.3):
+    """
+    Generate a close-up face crop for Officer Card display.
+
+    Args:
+        img: OpenCV image (BGR numpy array)
+        face_box: [x, y, w, h] of detected face
+        output_path: Path to save the crop
+        expand_ratio: How much to expand the box (0.3 = 30% on each side)
+
+    Returns:
+        Path to saved crop, or None if crop failed quality checks
+    """
+    x, y, w, h = face_box
+    h_img, w_img = img.shape[:2]
+
+    # Expand face box to include head and shoulders
+    # This creates a better "portrait" style crop
+    expand_x = int(w * expand_ratio)
+    expand_y = int(h * expand_ratio)
+
+    # Calculate expanded region
+    crop_x1 = max(0, x - expand_x)
+    crop_y1 = max(0, y - int(expand_y * 0.5))  # Less expansion above (forehead)
+    crop_x2 = min(w_img, x + w + expand_x)
+    crop_y2 = min(h_img, y + h + int(expand_y * 1.5))  # More expansion below (shoulders)
+
+    # Validate minimum size
+    crop_w = crop_x2 - crop_x1
+    crop_h = crop_y2 - crop_y1
+
+    if crop_w < MIN_FACE_CROP_SIZE or crop_h < MIN_FACE_CROP_SIZE:
+        logger.warning(f"Face crop too small: {crop_w}x{crop_h}")
+        return None
+
+    # Extract crop
+    face_crop = img[crop_y1:crop_y2, crop_x1:crop_x2]
+
+    if face_crop.size == 0:
+        return None
+
+    # Security: Validate output path before writing
+    if not is_safe_path(output_path):
+        logger.error(f"Path traversal attempt blocked for face crop: {output_path}")
+        return None
+
+    # Save crop
+    try:
+        cv2.imwrite(output_path, face_crop)
+        logger.info(f"Saved face crop: {output_path} ({crop_w}x{crop_h})")
+        return output_path
+    except Exception as e:
+        logger.error(f"Failed to save face crop: {e}")
+        return None
+
+
+def generate_body_crop(img, face_box, person_box, output_path):
+    """
+    Generate a full-body crop (head to toe) for evidence documentation.
+
+    Uses YOLO person detection box if available, otherwise estimates
+    from face location using body proportions.
+
+    Args:
+        img: OpenCV image (BGR numpy array)
+        face_box: [x, y, w, h] of detected face
+        person_box: [x, y, w, h] from YOLO person detection (or None)
+        output_path: Path to save the crop
+
+    Returns:
+        Path to saved crop, or None if crop failed quality checks
+    """
+    h_img, w_img = img.shape[:2]
+    face_x, face_y, face_w, face_h = face_box
+
+    if person_box:
+        # Validate person_box format before unpacking
+        if not isinstance(person_box, (list, tuple)) or len(person_box) != 4:
+            logger.warning(f"Invalid person_box format: {person_box}, using face-based estimation")
+            person_box = None
+        else:
+            try:
+                # Use YOLO person detection box
+                px, py, pw, ph = [int(v) for v in person_box]
+
+                # Validate coordinates are reasonable
+                if pw <= 0 or ph <= 0 or px < 0 or py < 0:
+                    logger.warning(f"Invalid person_box coordinates: {person_box}")
+                    person_box = None
+                else:
+                    # Validate that face is within person box (sanity check)
+                    face_center_x = face_x + face_w / 2
+                    face_center_y = face_y + face_h / 2
+
+                    if (px <= face_center_x <= px + pw and
+                        py <= face_center_y <= py + ph):
+                        # Face is within person box - use it directly
+                        crop_x1, crop_y1 = px, py
+                        crop_x2, crop_y2 = px + pw, py + ph
+                    else:
+                        # Face not in person box - use face-based estimation
+                        person_box = None
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Failed to parse person_box {person_box}: {e}")
+                person_box = None
+
+    if not person_box:
+        # Estimate full body from face using human proportions
+        # Average adult: head is ~1/7.5 to 1/8 of total height
+        # We'll use 1/7 for slightly generous estimate
+        logger.info(
+            f"Using fallback body estimation from face at ({face_x}, {face_y}). "
+            "Note: May fail for seated/crouching officers."
+        )
+
+        estimated_height = face_h * 7
+        estimated_width = face_w * 3  # Body is roughly 3x face width
+
+        # Center the body estimate on the face
+        body_center_x = face_x + face_w / 2
+
+        crop_x1 = max(0, int(body_center_x - estimated_width / 2))
+        crop_x2 = min(w_img, int(body_center_x + estimated_width / 2))
+        crop_y1 = max(0, face_y - int(face_h * 0.5))  # Include top of head
+        crop_y2 = min(h_img, face_y + int(estimated_height))
+
+    # Ensure integer coordinates
+    crop_x1, crop_y1 = int(crop_x1), int(crop_y1)
+    crop_x2, crop_y2 = int(crop_x2), int(crop_y2)
+
+    # Validate dimensions
+    crop_w = crop_x2 - crop_x1
+    crop_h = crop_y2 - crop_y1
+
+    if crop_w < MIN_BODY_CROP_SIZE or crop_h < MIN_BODY_CROP_SIZE:
+        logger.warning(f"Body crop too small: {crop_w}x{crop_h}")
+        return None
+
+    # Extract crop
+    body_crop = img[crop_y1:crop_y2, crop_x1:crop_x2]
+
+    if body_crop.size == 0:
+        return None
+
+    # Security: Validate output path before writing
+    if not is_safe_path(output_path):
+        logger.error(f"Path traversal attempt blocked for body crop: {output_path}")
+        return None
+
+    # Save crop
+    try:
+        cv2.imwrite(output_path, body_crop)
+        logger.info(f"Saved body crop: {output_path} ({crop_w}x{crop_h})")
+        return output_path
+    except Exception as e:
+        logger.error(f"Failed to save body crop: {e}")
+        return None
+
+
+def generate_dual_crops(img, face_box, person_box, output_dir, base_name):
+    """
+    Generate both face and body crops for an officer detection.
+
+    Args:
+        img: OpenCV image (BGR numpy array)
+        face_box: [x, y, w, h] of detected face
+        person_box: [x, y, w, h] from YOLO (or None)
+        output_dir: Directory to save crops
+        base_name: Base filename (without extension)
+
+    Returns:
+        Dict with 'face_crop_path' and 'body_crop_path' (values may be None)
+    """
+    result = {
+        'face_crop_path': None,
+        'body_crop_path': None
+    }
+
+    # Generate face crop
+    face_output = os.path.join(output_dir, f"face_{base_name}.jpg")
+    result['face_crop_path'] = generate_face_crop(img, face_box, face_output)
+
+    # Generate body crop
+    body_output = os.path.join(output_dir, f"body_{base_name}.jpg")
+    result['body_crop_path'] = generate_body_crop(img, face_box, person_box, body_output)
+
+    return result
+
+
+def find_person_for_face(face_box, person_detections, iou_threshold=0.3):
+    """
+    Find the YOLO person detection that best matches a face detection.
+
+    Args:
+        face_box: [x, y, w, h] of detected face
+        person_detections: List of YOLO detections filtered for 'person'
+        iou_threshold: Minimum overlap threshold
+
+    Returns:
+        Best matching person box [x, y, w, h] or None
+    """
+    if not person_detections:
+        return None
+
+    face_x, face_y, face_w, face_h = face_box
+    face_center_x = face_x + face_w / 2
+    face_center_y = face_y + face_h / 2
+
+    best_match = None
+    best_score = -1
+    matching_persons = []  # Track all matches for ambiguity warning
+
+    for detection in person_detections:
+        if detection.get('label') != 'person':
+            continue
+
+        # Validate box exists and has correct format
+        box = detection.get('box')
+        if not isinstance(box, (list, tuple)) or len(box) != 4:
+            logger.warning(f"Invalid detection box format: {box}")
+            continue
+
+        try:
+            px, py, pw, ph = [int(v) for v in box]
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Failed to parse detection box {box}: {e}")
+            continue
+
+        # Validate coordinates are reasonable
+        if pw <= 0 or ph <= 0:
+            continue
+
+        # Check if face center is within person box
+        if (px <= face_center_x <= px + pw and
+            py <= face_center_y <= py + ph):
+
+            # Score based on face being in upper portion of person
+            # (face should be near top of body)
+            relative_y = (face_center_y - py) / ph
+
+            # Prefer detections where face is in top 30% of body
+            if relative_y < 0.3:
+                score = detection.get('confidence', 0.5) * (1 - relative_y)
+                matching_persons.append((box, score))
+
+                if score > best_score:
+                    best_score = score
+                    best_match = box
+
+    # Warn about ambiguous matches (multiple valid candidates)
+    if len(matching_persons) > 1:
+        logger.warning(
+            f"Ambiguous face-to-person match: {len(matching_persons)} persons "
+            f"contain face at ({face_center_x:.0f}, {face_center_y:.0f}). "
+            f"Selected best score: {best_score:.3f}"
+        )
+
+    return best_match
+
+
 def get_shoulder_rois(img, face_box):
     """
     Returns crops of left and right shoulder areas for targeted badge OCR.
@@ -436,103 +715,142 @@ def calculate_blur(image):
 def process_image_ai(image_path, output_dir):
     """
     Runs full analysis pipeline on an image.
-    1. Detects Objects (YOLO) - Generic scene analysis & Person detection (fallback)
+    1. Detects Objects (YOLO) - Generic scene analysis & Person detection
     2. Detects Faces (SSD) - Specific officer identification
+    3. Generates dual crops (face + body) for each officer
+
+    Returns list of detections with both face_crop_path and body_crop_path.
     """
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
-        
-    print(f"Analyzing {image_path}...")
-    
-    analyzed_data = []
-    
-    img = cv2.imread(image_path)
-    if img is None: 
-        return []
-    
-    h_img, w_img = img.shape[:2]
 
-    # 1. Face Detection (Primary)
+    logger.info(f"Analyzing {image_path}...")
+
+    analyzed_data = []
+
+    img = cv2.imread(image_path)
+    if img is None:
+        return []
+
+    h_img, w_img = img.shape[:2]
+    base_filename = os.path.splitext(os.path.basename(image_path))[0]
+
+    # 1. Object Detection (YOLO) - Run first to get person boxes for body crops
+    yolo_detections = detect_objects(image_path)
+    person_detections = [d for d in yolo_detections if d['label'] == 'person' and d['confidence'] > PERSON_CONFIDENCE_THRESHOLD]
+    objects_found = list(set([d['label'] for d in yolo_detections]))
+
+    # 2. Face Detection (Primary)
     face_detections = detect_faces(image_path)
-    
-    # Track covered areas to avoid duplicates if we add YOLO detections later
-    # (Simplified: just track center points of faces)
-    face_centers = []
-    
+
+    # Filter by confidence threshold
+    face_detections = [d for d in face_detections if d['confidence'] >= FACE_CONFIDENCE_THRESHOLD]
+
     for i, det in enumerate(face_detections):
         x, y, w, h = det['box']
-        
-        # Clamp
-        x = max(0, x); y = max(0, y)
-        w = min(w, w_img - x); h = min(h, h_img - y)
-        if w <= 0 or h <= 0: continue
-        
-        face_centers.append((x + w/2, y + h/2))
-            
+
+        # Clamp coordinates
+        x = max(0, x)
+        y = max(0, y)
+        w = min(w, w_img - x)
+        h = min(h, h_img - y)
+        if w <= 0 or h <= 0:
+            continue
+
+        face_box = [x, y, w, h]
+
+        # Find matching person detection for body crop
+        person_box = find_person_for_face(face_box, person_detections)
+
+        # Generate dual crops
+        crop_base = f"{base_filename}_{i}"
+        crop_paths = generate_dual_crops(img, face_box, person_box, output_dir, crop_base)
+
+        # Skip if we couldn't generate at least one valid crop
+        if not crop_paths['face_crop_path'] and not crop_paths['body_crop_path']:
+            logger.warning(f"Skipping detection {i} - no valid crops generated")
+            continue
+
+        # Quality assessment
         face_img = img[y:y+h, x:x+w]
-        
-        # Quality
         blur_score = calculate_blur(face_img)
-        is_blurry = blur_score < 100 
-        
-        # Badge/Shoulder Number OCR (using improved extraction)
-        badge_text = extract_badge_number(img, (x, y, w, h))
-        
-        face_filename = f"face_{os.path.basename(image_path)}_{i}.jpg"
-        face_path = os.path.join(output_dir, face_filename)
-        cv2.imwrite(face_path, face_img)
-        
+        is_blurry = blur_score < 100
+
+        # Badge/Shoulder Number OCR
+        badge_text = extract_badge_number(img, face_box)
+
+        # Use face crop as primary crop_path for backwards compatibility
+        primary_crop = crop_paths['face_crop_path'] or crop_paths['body_crop_path']
+
         analyzed_data.append({
-            "crop_path": face_path,
-            "confidence": det['confidence'],  # Include detection confidence
+            "crop_path": primary_crop,
+            "face_crop_path": crop_paths['face_crop_path'],
+            "body_crop_path": crop_paths['body_crop_path'],
+            "confidence": det['confidence'],
             "role": "Officer",
             "action": "Detected (Face)",
             "badge": badge_text,
             "encoding": None,
-            "quality": {"blur_score": float(blur_score), "is_blurry": is_blurry, "resolution": f"{w}x{h}"}
+            "quality": {
+                "blur_score": float(blur_score),
+                "is_blurry": is_blurry,
+                "resolution": f"{w}x{h}",
+                "face_visible": True
+            }
         })
 
-    # 2. Object Detection (YOLO) - Scene Context & Person Fallback
-    yolo_detections = detect_objects(image_path)
-    objects_found = list(set([d['label'] for d in yolo_detections]))
-    
-    # Fallback: If no faces found, or to augment, crop 'person' detections
-    # Only if they don't overlap with existing faces? 
-    # For now: If 0 faces found, crop ALL detected persons.
-    if len(face_detections) == 0:
-        person_count = 0
-        for det in yolo_detections:
-            if det['label'] == 'person' and det['confidence'] > 0.4:
-                x, y, w, h = det['box']
-                # Validate size (ignore tiny people in background)
-                if w < 50 or h < 50: continue
-                
-                # Clamp
-                x = max(0, x); y = max(0, y)
-                w = min(w, w_img - x); h = min(h, h_img - y)
-                
-                person_img = img[y:y+h, x:x+w]
-                person_filename = f"person_{os.path.basename(image_path)}_{person_count}.jpg"
-                person_path = os.path.join(output_dir, person_filename)
-                cv2.imwrite(person_path, person_img)
-                
-                analyzed_data.append({
-                    "crop_path": person_path,
-                    "confidence": det['confidence'],  # Include detection confidence
-                    "role": "Officer (Unidentified)",
-                    "action": "Detected (Body)",
-                    "badge": None,
-                    "encoding": None,
-                    "quality": {"blur_score": 0.0, "is_blurry": False, "resolution": f"{w}x{h}"}
-                })
-                person_count += 1
+    # 3. Fallback: If no faces found, use person detections
+    if len(face_detections) == 0 and person_detections:
+        logger.info(f"No faces detected, using {len(person_detections)} person detections as fallback")
 
-    # Add scene summary if we have objects but no crops at all
+        for i, det in enumerate(person_detections):
+            x, y, w, h = det['box']
+
+            # Validate size (ignore tiny people in background)
+            if w < 50 or h < 50:
+                continue
+
+            # Clamp
+            x = max(0, x)
+            y = max(0, y)
+            w = min(w, w_img - x)
+            h = min(h, h_img - y)
+
+            # Save full person crop as body crop
+            person_img = img[y:y+h, x:x+w]
+            body_filename = f"body_{base_filename}_person_{i}.jpg"
+            body_path = os.path.join(output_dir, body_filename)
+
+            # Security: Validate output path before writing
+            if not is_safe_path(body_path):
+                logger.error(f"Path traversal attempt blocked for person crop: {body_path}")
+                continue
+
+            cv2.imwrite(body_path, person_img)
+
+            analyzed_data.append({
+                "crop_path": body_path,
+                "face_crop_path": None,
+                "body_crop_path": body_path,
+                "confidence": det['confidence'],
+                "role": "Officer (Unidentified)",
+                "action": "Detected (Body Only)",
+                "badge": None,
+                "encoding": None,
+                "quality": {
+                    "blur_score": 0.0,
+                    "is_blurry": False,
+                    "resolution": f"{w}x{h}",
+                    "face_visible": False
+                }
+            })
+
+    # Add scene summary if we have objects but no people detected
     if len(analyzed_data) == 0 and len(objects_found) > 0:
         analyzed_data.append({
             "is_scene_summary": True,
             "objects": objects_found,
             "message": f"Detected objects: {', '.join(objects_found)}"
         })
-        
+
     return analyzed_data
