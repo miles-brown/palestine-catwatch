@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Printer, ArrowLeft, Shield, AlertTriangle, Play, Clock, User, Video, Image as ImageIcon, ChevronLeft, ChevronRight, Download } from 'lucide-react';
+import { Printer, ArrowLeft, Shield, AlertTriangle, Clock, User, Video, Image as ImageIcon, MapPin, Calendar, ExternalLink, CheckCircle, Heart, FileText, Users, Camera } from 'lucide-react';
 import VideoPlayer from '@/components/VideoPlayer';
 import UniformAnalysisCard from '@/components/UniformAnalysisCard';
 import { API_BASE, getMediaUrl, sanitizeMediaPath } from '../utils/api';
@@ -481,10 +481,105 @@ export default function ReportPage() {
                     </table>
                 </div>
 
+                {/* Thank You & Summary Section */}
+                <div className="bg-gradient-to-br from-green-50 to-slate-50 rounded-xl p-6 mt-6 border border-green-200">
+                    <div className="flex items-start gap-4">
+                        <div className="p-3 bg-green-100 rounded-full">
+                            <Heart className="h-6 w-6 text-green-600" />
+                        </div>
+                        <div className="flex-1">
+                            <h3 className="text-lg font-bold text-slate-900 mb-2">
+                                Thank You for Your Contribution
+                            </h3>
+                            <p className="text-slate-600 text-sm mb-4">
+                                Your submission helps document police conduct at Palestine solidarity demonstrations.
+                                This evidence contributes to transparency and accountability in public order policing.
+                            </p>
+
+                            {/* Summary Stats */}
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                                <div className="bg-white rounded-lg p-3 border border-slate-200 text-center">
+                                    <Shield className="h-5 w-5 text-blue-500 mx-auto mb-1" />
+                                    <p className="text-xl font-bold text-slate-800">{stats.total_officers}</p>
+                                    <p className="text-xs text-slate-500">Officers Identified</p>
+                                </div>
+                                <div className="bg-white rounded-lg p-3 border border-slate-200 text-center">
+                                    <Camera className="h-5 w-5 text-purple-500 mx-auto mb-1" />
+                                    <p className="text-xl font-bold text-slate-800">{stats.total_appearances}</p>
+                                    <p className="text-xs text-slate-500">Total Appearances</p>
+                                </div>
+                                <div className="bg-white rounded-lg p-3 border border-slate-200 text-center">
+                                    <FileText className="h-5 w-5 text-green-500 mx-auto mb-1" />
+                                    <p className="text-xl font-bold text-slate-800">1</p>
+                                    <p className="text-xs text-slate-500">Source Analyzed</p>
+                                </div>
+                                <div className="bg-white rounded-lg p-3 border border-slate-200 text-center">
+                                    <Users className="h-5 w-5 text-yellow-500 mx-auto mb-1" />
+                                    <p className="text-xl font-bold text-slate-800">{timeline?.length || 0}</p>
+                                    <p className="text-xs text-slate-500">Timeline Events</p>
+                                </div>
+                            </div>
+
+                            {/* Context Info */}
+                            <div className="bg-white rounded-lg p-4 border border-slate-200">
+                                <h4 className="text-sm font-semibold text-slate-700 mb-3">Submission Details</h4>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                                    <div className="flex items-center gap-2 text-slate-600">
+                                        <Calendar className="h-4 w-4 text-slate-400" />
+                                        <span className="font-medium">Protest Date:</span>
+                                        <span>{protest.date ? new Date(protest.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : 'Unknown'}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2 text-slate-600">
+                                        <MapPin className="h-4 w-4 text-slate-400" />
+                                        <span className="font-medium">Location:</span>
+                                        <span>{protest.location || 'Unknown'}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2 text-slate-600">
+                                        {isVideo ? <Video className="h-4 w-4 text-slate-400" /> : <ImageIcon className="h-4 w-4 text-slate-400" />}
+                                        <span className="font-medium">Media Type:</span>
+                                        <span className="capitalize">{media.type}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2 text-slate-600">
+                                        <Clock className="h-4 w-4 text-slate-400" />
+                                        <span className="font-medium">Processed:</span>
+                                        <span>{new Date(media.timestamp).toLocaleString('en-GB')}</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Action Buttons */}
+                            <div className="flex flex-wrap gap-3 mt-4">
+                                <Link to="/upload">
+                                    <Button className="bg-green-600 hover:bg-green-700 text-white">
+                                        <CheckCircle className="h-4 w-4 mr-2" />
+                                        Submit More Evidence
+                                    </Button>
+                                </Link>
+                                <Link to="/dashboard">
+                                    <Button variant="outline" className="border-slate-300">
+                                        View Dashboard
+                                    </Button>
+                                </Link>
+                                <Button variant="outline" className="border-slate-300" onClick={() => window.print()}>
+                                    <Printer className="h-4 w-4 mr-2" />
+                                    Print Report
+                                </Button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 {/* Footer */}
-                <div className="bg-gray-50 rounded-b-xl p-4 text-center text-xs text-gray-500 border border-gray-200 mt-0 print:mt-4">
-                    <p>Generated by Palestine Catwatch AI</p>
-                    <p className="mt-1">{new Date().toLocaleString()}</p>
+                <div className="bg-slate-900 rounded-xl p-6 text-center mt-6 print:bg-gray-100 print:text-black">
+                    <p className="text-slate-400 print:text-gray-600 text-sm">
+                        Generated by <span className="font-semibold text-white print:text-black">Palestine Accountability Campaign</span>
+                    </p>
+                    <p className="text-slate-500 print:text-gray-500 text-xs mt-2">
+                        {new Date().toLocaleString('en-GB')} | Report #{media.id}
+                    </p>
+                    <p className="text-slate-600 print:text-gray-400 text-xs mt-3">
+                        This report is for documentation and research purposes only.
+                    </p>
                 </div>
             </div>
         </div>

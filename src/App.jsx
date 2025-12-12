@@ -18,6 +18,7 @@ import DashboardPage from './pages/DashboardPage';
 import AdminPage from './pages/AdminPage';
 import FaceSearchPage from './pages/FaceSearchPage';
 import EquipmentPage from './pages/EquipmentPage';
+import ProtestDatabasePage from './pages/ProtestDatabasePage';
 import ChainOfCommandPage from './pages/ChainOfCommandPage';
 import OfficerProfilePage from './pages/OfficerProfilePage';
 import GeographicPage from './pages/GeographicPage';
@@ -100,6 +101,7 @@ const AppContent = () => {
             <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
             <Route path="/face-search" element={<ProtectedRoute><FaceSearchPage /></ProtectedRoute>} />
             <Route path="/equipment" element={<ProtectedRoute><EquipmentPage /></ProtectedRoute>} />
+            <Route path="/protests" element={<ProtectedRoute><ProtestDatabasePage /></ProtectedRoute>} />
             <Route path="/chain-of-command" element={<ProtectedRoute><ChainOfCommandPage /></ProtectedRoute>} />
             <Route path="/officer/:officerId" element={<ProtectedRoute><OfficerProfilePage /></ProtectedRoute>} />
             <Route path="/geographic" element={<ProtectedRoute><GeographicPage /></ProtectedRoute>} />
@@ -141,7 +143,7 @@ const AppContent = () => {
               <div>
                 <h4 className="font-semibold text-sm uppercase tracking-wider text-slate-400 mb-4">Research</h4>
                 <ul className="space-y-2 text-sm">
-                  <li><Link to="/" className="text-slate-300 hover:text-white transition-colors">Officer Database</Link></li>
+                  <li><Link to="/protests" className="text-slate-300 hover:text-white transition-colors">Protest Database</Link></li>
                   <li><Link to="/equipment" className="text-slate-300 hover:text-white transition-colors">Equipment Records</Link></li>
                   <li><Link to="/timeline" className="text-slate-300 hover:text-white transition-colors">Event Timeline</Link></li>
                   <li><Link to="/geographic" className="text-slate-300 hover:text-white transition-colors">Geographic Analysis</Link></li>

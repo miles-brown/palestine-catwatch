@@ -20,10 +20,11 @@ const NAVIGATION_CONFIG = {
   authenticated: [
     { name: 'Home', href: '/' },
     { name: 'Dashboard', href: '/dashboard' },
-    { name: 'Database', href: '/equipment' },
+    { name: 'Protests', href: '/protests' },
     { name: 'About', href: '/about' },
   ],
   tools: [
+    { name: 'Protest Database', href: '/protests' },
     { name: 'Face Search', href: '/face-search' },
     { name: 'Equipment Database', href: '/equipment' },
     { name: 'Chain of Command', href: '/chain-of-command' },

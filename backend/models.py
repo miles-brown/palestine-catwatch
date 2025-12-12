@@ -55,9 +55,25 @@ class Protest(Base):
     name = Column(String, index=True)
     date = Column(DateTime)
     location = Column(String)
+    city = Column(String, index=True, nullable=True)
+    country = Column(String, index=True, nullable=True, default="United Kingdom")
     latitude = Column(String, nullable=True)
     longitude = Column(String, nullable=True)
     description = Column(Text, nullable=True)
+
+    # Enhanced protest details
+    organizer = Column(String, nullable=True)  # e.g., "Palestine Solidarity Campaign"
+    estimated_attendance = Column(Integer, nullable=True)
+    police_force = Column(String, nullable=True)  # Primary force present
+    event_type = Column(String, nullable=True)  # march, rally, vigil, encampment, etc.
+
+    # Status and metadata
+    status = Column(String, default="documented")  # documented, under_review, verified
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
+
+    # Cover image for dashboard display
+    cover_image_url = Column(String, nullable=True)
 
     media = relationship("Media", back_populates="protest")
 
@@ -111,11 +127,15 @@ class OfficerAppearance(Base):
     officer_id = Column(Integer, ForeignKey("officers.id"))
     media_id = Column(Integer, ForeignKey("media.id"))
 
-    timestamp_in_video = Column(String, nullable=True) # e.g. "00:12:34"
-    image_crop_path = Column(String, nullable=True) # Path to the cropped face/body image
+    timestamp_in_video = Column(String, nullable=True)  # e.g. "00:12:34"
 
-    role = Column(String, nullable=True) # e.g. "Medic", "Commander"
-    action = Column(Text, nullable=True) # AI described action: "Kettling", "Arresting"
+    # Dual crop paths for officer documentation
+    face_crop_path = Column(String, nullable=True)  # Close-up face crop for Officer Card
+    body_crop_path = Column(String, nullable=True)  # Full body crop (head to toe) for evidence
+    image_crop_path = Column(String, nullable=True)  # Legacy: kept for backwards compatibility
+
+    role = Column(String, nullable=True)  # e.g. "Medic", "Commander"
+    action = Column(Text, nullable=True)  # AI described action: "Kettling", "Arresting"
 
     # Confidence calibration fields
     confidence = Column(Float, nullable=True, default=None)  # 0-100 confidence score

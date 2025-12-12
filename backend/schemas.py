@@ -2,14 +2,42 @@ from pydantic import BaseModel, ConfigDict
 from typing import List, Optional
 from datetime import datetime
 
-# Media
+# Protest schemas
 class ProtestBase(BaseModel):
     name: str
     date: datetime
     location: str
+    city: Optional[str] = None
+    country: Optional[str] = "United Kingdom"
     latitude: Optional[str] = None
     longitude: Optional[str] = None
     description: Optional[str] = None
+    organizer: Optional[str] = None
+    estimated_attendance: Optional[int] = None
+    police_force: Optional[str] = None
+    event_type: Optional[str] = None  # march, rally, vigil, encampment
+    cover_image_url: Optional[str] = None
+
+
+class ProtestCreate(ProtestBase):
+    pass
+
+
+class ProtestUpdate(BaseModel):
+    name: Optional[str] = None
+    date: Optional[datetime] = None
+    location: Optional[str] = None
+    city: Optional[str] = None
+    country: Optional[str] = None
+    latitude: Optional[str] = None
+    longitude: Optional[str] = None
+    description: Optional[str] = None
+    organizer: Optional[str] = None
+    estimated_attendance: Optional[int] = None
+    police_force: Optional[str] = None
+    event_type: Optional[str] = None
+    status: Optional[str] = None
+    cover_image_url: Optional[str] = None
 
 class MediaBase(BaseModel):
     url: str
@@ -28,8 +56,18 @@ class Media(MediaBase):
 
 class Protest(ProtestBase):
     id: int
+    status: Optional[str] = "documented"
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     media: List[Media] = []
     model_config = ConfigDict(from_attributes=True)
+
+
+class ProtestWithStats(Protest):
+    """Protest with computed statistics for dashboard display."""
+    media_count: int = 0
+    officer_count: int = 0
+    verified_count: int = 0
 
 # Update Media to include Protest
 class MediaWithProtest(Media):

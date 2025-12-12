@@ -68,6 +68,17 @@ try:
             "ALTER TABLE media ADD COLUMN IF NOT EXISTS file_size INTEGER",
             "ALTER TABLE media ADD COLUMN IF NOT EXISTS is_duplicate BOOLEAN DEFAULT FALSE",
             "ALTER TABLE media ADD COLUMN IF NOT EXISTS duplicate_of_id INTEGER REFERENCES media(id)",
+            # Enhanced protest fields
+            "ALTER TABLE protests ADD COLUMN IF NOT EXISTS city VARCHAR",
+            "ALTER TABLE protests ADD COLUMN IF NOT EXISTS country VARCHAR DEFAULT 'United Kingdom'",
+            "ALTER TABLE protests ADD COLUMN IF NOT EXISTS organizer VARCHAR",
+            "ALTER TABLE protests ADD COLUMN IF NOT EXISTS estimated_attendance INTEGER",
+            "ALTER TABLE protests ADD COLUMN IF NOT EXISTS police_force VARCHAR",
+            "ALTER TABLE protests ADD COLUMN IF NOT EXISTS event_type VARCHAR",
+            "ALTER TABLE protests ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'documented'",
+            "ALTER TABLE protests ADD COLUMN IF NOT EXISTS created_at TIMESTAMP",
+            "ALTER TABLE protests ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP",
+            "ALTER TABLE protests ADD COLUMN IF NOT EXISTS cover_image_url VARCHAR",
         ]
         for migration in migrations:
             try:
@@ -789,8 +800,246 @@ async def bulk_ingest_urls(request: Request, body: BulkIngestRequest, background
 
 @app.get("/protests")
 @limiter.limit(get_rate_limit("protests"))
-def get_protests(request: Request, db: Session = Depends(get_db)):
-    return db.query(models.Protest).all()
+def get_protests(
+    request: Request,
+    city: Optional[str] = None,
+    country: Optional[str] = None,
+    event_type: Optional[str] = None,
+    sort_by: str = "date",  # date, city, name, attendance
+    sort_order: str = "desc",  # asc, desc
+    limit: int = DEFAULT_PAGINATION_LIMIT,
+    offset: int = 0,
+    db: Session = Depends(get_db)
+):
+    """
+    Get all protests with optional filtering and sorting.
+    Returns protests with computed statistics (media count, officer count).
+    """
+    from sqlalchemy import func, desc, asc
+
+    query = db.query(models.Protest)
+
+    # Apply filters
+    if city:
+        query = query.filter(models.Protest.city.ilike(f"%{city}%"))
+    if country:
+        query = query.filter(models.Protest.country.ilike(f"%{country}%"))
+    if event_type:
+        query = query.filter(models.Protest.event_type == event_type)
+
+    # Get total count before pagination
+    total_count = query.count()
+
+    # Apply sorting
+    sort_column = {
+        "date": models.Protest.date,
+        "city": models.Protest.city,
+        "name": models.Protest.name,
+        "attendance": models.Protest.estimated_attendance,
+        "created_at": models.Protest.created_at,
+    }.get(sort_by, models.Protest.date)
+
+    if sort_order == "desc":
+        query = query.order_by(desc(sort_column))
+    else:
+        query = query.order_by(asc(sort_column))
+
+    # Apply pagination
+    protests = query.offset(offset).limit(min(limit, MAX_PAGINATION_LIMIT)).all()
+
+    # Compute statistics for each protest
+    results = []
+    for protest in protests:
+        media_count = db.query(models.Media).filter(models.Media.protest_id == protest.id).count()
+
+        # Count officers from appearances in this protest's media
+        officer_count = db.query(func.count(func.distinct(models.OfficerAppearance.officer_id))).join(
+            models.Media, models.OfficerAppearance.media_id == models.Media.id
+        ).filter(models.Media.protest_id == protest.id).scalar() or 0
+
+        # Count verified appearances
+        verified_count = db.query(models.OfficerAppearance).join(
+            models.Media, models.OfficerAppearance.media_id == models.Media.id
+        ).filter(
+            models.Media.protest_id == protest.id,
+            models.OfficerAppearance.verified == True
+        ).count()
+
+        results.append({
+            "id": protest.id,
+            "name": protest.name,
+            "date": protest.date.isoformat() if protest.date else None,
+            "location": protest.location,
+            "city": protest.city,
+            "country": protest.country,
+            "latitude": protest.latitude,
+            "longitude": protest.longitude,
+            "description": protest.description,
+            "organizer": protest.organizer,
+            "estimated_attendance": protest.estimated_attendance,
+            "police_force": protest.police_force,
+            "event_type": protest.event_type,
+            "status": protest.status,
+            "cover_image_url": protest.cover_image_url,
+            "created_at": protest.created_at.isoformat() if protest.created_at else None,
+            "updated_at": protest.updated_at.isoformat() if protest.updated_at else None,
+            "media_count": media_count,
+            "officer_count": officer_count,
+            "verified_count": verified_count,
+        })
+
+    # Get unique cities and event types for filters
+    cities = db.query(models.Protest.city).filter(models.Protest.city.isnot(None)).distinct().all()
+    event_types = db.query(models.Protest.event_type).filter(models.Protest.event_type.isnot(None)).distinct().all()
+
+    return {
+        "protests": results,
+        "total": total_count,
+        "cities": [c[0] for c in cities if c[0]],
+        "event_types": [e[0] for e in event_types if e[0]],
+    }
+
+
+@app.get("/protests/{protest_id}")
+@limiter.limit(get_rate_limit("default"))
+def get_protest(request: Request, protest_id: int, db: Session = Depends(get_db)):
+    """Get a single protest by ID with full details."""
+    from sqlalchemy import func
+
+    protest = db.query(models.Protest).filter(models.Protest.id == protest_id).first()
+    if not protest:
+        raise HTTPException(status_code=404, detail="Protest not found")
+
+    # Get media for this protest
+    media_items = db.query(models.Media).filter(models.Media.protest_id == protest_id).all()
+
+    # Get officers documented at this protest
+    officers = db.query(models.Officer).join(
+        models.OfficerAppearance, models.Officer.id == models.OfficerAppearance.officer_id
+    ).join(
+        models.Media, models.OfficerAppearance.media_id == models.Media.id
+    ).filter(models.Media.protest_id == protest_id).distinct().all()
+
+    return {
+        "id": protest.id,
+        "name": protest.name,
+        "date": protest.date.isoformat() if protest.date else None,
+        "location": protest.location,
+        "city": protest.city,
+        "country": protest.country,
+        "latitude": protest.latitude,
+        "longitude": protest.longitude,
+        "description": protest.description,
+        "organizer": protest.organizer,
+        "estimated_attendance": protest.estimated_attendance,
+        "police_force": protest.police_force,
+        "event_type": protest.event_type,
+        "status": protest.status,
+        "cover_image_url": protest.cover_image_url,
+        "created_at": protest.created_at.isoformat() if protest.created_at else None,
+        "updated_at": protest.updated_at.isoformat() if protest.updated_at else None,
+        "media": [
+            {
+                "id": m.id,
+                "url": get_web_url(m.url),
+                "type": m.type,
+                "processed": m.processed,
+                "timestamp": m.timestamp.isoformat() if m.timestamp else None,
+            }
+            for m in media_items
+        ],
+        "officers": [
+            {
+                "id": o.id,
+                "badge_number": o.badge_number,
+                "force": o.force,
+                "rank": o.rank,
+            }
+            for o in officers
+        ],
+        "media_count": len(media_items),
+        "officer_count": len(officers),
+    }
+
+
+@app.post("/protests")
+@limiter.limit(get_rate_limit("default"))
+def create_protest(
+    request: Request,
+    protest_data: schemas.ProtestCreate,
+    db: Session = Depends(get_db)
+):
+    """Create a new protest."""
+    protest = models.Protest(
+        name=protest_data.name,
+        date=protest_data.date,
+        location=protest_data.location,
+        city=protest_data.city,
+        country=protest_data.country or "United Kingdom",
+        latitude=protest_data.latitude,
+        longitude=protest_data.longitude,
+        description=protest_data.description,
+        organizer=protest_data.organizer,
+        estimated_attendance=protest_data.estimated_attendance,
+        police_force=protest_data.police_force,
+        event_type=protest_data.event_type,
+        cover_image_url=protest_data.cover_image_url,
+    )
+    db.add(protest)
+    db.commit()
+    db.refresh(protest)
+
+    log_audit("protest_created", {"protest_id": protest.id, "name": protest.name})
+
+    return {
+        "id": protest.id,
+        "name": protest.name,
+        "message": "Protest created successfully"
+    }
+
+
+@app.patch("/protests/{protest_id}")
+@limiter.limit(get_rate_limit("default"))
+def update_protest(
+    request: Request,
+    protest_id: int,
+    protest_data: schemas.ProtestUpdate,
+    db: Session = Depends(get_db)
+):
+    """Update an existing protest."""
+    protest = db.query(models.Protest).filter(models.Protest.id == protest_id).first()
+    if not protest:
+        raise HTTPException(status_code=404, detail="Protest not found")
+
+    # Update only provided fields
+    update_data = protest_data.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(protest, field, value)
+
+    db.commit()
+    db.refresh(protest)
+
+    log_audit("protest_updated", {"protest_id": protest.id})
+
+    return {"message": "Protest updated successfully", "id": protest.id}
+
+
+@app.delete("/protests/{protest_id}")
+@limiter.limit(get_rate_limit("default"))
+def delete_protest(request: Request, protest_id: int, db: Session = Depends(get_db)):
+    """Delete a protest and all associated media."""
+    protest = db.query(models.Protest).filter(models.Protest.id == protest_id).first()
+    if not protest:
+        raise HTTPException(status_code=404, detail="Protest not found")
+
+    # Delete associated media first (cascading would handle this but being explicit)
+    db.query(models.Media).filter(models.Media.protest_id == protest_id).delete()
+    db.delete(protest)
+    db.commit()
+
+    log_audit("protest_deleted", {"protest_id": protest_id})
+
+    return {"message": "Protest deleted successfully"}
 
 @app.post("/officers/merge")
 @limiter.limit(get_rate_limit("default"))
