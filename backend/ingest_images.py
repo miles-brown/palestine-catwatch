@@ -137,18 +137,68 @@ def get_source_name(url: str) -> str:
         return "Unknown Source"
 
 
-def get_archive_url(url):
+def request_wayback_save(url: str) -> dict:
+    """
+    Request Wayback Machine to save a page. Returns status info.
+
+    Args:
+        url: The URL to archive
+
+    Returns:
+        Dict with 'success', 'job_id', and 'message' keys
+    """
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    })
+
+    try:
+        # Use Save Page Now API
+        save_url = f"https://web.archive.org/save/{url}"
+        response = session.get(save_url, timeout=30, allow_redirects=False)
+
+        if response.status_code in [302, 200]:
+            # Redirect means save initiated
+            location = response.headers.get('Location', '')
+            if 'web.archive.org/web/' in location:
+                return {
+                    'success': True,
+                    'url': location,
+                    'message': 'Archive created successfully'
+                }
+            return {
+                'success': True,
+                'url': None,
+                'message': 'Archive save initiated. Please wait 1-2 minutes and retry.'
+            }
+    except Exception as e:
+        logging.debug(f"Wayback save request failed: {e}")
+
+    return {
+        'success': False,
+        'url': None,
+        'message': 'Could not initiate archive save'
+    }
+
+
+def get_archive_url(url: str, request_save: bool = False) -> tuple:
     """
     Try to get an archived version of a blocked URL.
-    Checks Wayback Machine first (more reliable), then archive.today.
-    Returns the archive URL if found, None otherwise.
+    Checks multiple archive services and can request a new archive.
+
+    Args:
+        url: The original URL to find archived
+        request_save: If True, request Wayback Machine to save if not found
+
+    Returns:
+        Tuple of (archive_url, message) - archive_url is None if not found
     """
     session = requests.Session()
     session.headers.update({
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     })
 
-    # Try Wayback Machine first (more reliable for automated access)
+    # Try Wayback Machine first (most reliable for automated access)
     try:
         wayback_api = f"https://archive.org/wayback/available?url={url}"
         response = session.get(wayback_api, timeout=10)
@@ -159,14 +209,15 @@ def get_archive_url(url):
             if closest.get('available') and closest.get('url'):
                 wayback_url = closest['url']
                 logging.info(f"Found Wayback Machine archive: {wayback_url}")
-                return wayback_url
+                return (wayback_url, "Found existing Wayback Machine archive")
     except Exception as e:
         logging.debug(f"Wayback Machine check failed: {e}")
 
-    # archive.today variants often require CAPTCHA, try anyway
+    # Try archive.today/archive.is variants
     archive_services = [
         f"https://archive.today/newest/{url}",
         f"https://archive.is/newest/{url}",
+        f"https://archive.ph/newest/{url}",
     ]
 
     for archive_url in archive_services:
@@ -174,18 +225,40 @@ def get_archive_url(url):
             response = session.head(archive_url, timeout=10, allow_redirects=True)
             if response.status_code == 200:
                 final_url = response.url
-                # Check we got redirected to an actual archive page (not CAPTCHA)
+                # Check we got redirected to an actual archive page (not CAPTCHA/404)
                 if final_url != archive_url and '/wip/' not in final_url:
                     # Verify it's not a CAPTCHA page
                     check_resp = session.get(final_url, timeout=10)
-                    if b'security check' not in check_resp.content.lower() and b'captcha' not in check_resp.content.lower():
+                    content_lower = check_resp.content.lower()
+                    if b'security check' not in content_lower and b'captcha' not in content_lower:
                         logging.info(f"Found archive at: {final_url}")
-                        return final_url
+                        return (final_url, "Found existing archive.today snapshot")
         except Exception as e:
             logging.debug(f"Archive check failed for {archive_url}: {e}")
             continue
 
-    return None
+    # No existing archive found - try to create one if requested
+    if request_save:
+        save_result = request_wayback_save(url)
+        if save_result['success'] and save_result['url']:
+            return (save_result['url'], save_result['message'])
+        elif save_result['success']:
+            return (None, save_result['message'])
+
+    # Build helpful instructions for the user
+    archive_today_url = f"https://archive.today/?run=1&url={url}"
+    wayback_save_url = f"https://web.archive.org/save/{url}"
+
+    instructions = (
+        f"No archive found for this blocked site. To scrape images:\n"
+        f"1. Open: {archive_today_url}\n"
+        f"   (Complete any CAPTCHA, wait for archive to complete)\n"
+        f"2. Or open: {wayback_save_url}\n"
+        f"   (Wait 1-2 minutes for processing)\n"
+        f"3. Then paste the archive URL here instead of the original URL."
+    )
+
+    return (None, instructions)
 
 
 def is_wayback_url(url):
@@ -345,24 +418,23 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
             status_callback("log", "This site blocks direct scraping. Checking for archived version...")
             status_callback("status_update", "Checking Archives")
 
-        # Try to find an archived version
-        archive_url = get_archive_url(url)
+        # Try to find an archived version (with request_save to try Wayback if not found)
+        archive_url, archive_message = get_archive_url(url, request_save=True)
 
         if archive_url:
             if status_callback:
-                status_callback("log", f"Found archived version! Using: {archive_url[:60]}...")
+                status_callback("log", f"Found archive! Using: {archive_url[:60]}...")
             url = archive_url
         else:
-            # No archive found - give user options
-            error_msg = (
-                "This site blocks automated scraping and no archive was found. "
-                "Options: 1) Archive the page at archive.today first, then submit the archive URL. "
-                "2) Download images manually and upload directly. "
-                "3) Try a different news source covering the same event."
-            )
+            # No archive found - provide detailed instructions
             if status_callback:
-                status_callback("log", error_msg)
-                status_callback("complete", {"message": error_msg, "media_id": None})
+                status_callback("log", archive_message)
+                status_callback("complete", {
+                    "message": archive_message,
+                    "media_id": None,
+                    "blocked_site": True,
+                    "archive_instructions": True
+                })
             return
 
     if status_callback:
