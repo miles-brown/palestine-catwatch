@@ -43,6 +43,10 @@ IMAGE_QUALITY_SETTINGS = {
 ARTICLE_ID_HIGH_PRIORITY_THRESHOLD = 10000    # Within 10k = same article cluster
 ARTICLE_ID_MEDIUM_PRIORITY_THRESHOLD = 100000  # Within 100k = related content
 
+# Scraping limits
+MIN_IMAGE_SIZE_BYTES = 5000  # Skip images smaller than 5KB (likely icons/trackers)
+MAX_IMAGES_PER_SCRAPE = 15   # Maximum images to download per article
+
 # Sites known to use Cloudflare or aggressive bot protection
 CLOUDFLARE_SITES = [
     'dailymail.co.uk',
@@ -616,9 +620,10 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
         # Note: Using length-limited patterns to prevent ReDoS attacks
         cdn_patterns = [
             # Mirror/Reach PLC sites (mirror.co.uk, mylondon.news, etc.)
-            r'https://i[0-9]-prod\.[a-z]+\.co\.uk/[\w./-]{1,200}/ALTERNATES/s(?:1200|810|615)[\w./-]{0,100}\.(?:jpg|jpeg|png|webp)',
+            # All quantifiers bounded to prevent ReDoS attacks
+            r'https://i[0-9]-prod\.[a-z]{1,20}\.co\.uk/[\w./-]{1,200}/ALTERNATES/s(?:1200|810|615)[\w./-]{0,100}\.(?:jpg|jpeg|png|webp)',
             r'https://i[0-9]-prod\.mylondon\.news/[\w./-]{1,200}/ALTERNATES/s(?:1200|810|615)[\w./-]{0,100}\.(?:jpg|jpeg|png|webp)',
-            r'https://[a-z0-9.-]+/incoming/article[0-9]+\.ece/[\w./-]{1,200}\.(?:jpg|jpeg|png|webp)',
+            r'https://[a-z0-9.-]{1,50}/incoming/article[0-9]{1,12}\.ece/[\w./-]{1,200}\.(?:jpg|jpeg|png|webp)',
             # NY Times CDN (high quality: superJumbo, jumbo, videoSixteenByNine3000, threeByTwoLargeAt2X)
             r'https://static01\.nyt\.com/images/[\w./-]{1,200}(?:superJumbo|jumbo|videoSixteenByNine3000|threeByTwoLargeAt2X)[\w.-]{0,50}\.(?:jpg|jpeg|png|webp)',
             # Evening Standard CDN (static.standard.co.uk) - date + time path
@@ -633,7 +638,7 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
             r'https://static\.independent\.co\.uk/[\d/]{1,30}/[\w._()-]{1,200}\.(?:jpg|jpeg|png|webp)(?:\?[\w=&%]{0,100})?',
             # The Argus / Newsquest CDN (theargus.co.uk, brightonandhoveindependent.co.uk)
             r'https://www\.theargus\.co\.uk/resources/images/[\w/-]{1,150}\.(?:jpg|jpeg|png|webp)',
-            r'https://[a-z0-9.-]+\.newsquestdigital\.co\.uk/[\w./-]{1,200}\.(?:jpg|jpeg|png|webp)',
+            r'https://[a-z0-9.-]{1,50}\.newsquestdigital\.co\.uk/[\w./-]{1,200}\.(?:jpg|jpeg|png|webp)',
             # GB News (RebelMouse CDN with media-library path)
             r'https://www\.gbnews\.com/media-library/[\w./-]{1,200}\.(?:jpg|jpeg|png|webp)(?:\?[\w=&%-]{0,200})?',
             # Times of Israel CDN
@@ -641,7 +646,7 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
             # The Jewish Chronicle (Atex Cloud)
             r'https://api\.thejc\.atexcloud\.io/image-service/[\w/.-]{1,200}\.(?:jpg|jpeg|png|webp)(?:\?[\w=&%.:-]{0,100})?',
             # Channel 4 News (AWS S3)
-            r'https://fournews-assets-prod-s3[a-z0-9-]*\.s3\.amazonaws\.com/media/\d{4}/\d{2}/[\w._-]{1,200}\.(?:jpg|jpeg|png|webp)',
+            r'https://fournews-assets-prod-s3[a-z0-9-]{0,30}\.s3\.amazonaws\.com/media/\d{4}/\d{2}/[\w._-]{1,200}\.(?:jpg|jpeg|png|webp)',
             # Generic CloudFront CDN
             r'https://[a-z0-9.-]{1,50}\.cloudfront\.net/[\w./-]{1,200}\.(?:jpg|jpeg|png|webp)',
         ]
@@ -958,7 +963,7 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
                     img_data = img_session.get(img_url, timeout=10, verify=False).content
 
                     # Skip small files (likely icons/trackers)
-                    if len(img_data) < 5000:  # 5KB minimum
+                    if len(img_data) < MIN_IMAGE_SIZE_BYTES:
                         continue
 
                     # Verify we got actual image data, not HTML error page
@@ -1018,7 +1023,7 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
                     process_media(new_media.id, status_callback)
 
                     # Limit to 15 images max
-                    if saved_count >= 15:
+                    if saved_count >= MAX_IMAGES_PER_SCRAPE:
                         break
 
                 except Exception as e:

@@ -92,11 +92,11 @@ def upgrade() -> None:
                 sa.Column('article_summary', sa.Text(), nullable=True)
             )
 
-        # Add scraped_at if not exists
+        # Add scraped_at if not exists (timezone-aware per CLAUDE.md)
         if 'scraped_at' not in existing_columns:
             op.add_column(
                 'media',
-                sa.Column('scraped_at', sa.DateTime(), nullable=True)
+                sa.Column('scraped_at', sa.DateTime(timezone=True), nullable=True)
             )
 
 
