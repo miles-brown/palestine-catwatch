@@ -2,7 +2,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.ssl_ import create_urllib3_context
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse, urlunparse, parse_qs, urlencode
 import os
 import re
 import ssl
@@ -29,6 +29,24 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 DOWNLOAD_DIR = "data/downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
+# Image quality settings for URL upgrades
+IMAGE_QUALITY_SETTINGS = {
+    'standard_width': 1200,
+    'standard_quality': 75,
+    'sky_resolution': '1600x900',
+    'aljazeera_resize': '1920,1440',
+    'aljazeera_quality': 80,
+}
+
+# Article ID matching thresholds for image relevance
+# Images with article IDs within these ranges are considered related
+ARTICLE_ID_HIGH_PRIORITY_THRESHOLD = 10000    # Within 10k = same article cluster
+ARTICLE_ID_MEDIUM_PRIORITY_THRESHOLD = 100000  # Within 100k = related content
+
+# Scraping limits
+MIN_IMAGE_SIZE_BYTES = 5000  # Skip images smaller than 5KB (likely icons/trackers)
+MAX_IMAGES_PER_SCRAPE = 15   # Maximum images to download per article
+
 # Sites known to use Cloudflare or aggressive bot protection
 CLOUDFLARE_SITES = [
     'dailymail.co.uk',
@@ -44,6 +62,14 @@ CLOUDFLARE_SITES = [
 BLOCKED_SITES = [
     'dailymail.co.uk',  # Uses Akamai with strict bot detection
     'mailonline.co.uk',
+    'nytimes.com',  # Uses CAPTCHA/Cloudflare protection
+    'telegraph.co.uk',  # 403 Forbidden
+    'reuters.com',  # 401 Unauthorized
+    'itv.com',  # 403 Forbidden
+    'cnn.com',  # 451 Geo-blocked
+    'inews.co.uk',  # Blocked
+    'thetimes.com',  # Paywall + blocked
+    'thetimes.co.uk',  # Paywall + blocked
 ]
 
 def is_blocked_site(url):
@@ -57,18 +83,126 @@ def is_blocked_site(url):
     return any(site in url_lower for site in BLOCKED_SITES)
 
 
-def get_archive_url(url):
+# Source name mapping for provenance tracking
+SOURCE_NAME_MAP = {
+    'bbc.co.uk': 'BBC News',
+    'bbc.com': 'BBC News',
+    'theguardian.com': 'The Guardian',
+    'mirror.co.uk': 'Daily Mirror',
+    'independent.co.uk': 'The Independent',
+    'standard.co.uk': 'Evening Standard',
+    'mylondon.news': 'MyLondon',
+    'theargus.co.uk': 'The Argus',
+    'sky.com': 'Sky News',
+    'aljazeera.com': 'Al Jazeera',
+    'nytimes.com': 'The New York Times',
+    'express.co.uk': 'Daily Express',
+    'telegraph.co.uk': 'The Telegraph',
+    'metro.co.uk': 'Metro',
+    'dailymail.co.uk': 'Daily Mail',
+    'thesun.co.uk': 'The Sun',
+    'reuters.com': 'Reuters',
+    'apnews.com': 'AP News',
+    'middleeasteye.net': 'Middle East Eye',
+    # Additional sites tested
+    'gbnews.com': 'GB News',
+    'timesofisrael.com': 'Times of Israel',
+    'thejc.com': 'The Jewish Chronicle',
+    'channel4.com': 'Channel 4 News',
+    'itv.com': 'ITV News',
+    'cnn.com': 'CNN',
+    'inews.co.uk': 'The i',
+    'thetimes.com': 'The Times',
+    'thetimes.co.uk': 'The Times',
+}
+
+
+def get_source_name(url: str) -> str:
+    """
+    Extract source name from URL for provenance tracking.
+
+    Args:
+        url: The article URL
+
+    Returns:
+        Human-readable source name or domain if unknown
+    """
+    url_lower = url.lower()
+    for domain, name in SOURCE_NAME_MAP.items():
+        if domain in url_lower:
+            return name
+
+    # Fallback: extract domain name
+    try:
+        parsed = urlparse(url)
+        domain = parsed.netloc.replace('www.', '')
+        return domain.split('.')[0].title()
+    except Exception:
+        return "Unknown Source"
+
+
+def request_wayback_save(url: str) -> dict:
+    """
+    Request Wayback Machine to save a page. Returns status info.
+
+    Args:
+        url: The URL to archive
+
+    Returns:
+        Dict with 'success', 'job_id', and 'message' keys
+    """
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    })
+
+    try:
+        # Use Save Page Now API
+        save_url = f"https://web.archive.org/save/{url}"
+        response = session.get(save_url, timeout=30, allow_redirects=False)
+
+        if response.status_code in [302, 200]:
+            # Redirect means save initiated
+            location = response.headers.get('Location', '')
+            if 'web.archive.org/web/' in location:
+                return {
+                    'success': True,
+                    'url': location,
+                    'message': 'Archive created successfully'
+                }
+            return {
+                'success': True,
+                'url': None,
+                'message': 'Archive save initiated. Please wait 1-2 minutes and retry.'
+            }
+    except Exception as e:
+        logging.debug(f"Wayback save request failed: {e}")
+
+    return {
+        'success': False,
+        'url': None,
+        'message': 'Could not initiate archive save'
+    }
+
+
+def get_archive_url(url: str, request_save: bool = False) -> tuple:
     """
     Try to get an archived version of a blocked URL.
-    Checks Wayback Machine first (more reliable), then archive.today.
-    Returns the archive URL if found, None otherwise.
+    Checks multiple archive services and can request a new archive.
+
+    Args:
+        url: The original URL to find archived
+        request_save: If True, request Wayback Machine to save if not found
+
+    Returns:
+        Tuple of (archive_url, message) - archive_url is None if not found
     """
     session = requests.Session()
     session.headers.update({
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     })
 
-    # Try Wayback Machine first (more reliable for automated access)
+    # Try Wayback Machine first (most reliable for automated access)
     try:
         wayback_api = f"https://archive.org/wayback/available?url={url}"
         response = session.get(wayback_api, timeout=10)
@@ -79,14 +213,15 @@ def get_archive_url(url):
             if closest.get('available') and closest.get('url'):
                 wayback_url = closest['url']
                 logging.info(f"Found Wayback Machine archive: {wayback_url}")
-                return wayback_url
+                return (wayback_url, "Found existing Wayback Machine archive")
     except Exception as e:
         logging.debug(f"Wayback Machine check failed: {e}")
 
-    # archive.today variants often require CAPTCHA, try anyway
+    # Try archive.today/archive.is variants
     archive_services = [
         f"https://archive.today/newest/{url}",
         f"https://archive.is/newest/{url}",
+        f"https://archive.ph/newest/{url}",
     ]
 
     for archive_url in archive_services:
@@ -94,18 +229,40 @@ def get_archive_url(url):
             response = session.head(archive_url, timeout=10, allow_redirects=True)
             if response.status_code == 200:
                 final_url = response.url
-                # Check we got redirected to an actual archive page (not CAPTCHA)
+                # Check we got redirected to an actual archive page (not CAPTCHA/404)
                 if final_url != archive_url and '/wip/' not in final_url:
                     # Verify it's not a CAPTCHA page
                     check_resp = session.get(final_url, timeout=10)
-                    if b'security check' not in check_resp.content.lower() and b'captcha' not in check_resp.content.lower():
+                    content_lower = check_resp.content.lower()
+                    if b'security check' not in content_lower and b'captcha' not in content_lower:
                         logging.info(f"Found archive at: {final_url}")
-                        return final_url
+                        return (final_url, "Found existing archive.today snapshot")
         except Exception as e:
             logging.debug(f"Archive check failed for {archive_url}: {e}")
             continue
 
-    return None
+    # No existing archive found - try to create one if requested
+    if request_save:
+        save_result = request_wayback_save(url)
+        if save_result['success'] and save_result['url']:
+            return (save_result['url'], save_result['message'])
+        elif save_result['success']:
+            return (None, save_result['message'])
+
+    # Build helpful instructions for the user
+    archive_today_url = f"https://archive.today/?run=1&url={url}"
+    wayback_save_url = f"https://web.archive.org/save/{url}"
+
+    instructions = (
+        f"No archive found for this blocked site. To scrape images:\n"
+        f"1. Open: {archive_today_url}\n"
+        f"   (Complete any CAPTCHA, wait for archive to complete)\n"
+        f"2. Or open: {wayback_save_url}\n"
+        f"   (Wait 1-2 minutes for processing)\n"
+        f"3. Then paste the archive URL here instead of the original URL."
+    )
+
+    return (None, instructions)
 
 
 def is_wayback_url(url):
@@ -265,24 +422,23 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
             status_callback("log", "This site blocks direct scraping. Checking for archived version...")
             status_callback("status_update", "Checking Archives")
 
-        # Try to find an archived version
-        archive_url = get_archive_url(url)
+        # Try to find an archived version (with request_save to try Wayback if not found)
+        archive_url, archive_message = get_archive_url(url, request_save=True)
 
         if archive_url:
             if status_callback:
-                status_callback("log", f"Found archived version! Using: {archive_url[:60]}...")
+                status_callback("log", f"Found archive! Using: {archive_url[:60]}...")
             url = archive_url
         else:
-            # No archive found - give user options
-            error_msg = (
-                "This site blocks automated scraping and no archive was found. "
-                "Options: 1) Archive the page at archive.today first, then submit the archive URL. "
-                "2) Download images manually and upload directly. "
-                "3) Try a different news source covering the same event."
-            )
+            # No archive found - provide detailed instructions
             if status_callback:
-                status_callback("log", error_msg)
-                status_callback("complete", {"message": error_msg, "media_id": None})
+                status_callback("log", archive_message)
+                status_callback("complete", {
+                    "message": archive_message,
+                    "media_id": None,
+                    "blocked_site": True,
+                    "archive_instructions": True
+                })
             return
 
     if status_callback:
@@ -367,7 +523,82 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
             if src:
                 potential_urls.append(src)
 
-        # 3. Extract images from JSON data, data attributes, and inline scripts
+        # 3. Extract captions and credits for images
+        # Build a map of image URL -> caption/credit info
+        image_captions = {}  # Maps image URL (or partial) to caption
+        image_credits = {}   # Maps image URL (or partial) to rights holder/photographer
+
+        # Extract from <figure> elements (most common pattern)
+        for figure in soup.find_all('figure'):
+            # Find image in figure
+            img = figure.find('img')
+            if not img:
+                continue
+
+            img_src = img.get('data-src') or img.get('src') or ''
+
+            # Find figcaption
+            figcaption = figure.find('figcaption')
+            if figcaption:
+                caption_text = figcaption.get_text(strip=True)
+                if caption_text and len(caption_text) > 10:
+                    image_captions[img_src] = caption_text
+
+                    # Try to extract credit (often in parentheses or after "Credit:", "Photo:", etc.)
+                    credit_match = re.search(
+                        r'(?:Credit|Photo|Image|Source|©|\()?:?\s*([A-Z][A-Za-z\s]+(?:Images?|News|Media|Photos?|Press|Agency|Pictures)?)\)?$',
+                        caption_text
+                    )
+                    if credit_match:
+                        image_credits[img_src] = credit_match.group(1).strip()
+
+            # Also check for data-caption attribute
+            data_caption = img.get('data-caption') or figure.get('data-caption')
+            if data_caption and img_src not in image_captions:
+                image_captions[img_src] = data_caption
+
+        # Extract credits from dedicated credit elements
+        for credit_elem in soup.find_all(['span', 'div', 'p'], class_=re.compile(r'credit|source|photographer', re.I)):
+            credit_text = credit_elem.get_text(strip=True)
+            if credit_text and len(credit_text) < 100:
+                # Try to associate with nearby image
+                parent = credit_elem.find_parent(['figure', 'div'])
+                if parent:
+                    img = parent.find('img')
+                    if img:
+                        img_src = img.get('data-src') or img.get('src') or ''
+                        if img_src:
+                            image_credits[img_src] = credit_text
+
+        if status_callback and (image_captions or image_credits):
+            status_callback("log", f"Extracted {len(image_captions)} captions, {len(image_credits)} credits")
+
+        def find_caption_for_url(target_url: str) -> tuple:
+            """
+            Find caption and credit for an image URL.
+
+            Args:
+                target_url: The image URL to look up
+
+            Returns:
+                Tuple of (caption, rights_holder) - either may be None
+            """
+            # Try exact match first
+            if target_url in image_captions:
+                return (image_captions.get(target_url), image_credits.get(target_url))
+
+            # Try partial match (URLs may differ in params or protocol)
+            target_lower = target_url.lower()
+            for stored_url, caption in image_captions.items():
+                # Match by filename
+                stored_filename = stored_url.split('/')[-1].split('?')[0].lower()
+                target_filename = target_lower.split('/')[-1].split('?')[0]
+                if stored_filename and target_filename and stored_filename == target_filename:
+                    return (caption, image_credits.get(stored_url))
+
+            return (None, None)
+
+        # 4. Extract images from JSON data, data attributes, and inline scripts
         # Many modern sites embed image URLs in JSON or data attributes for lazy loading
         html_text = html_content.decode('utf-8', errors='ignore') if isinstance(html_content, bytes) else html_content
 
@@ -376,18 +607,48 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
         article_id_match = re.search(r'(?:article-?|-)(\d{7,})(?:$|[/?#])', url)
         article_id = int(article_id_match.group(1)) if article_id_match else None
 
+        # Extract Sky News video ID from URL (e.g., -13444801 at end)
+        sky_video_id = None
+        sky_match = re.search(r'-(\d{7,})$', url.split('?')[0])
+        if sky_match and 'sky.com' in url.lower():
+            sky_video_id = sky_match.group(1)
+
         # Pattern for common news site CDN image URLs (high quality versions)
         # Matches URLs like:
         # - https://i2-prod.mirror.co.uk/incoming/article123.ece/ALTERNATES/s1200/image.jpg
         # - https://cdn.images.express.co.uk/img/dynamic/1/1200x712/secondary/London-5674436.webp
+        # Note: Using length-limited patterns to prevent ReDoS attacks
         cdn_patterns = [
-            # Mirror/Reach PLC sites
-            r'https://i[0-9]-prod\.[a-z]+\.co\.uk/[^"\'\s>]+/ALTERNATES/s(?:1200|810|615)[^"\'\s>]*\.(?:jpg|jpeg|png|webp)',
-            r'https://[a-z0-9.-]+/incoming/article[0-9]+\.ece/[^"\'\s>]+\.(?:jpg|jpeg|png|webp)',
+            # Mirror/Reach PLC sites (mirror.co.uk, mylondon.news, etc.)
+            # All quantifiers bounded to prevent ReDoS attacks
+            r'https://i[0-9]-prod\.[a-z]{1,20}\.co\.uk/[\w./-]{1,200}/ALTERNATES/s(?:1200|810|615)[\w./-]{0,100}\.(?:jpg|jpeg|png|webp)',
+            r'https://i[0-9]-prod\.mylondon\.news/[\w./-]{1,200}/ALTERNATES/s(?:1200|810|615)[\w./-]{0,100}\.(?:jpg|jpeg|png|webp)',
+            r'https://[a-z0-9.-]{1,50}/incoming/article[0-9]{1,12}\.ece/[\w./-]{1,200}\.(?:jpg|jpeg|png|webp)',
+            # NY Times CDN (high quality: superJumbo, jumbo, videoSixteenByNine3000, threeByTwoLargeAt2X)
+            r'https://static01\.nyt\.com/images/[\w./-]{1,200}(?:superJumbo|jumbo|videoSixteenByNine3000|threeByTwoLargeAt2X)[\w.-]{0,50}\.(?:jpg|jpeg|png|webp)',
+            # Evening Standard CDN (static.standard.co.uk) - date + time path
+            r'https://static\.standard\.co\.uk/\d{4}/\d{2}/\d{2}/\d{1,2}/\d{2}/[\w.()\-]{1,150}\.(?:jpg|jpeg|png|webp)(?:\?[\w=&%]{0,100})?',
+            # Sky News CDN (e3.365dm.com) - capture various sizes
+            r'https://e3\.365dm\.com/\d{2}/\d{2}/[\w/x]{1,20}/[\w._-]{1,100}\.(?:jpg|jpeg|png|webp)(?:\?\d{0,20})?',
+            # Al Jazeera (wp-content/uploads) - length limited to prevent ReDoS
+            r'https://www\.aljazeera\.com/wp-content/uploads/\d{4}/\d{2}/[\w._-]{1,200}\.(?:jpg|jpeg|png|webp)',
             # Express CDN (high quality versions: 1200x, 940x, 674x)
-            r'https://cdn\.images\.express\.co\.uk/img/dynamic/[^"\'\s>]+(?:1200|940|674)[^"\'\s>]*\.(?:jpg|jpeg|png|webp)',
+            r'https://cdn\.images\.express\.co\.uk/img/dynamic/[\w/-]{1,100}(?:1200|940|674)[\w/-]{0,50}\.(?:jpg|jpeg|png|webp)',
+            # Independent CDN (static.independent.co.uk)
+            r'https://static\.independent\.co\.uk/[\d/]{1,30}/[\w._()-]{1,200}\.(?:jpg|jpeg|png|webp)(?:\?[\w=&%]{0,100})?',
+            # The Argus / Newsquest CDN (theargus.co.uk, brightonandhoveindependent.co.uk)
+            r'https://www\.theargus\.co\.uk/resources/images/[\w/-]{1,150}\.(?:jpg|jpeg|png|webp)',
+            r'https://[a-z0-9.-]{1,50}\.newsquestdigital\.co\.uk/[\w./-]{1,200}\.(?:jpg|jpeg|png|webp)',
+            # GB News (RebelMouse CDN with media-library path)
+            r'https://www\.gbnews\.com/media-library/[\w./-]{1,200}\.(?:jpg|jpeg|png|webp)(?:\?[\w=&%-]{0,200})?',
+            # Times of Israel CDN
+            r'https://static-cdn\.toi-media\.com/www/uploads/\d{4}/\d{2}/[\w._-]{1,200}\.(?:jpg|jpeg|png|webp)',
+            # The Jewish Chronicle (Atex Cloud)
+            r'https://api\.thejc\.atexcloud\.io/image-service/[\w/.-]{1,200}\.(?:jpg|jpeg|png|webp)(?:\?[\w=&%.:-]{0,100})?',
+            # Channel 4 News (AWS S3)
+            r'https://fournews-assets-prod-s3[a-z0-9-]{0,30}\.s3\.amazonaws\.com/media/\d{4}/\d{2}/[\w._-]{1,200}\.(?:jpg|jpeg|png|webp)',
             # Generic CloudFront CDN
-            r'https://[a-z0-9.-]+\.cloudfront\.net/[^"\'\s>]+\.(?:jpg|jpeg|png|webp)',
+            r'https://[a-z0-9.-]{1,50}\.cloudfront\.net/[\w./-]{1,200}\.(?:jpg|jpeg|png|webp)',
         ]
 
         # Collect all matches, prioritizing images from the same article
@@ -396,30 +657,195 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
             matches = re.findall(pattern, html_text, re.IGNORECASE)
             all_cdn_urls.extend(matches)
 
-        # Sort: prioritize images with article/image IDs that appear multiple times
-        # or are in the "secondary" folder (main article images on Express)
-        def article_relevance(img_url):
+        # Upgrade image URLs to highest quality versions
+        def upgrade_image_url(img_url: str) -> str:
+            """
+            Upgrade image URL to highest quality version available.
+
+            Args:
+                img_url: Original image URL from the page
+
+            Returns:
+                Modified URL with parameters for highest quality version
+            """
             img_url_lower = img_url.lower()
+
+            # Evening Standard: upgrade width parameter using proper URL parsing
+            if 'static.standard.co.uk' in img_url_lower:
+                parsed = urlparse(img_url)
+                params = parse_qs(parsed.query)
+                params['width'] = [str(IMAGE_QUALITY_SETTINGS['standard_width'])]
+                params['quality'] = [str(IMAGE_QUALITY_SETTINGS['standard_quality'])]
+                params['auto'] = ['webp']
+                new_query = urlencode(params, doseq=True)
+                return urlunparse(parsed._replace(query=new_query, fragment=''))
+
+            # Sky News: upgrade to highest resolution
+            if 'e3.365dm.com' in img_url_lower:
+                return re.sub(
+                    r'/\d+x\d+/',
+                    f'/{IMAGE_QUALITY_SETTINGS["sky_resolution"]}/',
+                    img_url
+                )
+
+            # Al Jazeera: upgrade to highest quality using proper URL parsing
+            if 'aljazeera.com/wp-content/uploads' in img_url_lower:
+                parsed = urlparse(img_url)
+                new_query = urlencode({
+                    'resize': IMAGE_QUALITY_SETTINGS['aljazeera_resize'],
+                    'quality': IMAGE_QUALITY_SETTINGS['aljazeera_quality']
+                })
+                return urlunparse(parsed._replace(query=new_query, fragment=''))
+
+            # Independent: upgrade quality parameter
+            if 'static.independent.co.uk' in img_url_lower:
+                parsed = urlparse(img_url)
+                params = parse_qs(parsed.query)
+                params['width'] = [str(IMAGE_QUALITY_SETTINGS['standard_width'])]
+                params['quality'] = [str(IMAGE_QUALITY_SETTINGS['standard_quality'])]
+                new_query = urlencode(params, doseq=True)
+                return urlunparse(parsed._replace(query=new_query, fragment=''))
+
+            return img_url
+
+        # Sort: prioritize images by relevance (all return 0-2 for consistent sorting)
+        def article_relevance(img_url: str) -> int:
+            """
+            Calculate relevance score for an image URL.
+
+            Args:
+                img_url: Image URL to evaluate
+
+            Returns:
+                Priority score: 0 = high priority, 1 = medium, 2 = low
+            """
+            img_url_lower = img_url.lower()
+
+            # NY Times: prioritize by size (superJumbo > jumbo > others)
+            if 'static01.nyt.com' in img_url_lower:
+                if 'superjumbo' in img_url_lower:
+                    return 0  # Highest quality
+                elif 'jumbo' in img_url_lower:
+                    return 1
+                return 2
+
+            # Sky News: prioritize images matching article ID, then by size
+            if 'e3.365dm.com' in img_url_lower:
+                try:
+                    img_id_match = re.search(r'_(\d{7,})\.', img_url)
+                    if img_id_match and sky_video_id:
+                        if img_id_match.group(1) == sky_video_id:
+                            return 0  # Exact match - highest priority
+                except re.error:
+                    pass
+                # Fallback to size-based priority (normalized to 0-2)
+                if '1600x900' in img_url:
+                    return 0
+                elif '768x432' in img_url:
+                    return 1
+                return 2
 
             # Express: "secondary" images are main article images
             if '/secondary/' in img_url_lower:
                 return 0  # High priority
 
-            # Mirror/Reach: Match article ID
-            match = re.search(r'article(\d+)', img_url)
-            if match and article_id:
-                img_article_id = int(match.group(1))
-                # Images from same article or nearby (within 10000) are likely related
-                diff = abs(img_article_id - article_id)
-                if diff < 10000:
-                    return 0  # High priority
-                elif diff < 100000:
-                    return 1  # Medium priority
+            # Mirror/Reach: Match article ID using defined thresholds
+            try:
+                match = re.search(r'article(\d+)', img_url)
+                if match and article_id:
+                    img_article_id = int(match.group(1))
+                    diff = abs(img_article_id - article_id)
+                    if diff < ARTICLE_ID_HIGH_PRIORITY_THRESHOLD:
+                        return 0  # High priority
+                    elif diff < ARTICLE_ID_MEDIUM_PRIORITY_THRESHOLD:
+                        return 1  # Medium priority
+            except (re.error, ValueError):
+                pass
 
             return 2  # Low priority (unrelated articles)
 
         all_cdn_urls.sort(key=article_relevance)
-        potential_urls.extend(all_cdn_urls)
+
+        # Deduplicate images - keep only highest quality version of each unique image
+        seen_bases = set()
+        deduped_urls = []
+        for img_url in all_cdn_urls:
+            try:
+                img_url_lower = img_url.lower()
+
+                # NY Times deduplication - extract base name without size suffix
+                if 'static01.nyt.com' in img_url_lower:
+                    base_match = re.search(
+                        r'/([^/]+?)(?:-superJumbo|-jumbo|-videoSixteenByNine3000|-threeByTwoLargeAt2X)',
+                        img_url, re.IGNORECASE
+                    )
+                    if base_match:
+                        base_id = base_match.group(1).lower()
+                        if base_id in seen_bases:
+                            continue
+                        seen_bases.add(base_id)
+
+                # Sky News deduplication (by image name without size)
+                elif 'e3.365dm.com' in img_url_lower:
+                    base_match = re.search(r'/\d+x\d+/([^?]+)', img_url)
+                    if base_match:
+                        base_id = base_match.group(1).lower()
+                        if base_id in seen_bases:
+                            continue
+                        seen_bases.add(base_id)
+
+                # Evening Standard deduplication (by filename)
+                elif 'static.standard.co.uk' in img_url_lower:
+                    base_match = re.search(r'/([^/?]+\.(?:jpg|jpeg|png|webp))', img_url, re.IGNORECASE)
+                    if base_match:
+                        base_id = base_match.group(1).lower()
+                        if base_id in seen_bases:
+                            continue
+                        seen_bases.add(base_id)
+
+                # Al Jazeera deduplication (by filename)
+                elif 'aljazeera.com/wp-content/uploads' in img_url_lower:
+                    base_match = re.search(r'/([^/?]+\.(?:jpg|jpeg|png|webp))', img_url, re.IGNORECASE)
+                    if base_match:
+                        base_id = base_match.group(1).lower()
+                        if base_id in seen_bases:
+                            continue
+                        seen_bases.add(base_id)
+
+                # Independent deduplication (by filename)
+                elif 'static.independent.co.uk' in img_url_lower:
+                    base_match = re.search(r'/([^/?]+\.(?:jpg|jpeg|png|webp))', img_url, re.IGNORECASE)
+                    if base_match:
+                        base_id = base_match.group(1).lower()
+                        if base_id in seen_bases:
+                            continue
+                        seen_bases.add(base_id)
+
+                # The Argus / Newsquest deduplication (by filename)
+                elif 'theargus.co.uk' in img_url_lower or 'newsquestdigital.co.uk' in img_url_lower:
+                    base_match = re.search(r'/([^/?]+\.(?:jpg|jpeg|png|webp))', img_url, re.IGNORECASE)
+                    if base_match:
+                        base_id = base_match.group(1).lower()
+                        if base_id in seen_bases:
+                            continue
+                        seen_bases.add(base_id)
+
+                # MyLondon deduplication (same as Mirror/Reach)
+                elif 'mylondon.news' in img_url_lower:
+                    base_match = re.search(r'article(\d+)', img_url)
+                    if base_match:
+                        base_id = base_match.group(1)
+                        if base_id in seen_bases:
+                            continue
+                        seen_bases.add(base_id)
+
+                # Upgrade URL to highest quality and add
+                deduped_urls.append(upgrade_image_url(img_url))
+            except (re.error, AttributeError):
+                # Skip URLs that cause regex errors, still add them unprocessed
+                deduped_urls.append(img_url)
+
+        potential_urls.extend(deduped_urls)
 
         if status_callback and len(potential_urls) > 1:
             status_callback("log", f"Found {len(potential_urls)} potential images in page.")
@@ -429,28 +855,26 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
         db = SessionLocal()
 
         try:
+            # Extract article metadata for provenance tracking (always needed)
+            og_title = soup.find('meta', property='og:title')
+            title = og_title['content'] if og_title else (soup.title.string if soup.title else "Scraped Article")
+            clean_title = title.strip() if title else "Scraped Article"
+
+            # Extract publication date
+            pub_time = soup.find('meta', property='article:published_time') or \
+                       soup.find('meta', {'name': 'date'}) or \
+                       soup.find('meta', {'name': 'parsely-pub-date'})
+            event_date = datetime.now(timezone.utc)
+            if pub_time and pub_time.get('content'):
+                try:
+                    dt_str = pub_time['content'].split('T')[0]
+                    event_date = datetime.strptime(dt_str, "%Y-%m-%d")
+                except Exception:
+                    pass
+
             # Create a protest placeholder if needed
             if not protest_id:
-                # Metadata extraction (Smart)
-                # 1. Title
-                og_title = soup.find('meta', property='og:title')
-                title = og_title['content'] if og_title else (soup.title.string if soup.title else "Scraped Article")
-                clean_title = title.strip() if title else "Scraped Article"
-
-                # 2. Date
-                pub_time = soup.find('meta', property='article:published_time') or \
-                           soup.find('meta', {'name': 'date'}) or \
-                           soup.find('meta', {'name': 'parsely-pub-date'})
-                event_date = datetime.now(timezone.utc)
-                if pub_time and pub_time.get('content'):
-                    try:
-                        # Handle ISO formats roughly
-                        dt_str = pub_time['content'].split('T')[0]
-                        event_date = datetime.strptime(dt_str, "%Y-%m-%d")
-                    except:
-                        pass
-
-                # 3. Location (Naive Heuristic via Title/Desc)
+                # Location detection (Naive Heuristic via Title/Desc)
                 loc = "Unknown"
                 text_lower = (clean_title + description_text[:200]).lower()
                 if "london" in text_lower: loc = "London, UK"
@@ -539,7 +963,7 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
                     img_data = img_session.get(img_url, timeout=10, verify=False).content
 
                     # Skip small files (likely icons/trackers)
-                    if len(img_data) < 5000:  # 5KB minimum
+                    if len(img_data) < MIN_IMAGE_SIZE_BYTES:
                         continue
 
                     # Verify we got actual image data, not HTML error page
@@ -568,13 +992,24 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
                         })
                         status_callback("log", f"Scraped image: {filename}")
 
-                    # Create Media Record
+                    # Look up caption and credit for this image
+                    img_caption, img_credit = find_caption_for_url(img_url_raw)
+
+                    # Create Media Record with provenance tracking
                     new_media = models.Media(
                         url=filepath,
                         type='image',
                         protest_id=protest_id,
                         timestamp=datetime.now(timezone.utc),
-                        processed=False
+                        processed=False,
+                        # Provenance fields
+                        source_url=original_url,
+                        source_name=get_source_name(original_url),
+                        caption=img_caption,
+                        rights_holder=img_credit,
+                        article_headline=clean_title[:500] if clean_title else None,
+                        article_summary=description_text[:1000] if description_text else None,
+                        scraped_at=datetime.now(timezone.utc)
                     )
                     db.add(new_media)
                     db.commit()
@@ -588,7 +1023,7 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
                     process_media(new_media.id, status_callback)
 
                     # Limit to 15 images max
-                    if saved_count >= 15:
+                    if saved_count >= MAX_IMAGES_PER_SCRAPE:
                         break
 
                 except Exception as e:
