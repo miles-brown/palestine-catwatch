@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from database import SessionLocal
 import models
 from process import process_media
+from utils.paths import save_file, normalize_for_storage, get_web_url
 
 # Try to import cloudscraper for bypassing Cloudflare protection
 try:
@@ -981,8 +982,12 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
                     with open(filepath, "wb") as f:
                         f.write(img_data)
 
-                    # Calculate web-accessible URL
-                    web_url = f"/data/downloads/{filename}"
+                    # Upload to R2 if enabled, get storage key for database
+                    storage_key = normalize_for_storage(filepath)
+                    save_file(filepath, storage_key)
+
+                    # Calculate web-accessible URL (works for both R2 and local)
+                    web_url = get_web_url(storage_key)
 
                     # Emit event for UI
                     if status_callback:
@@ -997,7 +1002,7 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
 
                     # Create Media Record with provenance tracking
                     new_media = models.Media(
-                        url=filepath,
+                        url=storage_key,  # Use storage key (works for both local and R2)
                         type='image',
                         protest_id=protest_id,
                         timestamp=datetime.now(timezone.utc),
