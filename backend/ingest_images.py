@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from database import SessionLocal
 import models
 from process import process_media
-from utils.paths import save_file, normalize_for_storage, get_web_url
+from utils.paths import save_file, normalize_for_storage, get_file_url
 
 # Try to import cloudscraper for bypassing Cloudflare protection
 try:
@@ -986,8 +986,8 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
                     storage_key = normalize_for_storage(filepath)
                     save_file(filepath, storage_key)
 
-                    # Calculate web-accessible URL (works for both R2 and local)
-                    web_url = get_web_url(storage_key)
+                    # Calculate web-accessible URL (returns R2 URL if enabled, else local)
+                    web_url = get_file_url(storage_key)
 
                     # Emit event for UI
                     if status_callback:
