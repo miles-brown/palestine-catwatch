@@ -14,6 +14,7 @@ from database import SessionLocal
 import models
 from process import process_media
 from utils.paths import save_file, normalize_for_storage, get_file_url
+from ai.article_summarizer import summarize_article, extract_article_text
 
 # Try to import cloudscraper for bypassing Cloudflare protection
 try:
@@ -899,6 +900,47 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
                 protest_id = new_protest.id
                 if status_callback:
                     status_callback("log", f"Created protest record from article: {clean_title[:50]}...")
+
+            # Extract full article text and generate AI summary
+            article_text = extract_article_text(soup)
+            ai_summary = None
+
+            if article_text and len(article_text) > 200:
+                if status_callback:
+                    status_callback("log", "Analyzing article with AI...")
+                    status_callback("status_update", "AI Analysis")
+
+                ai_summary = summarize_article(
+                    article_text=article_text,
+                    article_title=clean_title,
+                    source_name=get_source_name(original_url)
+                )
+
+                if ai_summary.get("success"):
+                    if status_callback:
+                        status_callback("log", f"AI identified event: {ai_summary.get('event_name', 'Unknown')}")
+
+            # Emit comprehensive article metadata event
+            if status_callback:
+                article_metadata = {
+                    "source_name": get_source_name(original_url),
+                    "source_url": original_url,
+                    "article_title": clean_title,
+                    "article_description": description_text[:500] if description_text else None,
+                    "image_count": len(potential_urls),
+                    "publication_date": event_date.isoformat() if event_date else None,
+                    # AI-extracted fields
+                    "event_name": ai_summary.get("event_name") if ai_summary else None,
+                    "event_date": ai_summary.get("event_date") if ai_summary else None,
+                    "location": ai_summary.get("location") if ai_summary else None,
+                    "summary": ai_summary.get("summary") if ai_summary else None,
+                    "key_details": ai_summary.get("key_details", []) if ai_summary else [],
+                    "police_presence": ai_summary.get("police_presence") if ai_summary else None,
+                    "estimated_attendance": ai_summary.get("estimated_attendance") if ai_summary else None,
+                }
+                status_callback("article_metadata", article_metadata)
+                status_callback("log", f"Article: {clean_title[:60]}...")
+                status_callback("log", f"Source: {get_source_name(original_url)} | Images found: {len(potential_urls)}")
 
             # Extract Wayback timestamp if we're scraping from archive
             wayback_timestamp = None
