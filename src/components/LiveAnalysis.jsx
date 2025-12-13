@@ -131,6 +131,7 @@ export default function LiveAnalysis({ taskId, onComplete }) {
 
     const [currentFrame, setCurrentFrame] = useState(null);
     const [reconData, setReconData] = useState(null);
+    const [articleMetadata, setArticleMetadata] = useState(null);
     const [mediaId, setMediaId] = useState(null);
     const frameTimeoutRef = useRef(null);
     const connectionTimeoutRef = useRef(null);
@@ -313,6 +314,11 @@ export default function LiveAnalysis({ taskId, onComplete }) {
             setReconData(data);
         });
 
+        socket.on('article_metadata', (data) => {
+            setArticleMetadata(data);
+            addLog('AI', `Analyzed: ${data.source_name} - ${data.image_count} images found`);
+        });
+
         socket.on('media_created', (data) => {
             if (data && data.media_id) {
                 setMediaId(data.media_id);
@@ -392,7 +398,8 @@ export default function LiveAnalysis({ taskId, onComplete }) {
         // Only auto-scroll if user is near the bottom
         const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
         if (isNearBottom) {
-            logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+            // Use scrollTo on the container instead of scrollIntoView to prevent page jumping
+            container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
         }
     }, [logs]);
 
@@ -611,7 +618,7 @@ export default function LiveAnalysis({ taskId, onComplete }) {
                 </Card>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 min-h-[500px] lg:h-[700px]">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 h-[500px] lg:h-[700px]">
                 {/* Terminal Log */}
                 <Card className="bg-slate-900 border-slate-800 col-span-1 flex flex-col h-full overflow-hidden shadow-2xl shadow-blue-900/5">
                     <div className="p-3 border-b border-slate-800 bg-slate-950 flex items-center justify-between">
@@ -910,8 +917,108 @@ export default function LiveAnalysis({ taskId, onComplete }) {
                             </div>
                         </div>
 
-                        {/* Recon Data Summary */}
-                        {reconData && (
+                        {/* Article Metadata - AI Analyzed */}
+                        {articleMetadata && (
+                            <div className="bg-gradient-to-br from-blue-900/30 to-slate-800/30 rounded-lg p-4 mb-6 border border-blue-700/50">
+                                <h4 className="text-sm font-semibold text-blue-300 mb-3 flex items-center gap-2">
+                                    <Cpu className="h-4 w-4" /> Article Analysis
+                                </h4>
+
+                                {/* Source Info */}
+                                <div className="mb-4">
+                                    <div className="text-lg font-semibold text-white mb-1">
+                                        {articleMetadata.source_name}
+                                    </div>
+                                    <div className="text-sm text-slate-300 line-clamp-2">
+                                        {articleMetadata.article_title}
+                                    </div>
+                                    <div className="flex items-center gap-4 mt-2 text-xs text-slate-400">
+                                        <span className="flex items-center gap-1">
+                                            <ImageIcon className="h-3 w-3" />
+                                            {articleMetadata.image_count} images found
+                                        </span>
+                                        {articleMetadata.publication_date && (
+                                            <span className="flex items-center gap-1">
+                                                <Calendar className="h-3 w-3" />
+                                                {new Date(articleMetadata.publication_date).toLocaleDateString()}
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* AI-Extracted Event Details */}
+                                {(articleMetadata.event_name || articleMetadata.location) && (
+                                    <div className="bg-slate-800/50 rounded-lg p-3 mb-3">
+                                        <div className="text-xs text-blue-400 font-medium mb-2">EVENT DETAILS</div>
+                                        {articleMetadata.event_name && (
+                                            <div className="text-sm font-medium text-white mb-1">
+                                                {articleMetadata.event_name}
+                                            </div>
+                                        )}
+                                        <div className="flex flex-wrap gap-3 text-xs text-slate-300">
+                                            {articleMetadata.event_date && (
+                                                <span className="flex items-center gap-1">
+                                                    <Calendar className="h-3 w-3 text-blue-400" />
+                                                    {articleMetadata.event_date}
+                                                </span>
+                                            )}
+                                            {articleMetadata.location && (
+                                                <span className="flex items-center gap-1">
+                                                    <MapPin className="h-3 w-3 text-blue-400" />
+                                                    {articleMetadata.location}
+                                                </span>
+                                            )}
+                                            {articleMetadata.estimated_attendance && (
+                                                <span className="flex items-center gap-1">
+                                                    <User className="h-3 w-3 text-blue-400" />
+                                                    {articleMetadata.estimated_attendance}
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* AI Summary */}
+                                {articleMetadata.summary && (
+                                    <div className="mb-3">
+                                        <div className="text-xs text-blue-400 font-medium mb-1">AI SUMMARY</div>
+                                        <p className="text-sm text-slate-300 leading-relaxed">
+                                            {articleMetadata.summary}
+                                        </p>
+                                    </div>
+                                )}
+
+                                {/* Police Presence */}
+                                {articleMetadata.police_presence && (
+                                    <div className="bg-red-900/20 rounded-lg p-3 mb-3 border border-red-700/30">
+                                        <div className="text-xs text-red-400 font-medium mb-1 flex items-center gap-1">
+                                            <Shield className="h-3 w-3" /> POLICE ACTIVITY
+                                        </div>
+                                        <p className="text-sm text-slate-300">
+                                            {articleMetadata.police_presence}
+                                        </p>
+                                    </div>
+                                )}
+
+                                {/* Key Details */}
+                                {articleMetadata.key_details && articleMetadata.key_details.length > 0 && (
+                                    <div>
+                                        <div className="text-xs text-blue-400 font-medium mb-2">KEY POINTS</div>
+                                        <ul className="text-xs text-slate-400 space-y-1">
+                                            {articleMetadata.key_details.map((detail, i) => (
+                                                <li key={i} className="flex items-start gap-2">
+                                                    <span className="text-blue-400 mt-0.5">•</span>
+                                                    <span>{detail}</span>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Recon Data Summary (fallback if no article metadata) */}
+                        {reconData && !articleMetadata && (
                             <div className="bg-slate-800/30 rounded-lg p-4 mb-6 border border-slate-700">
                                 <h4 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2">
                                     <ZoomIn className="h-4 w-4" /> Source Analysis
