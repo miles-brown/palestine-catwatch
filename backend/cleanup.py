@@ -67,7 +67,8 @@ class CleanupSummary(TypedDict):
 MEDIA_DIR = Path(os.getenv("CLEANUP_MEDIA_DIR", "data/media"))
 CROPS_DIR = Path(os.getenv("CLEANUP_CROPS_DIR", "data/crops"))
 CACHE_DIR = Path(os.getenv("CLEANUP_CACHE_DIR", "data/cache"))
-DOWNLOADS_DIR = Path(os.getenv("CLEANUP_DOWNLOADS_DIR", "downloads"))
+DOWNLOADS_DIR = Path(os.getenv("CLEANUP_DOWNLOADS_DIR", "data/downloads"))
+FRAMES_DIR = Path(os.getenv("CLEANUP_FRAMES_DIR", "data/frames"))
 
 # Parse TEMP_DIRS safely (handle empty strings and whitespace)
 _temp_dirs_str = os.getenv("CLEANUP_TEMP_DIRS", "data/temp,data/tmp,/tmp/palestine-catwatch")
@@ -97,6 +98,7 @@ def validate_directories() -> DirectoryValidationReport:
         ("CROPS_DIR", CROPS_DIR),
         ("CACHE_DIR", CACHE_DIR),
         ("DOWNLOADS_DIR", DOWNLOADS_DIR),
+        ("FRAMES_DIR", FRAMES_DIR),
     ]
 
     for name, path in directories:
@@ -150,7 +152,7 @@ def _get_base_dirs() -> Set[Path]:
     global _BASE_DIRS
     if _BASE_DIRS is None:
         _BASE_DIRS = set()
-        for d in [MEDIA_DIR, CROPS_DIR, CACHE_DIR, DOWNLOADS_DIR]:
+        for d in [MEDIA_DIR, CROPS_DIR, CACHE_DIR, DOWNLOADS_DIR, FRAMES_DIR]:
             try:
                 resolved = d.resolve()
                 _BASE_DIRS.add(resolved)
