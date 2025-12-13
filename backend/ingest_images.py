@@ -449,13 +449,8 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
     # Create appropriate scraper session for the URL
     scraper = create_scraper_session(url)
 
-    # Log which scraper is being used
+    # Track scraper type for internal use
     using_cloudscraper = needs_cloudscraper(url) and HAS_CLOUDSCRAPER
-    if status_callback:
-        if using_cloudscraper:
-            status_callback("log", "Using advanced scraper to bypass site protection...")
-        else:
-            status_callback("log", "Attempting to scrape images from page...")
 
     try:
         if status_callback:
@@ -470,9 +465,6 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
             html_content = response.content
         except Exception as e:
             logging.warning(f"Primary scraper failed: {e}, trying curl fallback...")
-            if status_callback:
-                status_callback("log", "Primary method blocked, trying alternative...")
-
             # Fallback to curl
             html_text = fetch_with_curl_fallback(url)
             if html_text:
@@ -503,8 +495,6 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
         og_image = soup.find('meta', property='og:image')
         if og_image and og_image.get('content'):
             potential_urls.append(og_image['content'])
-            if status_callback:
-                status_callback("log", "Found Article Main Image (OpenGraph).")
 
         # 2. Main Content Images (handling lazy loading)
         images = soup.find_all('img')
@@ -571,9 +561,6 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
                         img_src = img.get('data-src') or img.get('src') or ''
                         if img_src:
                             image_credits[img_src] = credit_text
-
-        if status_callback and (image_captions or image_credits):
-            status_callback("log", f"Extracted {len(image_captions)} captions, {len(image_credits)} credits")
 
         def find_caption_for_url(target_url: str) -> tuple:
             """
@@ -849,9 +836,6 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
 
         potential_urls.extend(deduped_urls)
 
-        if status_callback and len(potential_urls) > 1:
-            status_callback("log", f"Found {len(potential_urls)} potential images in page.")
-
         saved_count = 0
         seen_urls = set()
         db = SessionLocal()
@@ -939,8 +923,6 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
                     "estimated_attendance": ai_summary.get("estimated_attendance") if ai_summary else None,
                 }
                 status_callback("article_metadata", article_metadata)
-                status_callback("log", f"Article: {clean_title[:60]}...")
-                status_callback("log", f"Source: {get_source_name(original_url)} | Images found: {len(potential_urls)}")
 
             # Extract Wayback timestamp if we're scraping from archive
             wayback_timestamp = None
@@ -1037,7 +1019,6 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
                             "url": web_url,
                             "filename": filename
                         })
-                        status_callback("log", f"Scraped image: {filename}")
 
                     # Look up caption and credit for this image
                     img_caption, img_credit = find_caption_for_url(img_url_raw)

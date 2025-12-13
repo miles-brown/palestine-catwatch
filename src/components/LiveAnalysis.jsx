@@ -398,7 +398,8 @@ export default function LiveAnalysis({ taskId, onComplete }) {
         // Only auto-scroll if user is near the bottom
         const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
         if (isNearBottom) {
-            logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+            // Use scrollTo on the container instead of scrollIntoView to prevent page jumping
+            container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
         }
     }, [logs]);
 
@@ -617,7 +618,7 @@ export default function LiveAnalysis({ taskId, onComplete }) {
                 </Card>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 min-h-[500px] lg:h-[700px]">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 h-[500px] lg:h-[700px]">
                 {/* Terminal Log */}
                 <Card className="bg-slate-900 border-slate-800 col-span-1 flex flex-col h-full overflow-hidden shadow-2xl shadow-blue-900/5">
                     <div className="p-3 border-b border-slate-800 bg-slate-950 flex items-center justify-between">

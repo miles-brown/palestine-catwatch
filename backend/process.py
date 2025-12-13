@@ -412,9 +412,6 @@ def process_media(media_id: int, status_callback=None):
     # Phase 1: Load media info with a short-lived session
     db = SessionLocal()
     try:
-        if status_callback:
-            status_callback("log", f"Starting processing for media {media_id}")
-
         media_item = db.query(models.Media).filter(models.Media.id == media_id).first()
 
         if not media_item:
@@ -426,8 +423,6 @@ def process_media(media_id: int, status_callback=None):
         media_type = media_item.type
 
         print(f"Processing media {media_id}: {media_url}")
-        if status_callback:
-             status_callback("log", f"Processing file: {os.path.basename(media_url)}")
 
     finally:
         db.close()
@@ -444,18 +439,27 @@ def process_media(media_id: int, status_callback=None):
         # For images, treat as a single frame
         target_path = os.path.join(media_frames_dir, "frame_0000.jpg")
         try:
-             shutil.copy2(media_url, target_path)
-             print(f"Copied image to {target_path}")
+            # Convert storage key to absolute path for file copy
+            source_path = get_absolute_path(media_url)
+            if not os.path.exists(source_path):
+                print(f"Source image not found: {source_path}")
+                if status_callback:
+                    status_callback("log", f"Error: Image file not found")
+                return
+            shutil.copy2(source_path, target_path)
+            print(f"Copied image to {target_path}")
+            if status_callback:
+                status_callback("log", "Analyzing image for police officers...")
         except Exception as e:
             print(f"Error copying image: {e}")
+            if status_callback:
+                status_callback("log", f"Error processing image: {e}")
             return
 
     # Phase 3: AI analysis (uses its own sessions internally)
     analyze_frames(media_id, media_frames_dir, status_callback)
 
     # Phase 4: Upload frames and crops to R2 if enabled
-    if status_callback:
-        status_callback("log", "Uploading processed files to cloud storage...")
     uploaded_count = upload_directory_to_r2(media_frames_dir)
     if uploaded_count > 0:
         print(f"Uploaded {uploaded_count} files to R2 for media {media_id}")
@@ -602,7 +606,6 @@ def analyze_frames(media_id, media_frames_dir, status_callback=None):
     from ai import analyzer
 
     print("Running AI analysis on frames...")
-    if status_callback: status_callback("log", "Running AI analysis on frames...")
 
     # Get list of frames to process (no DB needed)
     frames = sorted([
