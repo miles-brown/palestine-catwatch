@@ -1,9 +1,11 @@
-import { useState, useEffect } from 'react';
-import { Upload, FileVideo, Image as ImageIcon, CheckCircle, AlertCircle, Link as LinkIcon, FileUp, List, Loader2, X } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Upload, FileVideo, Image as ImageIcon, CheckCircle, AlertCircle, Link as LinkIcon, FileUp, List, Loader2, X, Users, Edit3, FileText, ArrowRight, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import IngestQuestionnaire from '@/components/IngestQuestionnaire';
 import LiveAnalysis from '@/components/LiveAnalysis';
+import OfficerReviewPanel from '@/components/OfficerReviewPanel';
+import OfficerDetailEditor from '@/components/OfficerDetailEditor';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import Turnstile from '@/components/Turnstile';
@@ -30,6 +32,13 @@ const UploadPage = () => {
         }
     }, [isAuthenticated, loading, navigate]);
 
+    // Multi-stage workflow state
+    // Stages: 'upload' | 'analysis' | 'review' | 'details' | 'preview'
+    const [currentStage, setCurrentStage] = useState('upload');
+    const [mediaId, setMediaId] = useState(null);
+    const [officers, setOfficers] = useState([]);
+    const [approvedOfficers, setApprovedOfficers] = useState([]);
+
     // Shared State
     const [activeTab, setActiveTab] = useState('upload'); // 'upload' | 'link' | 'bulk'
     const [protests, setProtests] = useState([]);
@@ -47,6 +56,83 @@ const UploadPage = () => {
 
     // Turnstile State
     const [turnstileToken, setTurnstileToken] = useState(null);
+
+    // Stage definitions for progress indicator
+    const stages = [
+        { id: 'upload', label: 'Upload', icon: Upload },
+        { id: 'analysis', label: 'Analysis', icon: Loader2 },
+        { id: 'review', label: 'Review Officers', icon: Users },
+        { id: 'details', label: 'Edit Details', icon: Edit3 },
+        { id: 'preview', label: 'Report', icon: FileText }
+    ];
+
+    // Fetch officers when entering review stage
+    const fetchOfficers = useCallback(async (id) => {
+        try {
+            const response = await fetch(`${API_BASE}/media/${id}/officers/pending`);
+            if (response.ok) {
+                const data = await response.json();
+                setOfficers(data.officers || []);
+            } else {
+                // Fallback to regular officers endpoint
+                const fallbackResponse = await fetch(`${API_BASE}/media/${id}/officers`);
+                if (fallbackResponse.ok) {
+                    const data = await fallbackResponse.json();
+                    setOfficers(data);
+                }
+            }
+        } catch (error) {
+            console.error('Failed to fetch officers:', error);
+            // Try fallback
+            try {
+                const fallbackResponse = await fetch(`${API_BASE}/media/${id}/officers`);
+                if (fallbackResponse.ok) {
+                    const data = await fallbackResponse.json();
+                    setOfficers(data);
+                }
+            } catch (e) {
+                console.error('Fallback also failed:', e);
+            }
+        }
+    }, []);
+
+    // Handle stage transitions
+    const handleAnalysisComplete = useCallback((id) => {
+        if (id) {
+            setMediaId(id);
+            setLiveTaskId(null);
+            fetchOfficers(id);
+            setCurrentStage('review');
+        } else {
+            console.error("No media ID returned from analysis");
+            setLiveTaskId(null);
+            setCurrentStage('upload');
+        }
+    }, [fetchOfficers]);
+
+    const handleReviewComplete = useCallback((approved) => {
+        setApprovedOfficers(approved);
+        setCurrentStage('details');
+    }, []);
+
+    const handleDetailsComplete = useCallback((editedOfficers) => {
+        // Save all edits and move to report preview
+        setApprovedOfficers(editedOfficers);
+        setCurrentStage('preview');
+    }, []);
+
+    const handleFinalSubmit = useCallback(() => {
+        // Navigate to the final report page
+        navigate(`/report/${mediaId}`);
+    }, [navigate, mediaId]);
+
+    const handleBackToReview = useCallback(() => {
+        setCurrentStage('review');
+    }, []);
+
+    const handleBackToDetails = useCallback(() => {
+        setCurrentStage('details');
+    }, []);
 
     // Fetch protests on mount
     useEffect(() => {
@@ -207,9 +293,10 @@ const UploadPage = () => {
             setSubmitStatus('success');
             setMessage(`Ingestion started! ${data.message}`);
 
-            // Start Live Analysis
+            // Start Live Analysis and transition to analysis stage
             if (data.task_id) {
                 setLiveTaskId(data.task_id);
+                setCurrentStage('analysis');
             }
 
         } catch (error) {
@@ -234,23 +321,182 @@ const UploadPage = () => {
         return null;
     }
 
-    if (liveTaskId) {
+    // Stage Progress Indicator Component
+    const StageProgress = () => {
+        const currentIndex = stages.findIndex(s => s.id === currentStage);
+
         return (
-            <LiveAnalysis
-                taskId={liveTaskId}
-                onComplete={(mediaId) => {
-                    if (mediaId) {
-                        setLiveTaskId(null);
-                        setSubmitStatus(null);
-                        setMessage('');
-                        navigate(`/report/${mediaId}`);
-                    } else {
-                        console.error("Report Generation Error: No Media ID returned.");
-                        alert("Error: Analysis completed but no Report could be generated (Missing Media ID).");
-                        setLiveTaskId(null);
-                    }
-                }}
-            />
+            <div className="bg-slate-900 border-b border-slate-800 py-4 px-6">
+                <div className="max-w-4xl mx-auto">
+                    <div className="flex items-center justify-between">
+                        {stages.map((stage, index) => {
+                            const Icon = stage.icon;
+                            const isActive = stage.id === currentStage;
+                            const isCompleted = index < currentIndex;
+                            const isUpcoming = index > currentIndex;
+
+                            return (
+                                <div key={stage.id} className="flex items-center">
+                                    <div className={`flex flex-col items-center ${
+                                        isUpcoming ? 'opacity-40' : ''
+                                    }`}>
+                                        <div className={`
+                                            w-10 h-10 rounded-full flex items-center justify-center
+                                            transition-all duration-300
+                                            ${isActive
+                                                ? 'bg-green-600 text-white ring-4 ring-green-600/30'
+                                                : isCompleted
+                                                    ? 'bg-green-600 text-white'
+                                                    : 'bg-slate-700 text-slate-400'
+                                            }
+                                        `}>
+                                            {isCompleted ? (
+                                                <CheckCircle className="h-5 w-5" />
+                                            ) : (
+                                                <Icon className={`h-5 w-5 ${
+                                                    isActive && stage.id === 'analysis' ? 'animate-spin' : ''
+                                                }`} />
+                                            )}
+                                        </div>
+                                        <span className={`mt-2 text-xs font-medium ${
+                                            isActive ? 'text-green-400' : isCompleted ? 'text-slate-300' : 'text-slate-500'
+                                        }`}>
+                                            {stage.label}
+                                        </span>
+                                    </div>
+                                    {index < stages.length - 1 && (
+                                        <div className={`
+                                            w-12 sm:w-20 h-0.5 mx-2
+                                            ${index < currentIndex ? 'bg-green-600' : 'bg-slate-700'}
+                                        `} />
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    // Analysis stage - show LiveAnalysis
+    if (currentStage === 'analysis' || liveTaskId) {
+        return (
+            <div className="min-h-screen bg-slate-950">
+                <StageProgress />
+                <LiveAnalysis
+                    taskId={liveTaskId}
+                    onComplete={handleAnalysisComplete}
+                />
+            </div>
+        );
+    }
+
+    // Review stage - show OfficerReviewPanel
+    if (currentStage === 'review') {
+        return (
+            <div className="min-h-screen bg-slate-950">
+                <StageProgress />
+                <OfficerReviewPanel
+                    mediaId={mediaId}
+                    officers={officers}
+                    onComplete={handleReviewComplete}
+                    onBack={() => {
+                        setCurrentStage('upload');
+                        setMediaId(null);
+                        setOfficers([]);
+                    }}
+                />
+            </div>
+        );
+    }
+
+    // Details stage - show OfficerDetailEditor
+    if (currentStage === 'details') {
+        return (
+            <div className="min-h-screen bg-slate-950">
+                <StageProgress />
+                <OfficerDetailEditor
+                    officers={approvedOfficers}
+                    onComplete={handleDetailsComplete}
+                    onBack={handleBackToReview}
+                />
+            </div>
+        );
+    }
+
+    // Preview stage - show final report preview with submit button
+    if (currentStage === 'preview') {
+        return (
+            <div className="min-h-screen bg-slate-950">
+                <StageProgress />
+                <div className="max-w-4xl mx-auto px-4 py-8">
+                    <Card className="bg-slate-900 border-slate-700 p-8">
+                        <div className="text-center mb-8">
+                            <div className="w-16 h-16 mx-auto bg-green-600/20 rounded-full flex items-center justify-center mb-4">
+                                <FileText className="h-8 w-8 text-green-400" />
+                            </div>
+                            <h2 className="text-2xl font-bold text-white mb-2">Report Ready</h2>
+                            <p className="text-slate-400">
+                                {approvedOfficers.length} officer{approvedOfficers.length !== 1 ? 's' : ''} verified and ready for report generation
+                            </p>
+                        </div>
+
+                        {/* Officer Summary */}
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 mb-8">
+                            {approvedOfficers.slice(0, 8).map((officer, idx) => (
+                                <div key={officer.officer_id || officer.id || idx}
+                                     className="bg-slate-800 rounded-lg overflow-hidden">
+                                    <div className="aspect-square bg-slate-700">
+                                        {(officer.face_crop_path || officer.body_crop_path) ? (
+                                            <img
+                                                src={officer.face_crop_path || officer.body_crop_path}
+                                                alt={`Officer ${idx + 1}`}
+                                                className="w-full h-full object-cover"
+                                            />
+                                        ) : (
+                                            <div className="w-full h-full flex items-center justify-center text-slate-500">
+                                                <Users className="h-8 w-8" />
+                                            </div>
+                                        )}
+                                    </div>
+                                    <div className="p-2 text-center">
+                                        <p className="text-xs text-slate-400 truncate">
+                                            {officer.name_override || officer.name || officer.badge_override || officer.badge || `Officer #${idx + 1}`}
+                                        </p>
+                                    </div>
+                                </div>
+                            ))}
+                            {approvedOfficers.length > 8 && (
+                                <div className="bg-slate-800 rounded-lg flex items-center justify-center aspect-square">
+                                    <span className="text-slate-400 text-lg font-medium">
+                                        +{approvedOfficers.length - 8} more
+                                    </span>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex gap-4">
+                            <Button
+                                variant="outline"
+                                onClick={handleBackToDetails}
+                                className="flex-1 border-slate-600 text-slate-300 hover:bg-slate-800"
+                            >
+                                <ArrowLeft className="h-4 w-4 mr-2" />
+                                Back to Edit
+                            </Button>
+                            <Button
+                                onClick={handleFinalSubmit}
+                                className="flex-1 bg-green-600 hover:bg-green-500 text-white"
+                            >
+                                Generate Final Report
+                                <ArrowRight className="h-4 w-4 ml-2" />
+                            </Button>
+                        </div>
+                    </Card>
+                </div>
+            </div>
         );
     }
 

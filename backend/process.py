@@ -9,7 +9,7 @@ from database import SessionLocal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from contextlib import contextmanager
-from utils.paths import normalize_for_storage, get_absolute_path, get_web_url, save_file
+from utils.paths import normalize_for_storage, get_absolute_path, get_web_url, get_file_url, save_file
 
 # =============================================================================
 # CONFIGURATION CONSTANTS
@@ -239,7 +239,9 @@ def get_match_quality_factors(dist_euclidean: float, sim_cosine: float) -> dict:
         "issues": issues
     }
 
-FRAMES_DIR = "data/frames"
+# Use absolute path for frames directory to work from any working directory
+BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+FRAMES_DIR = os.path.join(BACKEND_DIR, "data", "frames")
 os.makedirs(FRAMES_DIR, exist_ok=True)
 
 
@@ -605,18 +607,32 @@ def analyze_frames(media_id, media_frames_dir, status_callback=None):
     """
     from ai import analyzer
 
-    print("Running AI analysis on frames...")
+    print(f"Running AI analysis on frames in {media_frames_dir}...")
+
+    # Check if directory exists
+    if not os.path.exists(media_frames_dir):
+        print(f"ERROR: Frames directory does not exist: {media_frames_dir}")
+        if status_callback:
+            status_callback("log", "Error: Frames directory not found")
+        return
 
     # Get list of frames to process (no DB needed)
+    all_files = os.listdir(media_frames_dir)
+    print(f"Files in directory: {all_files}")
+
     frames = sorted([
         os.path.join(media_frames_dir, f)
-        for f in os.listdir(media_frames_dir)
+        for f in all_files
         if f.endswith(".jpg") and not f.startswith("face_") and not f.startswith("crop_")
     ])
 
     if not frames:
-        print("No frames found to analyze.")
+        print(f"No frames found to analyze in {media_frames_dir}")
+        if status_callback:
+            status_callback("log", "No frames found to analyze")
         return
+
+    print(f"Found {len(frames)} frame(s) to analyze")
 
     for frame_path in frames:
         # Calculate timestamp from filename (frame_XXXX.jpg -> XXXX seconds)
@@ -632,6 +648,7 @@ def analyze_frames(media_id, media_frames_dir, status_callback=None):
             frame_rel_path = os.path.relpath(frame_path, start=os.getcwd())
             frame_url = f"/{frame_rel_path}"
 
+            print(f"[DEBUG] Emitting analyzing_frame: {frame_url}")
             status_callback("analyzing_frame", {
                 "url": frame_url,
                 "timestamp": timestamp_str,
@@ -683,15 +700,25 @@ def analyze_frames(media_id, media_frames_dir, status_callback=None):
                 except Exception as e:
                     print(f"Quick force detection error: {e}")
 
+            # Upload crops to R2 immediately so they're available for the frontend
+            from utils.r2_storage import R2_ENABLED
+            if R2_ENABLED:
+                for crop_path in [face_crop, body_crop, primary_crop]:
+                    if crop_path and os.path.exists(crop_path):
+                        save_file(crop_path, normalize_for_storage(crop_path))
+
             if status_callback:
                 # Use face crop for display, fall back to body or primary
                 display_crop = face_crop or body_crop or primary_crop
+                print(f"[DEBUG] display_crop={display_crop}, face={face_crop}, body={body_crop}, primary={primary_crop}")
                 if display_crop:
-                    image_url = get_web_url(normalize_for_storage(display_crop))
+                    # Use get_file_url to return R2 URLs when R2 is enabled
+                    image_url = get_file_url(normalize_for_storage(display_crop))
+                    print(f"[DEBUG] Emitting candidate_officer: image_url={image_url}")
                     status_callback("candidate_officer", {
                         "image_url": image_url,
-                        "face_url": get_web_url(normalize_for_storage(face_crop)) if face_crop else None,
-                        "body_url": get_web_url(normalize_for_storage(body_crop)) if body_crop else None,
+                        "face_url": get_file_url(normalize_for_storage(face_crop)) if face_crop else None,
+                        "body_url": get_file_url(normalize_for_storage(body_crop)) if body_crop else None,
                         "timestamp": timestamp_str,
                         "confidence": res.get('confidence', 0.9),
                         "badge": badge_text,

@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { io } from 'socket.io-client';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Terminal, Cpu, Shield, AlertTriangle, Check, X, Activity, ZoomIn, RefreshCw, WifiOff, Clock, CheckCircle, User, MapPin, Calendar, Image as ImageIcon, FileCheck } from 'lucide-react';
+import { Terminal, Cpu, Shield, AlertTriangle, Check, X, Activity, ZoomIn, RefreshCw, WifiOff, Clock, CheckCircle, User, MapPin, Calendar, Image as ImageIcon, FileCheck, Globe, Video, FileText, Download, Search, ScanLine, MonitorPlay, Server, HardDrive } from 'lucide-react';
 
 let API_URL = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 if (!API_URL.startsWith("http")) {
@@ -125,7 +125,11 @@ export default function LiveAnalysis({ taskId, onComplete }) {
     const [errorInfo, setErrorInfo] = useState(null); // { type, message, recoverable }
     const [reconnectAttempts, setReconnectAttempts] = useState(0);
     const [lastUpdate, setLastUpdate] = useState(Date.now());
-    const [processingStage, setProcessingStage] = useState('initializing'); // initializing, downloading, analyzing, finalizing
+    const [processingStage, setProcessingStage] = useState('initializing');
+    // Stages: initializing, url_analysis, content_detection, downloading, video_analysis, officer_detection, finalizing
+    const [detectedContent, setDetectedContent] = useState(null); // { type: 'video'|'images'|'article', count: number }
+    const [downloadProgress, setDownloadProgress] = useState({ current: 0, total: 0, percent: 0 });
+    const [analysisProgress, setAnalysisProgress] = useState({ framesProcessed: 0, totalFrames: 0 });
     const logEndRef = useRef(null);
     const socketRef = useRef(null);
 
@@ -161,14 +165,65 @@ export default function LiveAnalysis({ taskId, onComplete }) {
         setErrorInfo(null);
     }, []);
 
-    // Detect processing stage from log messages
+    // Detect processing stage and content type from log messages
     const detectStage = useCallback((message) => {
         const lowerMsg = message.toLowerCase();
-        if (lowerMsg.includes('download') || lowerMsg.includes('fetch')) {
+
+        // URL Analysis stage
+        if (lowerMsg.includes('fetching url') || lowerMsg.includes('analyzing url') ||
+            lowerMsg.includes('checking url') || lowerMsg.includes('requesting')) {
+            setProcessingStage('url_analysis');
+        }
+        // Content Detection stage
+        else if (lowerMsg.includes('found video') || lowerMsg.includes('detected video')) {
+            setProcessingStage('content_detection');
+            const match = message.match(/(\d+)/);
+            setDetectedContent({ type: 'video', count: 1, duration: match ? match[1] : null });
+        }
+        else if (lowerMsg.includes('found') && lowerMsg.includes('image')) {
+            setProcessingStage('content_detection');
+            const match = message.match(/(\d+)/);
+            setDetectedContent({ type: 'images', count: match ? parseInt(match[1]) : 1 });
+        }
+        else if (lowerMsg.includes('article') || lowerMsg.includes('text content')) {
+            setProcessingStage('content_detection');
+            setDetectedContent({ type: 'article', count: 1 });
+        }
+        // Downloading stage
+        else if (lowerMsg.includes('download') || lowerMsg.includes('fetch')) {
             setProcessingStage('downloading');
-        } else if (lowerMsg.includes('analyz') || lowerMsg.includes('scan') || lowerMsg.includes('detect')) {
-            setProcessingStage('analyzing');
-        } else if (lowerMsg.includes('sav') || lowerMsg.includes('final') || lowerMsg.includes('complet')) {
+            // Try to extract progress
+            const progressMatch = message.match(/(\d+)%/);
+            if (progressMatch) {
+                setDownloadProgress(prev => ({ ...prev, percent: parseInt(progressMatch[1]) }));
+            }
+            const sizeMatch = message.match(/(\d+\.?\d*)\s*(mb|gb|kb)/i);
+            if (sizeMatch) {
+                setDownloadProgress(prev => ({ ...prev, current: parseFloat(sizeMatch[1]), unit: sizeMatch[2] }));
+            }
+        }
+        // Video Analysis stage
+        else if (lowerMsg.includes('processing video') || lowerMsg.includes('extracting frame') ||
+                 lowerMsg.includes('scanning video') || lowerMsg.includes('analyzing video')) {
+            setProcessingStage('video_analysis');
+            const frameMatch = message.match(/frame\s*(\d+)/i);
+            const totalMatch = message.match(/of\s*(\d+)/i) || message.match(/total:\s*(\d+)/i);
+            if (frameMatch) {
+                setAnalysisProgress(prev => ({
+                    framesProcessed: parseInt(frameMatch[1]),
+                    totalFrames: totalMatch ? parseInt(totalMatch[1]) : prev.totalFrames
+                }));
+            }
+        }
+        // Officer Detection stage
+        else if (lowerMsg.includes('detect') && (lowerMsg.includes('officer') || lowerMsg.includes('police') || lowerMsg.includes('face'))) {
+            setProcessingStage('officer_detection');
+        }
+        else if (lowerMsg.includes('analyz') || lowerMsg.includes('scan')) {
+            setProcessingStage('officer_detection');
+        }
+        // Finalizing stage
+        else if (lowerMsg.includes('sav') || lowerMsg.includes('final') || lowerMsg.includes('complet') || lowerMsg.includes('generating report')) {
             setProcessingStage('finalizing');
         }
     }, []);
@@ -500,6 +555,336 @@ export default function LiveAnalysis({ taskId, onComplete }) {
         );
     };
 
+    // ===== ANIMATED STAGE VISUALIZERS =====
+
+    // URL Analysis Animation - Globe with scanning effect
+    const UrlAnalysisVisual = () => (
+        <div className="relative flex flex-col items-center justify-center p-8">
+            {/* Rotating globe with pulse rings */}
+            <div className="relative">
+                {/* Pulse rings */}
+                <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="w-32 h-32 rounded-full border-2 border-blue-500/30 animate-ping" style={{ animationDuration: '2s' }} />
+                </div>
+                <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="w-40 h-40 rounded-full border border-blue-500/20 animate-ping" style={{ animationDuration: '2.5s', animationDelay: '0.5s' }} />
+                </div>
+
+                {/* Main globe */}
+                <div className="relative w-24 h-24 rounded-full bg-gradient-to-br from-blue-600 to-blue-900 flex items-center justify-center shadow-2xl shadow-blue-500/30">
+                    <Globe className="h-12 w-12 text-blue-200 animate-spin" style={{ animationDuration: '8s' }} />
+
+                    {/* Scanning line */}
+                    <div className="absolute inset-0 overflow-hidden rounded-full">
+                        <div className="absolute w-full h-1 bg-gradient-to-r from-transparent via-cyan-400 to-transparent animate-scan-vertical" />
+                    </div>
+                </div>
+            </div>
+
+            <div className="mt-6 text-center">
+                <h3 className="text-lg font-bold text-blue-400 flex items-center gap-2 justify-center">
+                    <Search className="h-5 w-5 animate-pulse" />
+                    Analyzing URL for Content
+                </h3>
+                <p className="text-sm text-slate-400 mt-2">Scanning webpage structure and media elements...</p>
+
+                {/* Animated dots */}
+                <div className="flex items-center justify-center gap-1 mt-4">
+                    <span className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                    <span className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                    <span className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                </div>
+            </div>
+        </div>
+    );
+
+    // Content Detection Animation - Shows what was found
+    const ContentDetectionVisual = () => (
+        <div className="relative flex flex-col items-center justify-center p-8">
+            {/* Success pulse */}
+            <div className="relative">
+                <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="w-36 h-36 rounded-full bg-green-500/20 animate-pulse" />
+                </div>
+
+                {/* Content type icon with checkmark */}
+                <div className="relative w-28 h-28 rounded-2xl bg-gradient-to-br from-green-600 to-green-800 flex items-center justify-center shadow-2xl shadow-green-500/30 animate-bounce-slow">
+                    {detectedContent?.type === 'video' && <Video className="h-14 w-14 text-green-100" />}
+                    {detectedContent?.type === 'images' && <ImageIcon className="h-14 w-14 text-green-100" />}
+                    {detectedContent?.type === 'article' && <FileText className="h-14 w-14 text-green-100" />}
+
+                    {/* Checkmark badge */}
+                    <div className="absolute -top-2 -right-2 w-8 h-8 bg-green-400 rounded-full flex items-center justify-center border-4 border-slate-950">
+                        <Check className="h-4 w-4 text-green-900" />
+                    </div>
+                </div>
+            </div>
+
+            <div className="mt-6 text-center">
+                <h3 className="text-lg font-bold text-green-400">
+                    Content Identified!
+                </h3>
+                <div className="mt-3 px-4 py-2 bg-green-500/20 rounded-lg border border-green-500/30">
+                    {detectedContent?.type === 'video' && (
+                        <p className="text-green-300">
+                            <span className="font-bold">Video clip</span> detected
+                            {detectedContent.duration && <span> ({detectedContent.duration}s)</span>}
+                        </p>
+                    )}
+                    {detectedContent?.type === 'images' && (
+                        <p className="text-green-300">
+                            <span className="font-bold">{detectedContent.count} image{detectedContent.count !== 1 ? 's' : ''}</span> found
+                        </p>
+                    )}
+                    {detectedContent?.type === 'article' && (
+                        <p className="text-green-300">
+                            <span className="font-bold">Article</span> with embedded media
+                        </p>
+                    )}
+                </div>
+                <p className="text-sm text-slate-400 mt-3">Preparing to download...</p>
+            </div>
+        </div>
+    );
+
+    // Download Animation - Data packets flying from server to computer
+    const DownloadVisual = () => (
+        <div className="relative flex flex-col items-center justify-center p-8">
+            {/* Server to Computer Animation */}
+            <div className="flex items-center gap-8">
+                {/* Server */}
+                <div className="relative">
+                    <div className="w-16 h-20 bg-gradient-to-b from-slate-600 to-slate-800 rounded-lg flex flex-col items-center justify-center border border-slate-500 shadow-lg">
+                        <Server className="h-6 w-6 text-slate-300 mb-1" />
+                        <div className="flex gap-1">
+                            <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                            <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" style={{ animationDelay: '0.2s' }} />
+                        </div>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-2 text-center">Server</p>
+                </div>
+
+                {/* Data packets flying */}
+                <div className="relative w-32 h-8 overflow-visible">
+                    {/* Track line */}
+                    <div className="absolute top-1/2 left-0 right-0 h-0.5 bg-gradient-to-r from-blue-500/50 via-cyan-500/50 to-blue-500/50" />
+
+                    {/* Flying packets */}
+                    {[0, 1, 2, 3, 4].map((i) => (
+                        <div
+                            key={i}
+                            className="absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-cyan-400 rounded-sm animate-fly-packet shadow-lg shadow-cyan-400/50"
+                            style={{
+                                animationDelay: `${i * 0.3}s`,
+                                animationDuration: '1.5s'
+                            }}
+                        />
+                    ))}
+                </div>
+
+                {/* Computer */}
+                <div className="relative">
+                    <div className="w-20 h-16 bg-gradient-to-b from-slate-700 to-slate-900 rounded-lg flex items-center justify-center border border-slate-600 shadow-lg">
+                        <HardDrive className="h-8 w-8 text-cyan-400 animate-pulse" />
+                    </div>
+                    <div className="w-24 h-2 bg-slate-700 rounded-b-lg mx-auto border-x border-b border-slate-600" />
+                    <p className="text-xs text-slate-500 mt-2 text-center">Local</p>
+                </div>
+            </div>
+
+            <div className="mt-8 text-center w-full max-w-xs">
+                <h3 className="text-lg font-bold text-cyan-400 flex items-center gap-2 justify-center">
+                    <Download className="h-5 w-5 animate-bounce" />
+                    Downloading Media
+                </h3>
+
+                {/* Progress bar */}
+                <div className="mt-4 w-full">
+                    <div className="h-3 bg-slate-800 rounded-full overflow-hidden border border-slate-700">
+                        <div
+                            className="h-full bg-gradient-to-r from-cyan-600 to-cyan-400 rounded-full transition-all duration-300 relative overflow-hidden"
+                            style={{ width: `${Math.max(downloadProgress.percent, 10)}%` }}
+                        >
+                            {/* Shimmer effect */}
+                            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-shimmer" />
+                        </div>
+                    </div>
+                    <div className="flex justify-between mt-2 text-xs text-slate-400">
+                        <span>{downloadProgress.percent || 0}%</span>
+                        {downloadProgress.current > 0 && (
+                            <span>{downloadProgress.current} {downloadProgress.unit || 'MB'}</span>
+                        )}
+                    </div>
+                </div>
+
+                <p className="text-sm text-slate-400 mt-3">
+                    {detectedContent?.type === 'video' ? 'Downloading video file...' :
+                     detectedContent?.type === 'images' ? `Downloading ${detectedContent.count} images...` :
+                     'Fetching content...'}
+                </p>
+            </div>
+        </div>
+    );
+
+    // Video Analysis Animation - Frame scanning effect
+    const VideoAnalysisVisual = () => (
+        <div className="relative flex flex-col items-center justify-center p-8">
+            {/* Video frame with scanning effect */}
+            <div className="relative">
+                {/* Outer glow */}
+                <div className="absolute -inset-4 bg-purple-500/20 rounded-xl blur-xl animate-pulse" />
+
+                {/* Main video frame */}
+                <div className="relative w-64 h-40 bg-gradient-to-br from-slate-800 to-slate-900 rounded-lg border-2 border-purple-500/50 overflow-hidden shadow-2xl shadow-purple-500/20">
+                    {/* Video icon in center */}
+                    <div className="absolute inset-0 flex items-center justify-center">
+                        <MonitorPlay className="h-16 w-16 text-slate-600" />
+                    </div>
+
+                    {/* Scanning line horizontal */}
+                    <div className="absolute inset-0 overflow-hidden">
+                        <div className="absolute w-full h-1 bg-gradient-to-r from-transparent via-purple-400 to-transparent animate-scan-horizontal" />
+                    </div>
+
+                    {/* Grid overlay */}
+                    <div className="absolute inset-0 opacity-30">
+                        <div className="grid grid-cols-4 grid-rows-3 h-full">
+                            {[...Array(12)].map((_, i) => (
+                                <div key={i} className="border border-purple-500/20" />
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Frame counter */}
+                    <div className="absolute bottom-2 right-2 bg-black/80 px-2 py-1 rounded text-xs font-mono text-purple-400">
+                        {analysisProgress.framesProcessed > 0 ? (
+                            <span>
+                                Frame {analysisProgress.framesProcessed}
+                                {analysisProgress.totalFrames > 0 && ` / ${analysisProgress.totalFrames}`}
+                            </span>
+                        ) : (
+                            <span className="animate-pulse">Scanning...</span>
+                        )}
+                    </div>
+
+                    {/* Recording indicator */}
+                    <div className="absolute top-2 left-2 flex items-center gap-1.5 bg-black/80 px-2 py-1 rounded">
+                        <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                        <span className="text-xs text-red-400 font-bold">ANALYZING</span>
+                    </div>
+                </div>
+            </div>
+
+            <div className="mt-6 text-center">
+                <h3 className="text-lg font-bold text-purple-400 flex items-center gap-2 justify-center">
+                    <ScanLine className="h-5 w-5" />
+                    Analyzing Video Frames
+                </h3>
+
+                {/* Progress indicator */}
+                {analysisProgress.totalFrames > 0 && (
+                    <div className="mt-4 w-64">
+                        <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+                            <div
+                                className="h-full bg-gradient-to-r from-purple-600 to-purple-400 rounded-full transition-all duration-300"
+                                style={{ width: `${(analysisProgress.framesProcessed / analysisProgress.totalFrames) * 100}%` }}
+                            />
+                        </div>
+                    </div>
+                )}
+
+                <p className="text-sm text-slate-400 mt-3">Extracting frames for officer detection...</p>
+            </div>
+        </div>
+    );
+
+    // Officer Detection Animation - Face scanning effect
+    const OfficerDetectionVisual = () => (
+        <div className="relative flex flex-col items-center justify-center p-8">
+            {/* Circular radar-like scanner */}
+            <div className="relative w-48 h-48">
+                {/* Radar circles */}
+                <div className="absolute inset-0 rounded-full border border-green-500/30" />
+                <div className="absolute inset-4 rounded-full border border-green-500/20" />
+                <div className="absolute inset-8 rounded-full border border-green-500/10" />
+
+                {/* Rotating sweep */}
+                <div className="absolute inset-0 animate-spin" style={{ animationDuration: '3s' }}>
+                    <div className="absolute top-1/2 left-1/2 w-1/2 h-0.5 bg-gradient-to-r from-green-400 to-transparent origin-left" />
+                </div>
+
+                {/* Sweep glow */}
+                <div className="absolute inset-0 animate-spin" style={{ animationDuration: '3s' }}>
+                    <div className="absolute top-0 left-1/2 w-1/2 h-1/2 origin-bottom-left bg-gradient-to-r from-green-500/20 to-transparent"
+                         style={{ clipPath: 'polygon(0 100%, 100% 0, 100% 100%)' }} />
+                </div>
+
+                {/* Center icon */}
+                <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="w-16 h-16 rounded-full bg-gradient-to-br from-green-600 to-green-800 flex items-center justify-center border-2 border-green-400 shadow-lg shadow-green-500/30">
+                        <Shield className="h-8 w-8 text-green-100" />
+                    </div>
+                </div>
+
+                {/* Detection pings */}
+                {stats.faces > 0 && [...Array(Math.min(stats.faces, 5))].map((_, i) => (
+                    <div
+                        key={i}
+                        className="absolute w-3 h-3 bg-green-400 rounded-full animate-ping"
+                        style={{
+                            top: `${20 + Math.random() * 60}%`,
+                            left: `${20 + Math.random() * 60}%`,
+                            animationDelay: `${i * 0.5}s`,
+                            animationDuration: '2s'
+                        }}
+                    />
+                ))}
+            </div>
+
+            <div className="mt-6 text-center">
+                <h3 className="text-lg font-bold text-green-400 flex items-center gap-2 justify-center">
+                    <User className="h-5 w-5" />
+                    Detecting Officers
+                </h3>
+
+                {stats.faces > 0 && (
+                    <div className="mt-3 px-4 py-2 bg-green-500/20 rounded-lg border border-green-500/30 inline-flex items-center gap-2">
+                        <span className="text-2xl font-bold text-green-400">{stats.faces}</span>
+                        <span className="text-green-300">officer{stats.faces !== 1 ? 's' : ''} detected</span>
+                    </div>
+                )}
+
+                <p className="text-sm text-slate-400 mt-3">
+                    Scanning for police uniforms and faces...
+                </p>
+            </div>
+        </div>
+    );
+
+    // Stage Visual Selector - Shows appropriate animation for current stage
+    const StageVisual = () => {
+        // Only show stage visuals when active and no current frame/candidates
+        if (status !== 'active' || currentFrame || candidates.length > 0 || scrapedMedia.length > 0) {
+            return null;
+        }
+
+        switch (processingStage) {
+            case 'initializing':
+            case 'url_analysis':
+                return <UrlAnalysisVisual />;
+            case 'content_detection':
+                return detectedContent ? <ContentDetectionVisual /> : <UrlAnalysisVisual />;
+            case 'downloading':
+                return <DownloadVisual />;
+            case 'video_analysis':
+                return <VideoAnalysisVisual />;
+            case 'officer_detection':
+                return <OfficerDetectionVisual />;
+            default:
+                return <UrlAnalysisVisual />;
+        }
+    };
+
     return (
         <div className="min-h-screen bg-slate-950 text-slate-200 p-3 sm:p-6 font-mono">
             {/* Connection Status Bar */}
@@ -702,11 +1087,16 @@ export default function LiveAnalysis({ taskId, onComplete }) {
                             </div>
                         )}
 
+                        {/* Stage-specific animated visual */}
+                        <StageVisual />
+
                         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-                            {candidates.length === 0 && scrapedMedia.length === 0 && !currentFrame && status === 'active' && (
-                                <div className="col-span-full h-64 flex flex-col items-center justify-center text-slate-600 animate-pulse">
-                                    <Cpu className="h-12 w-12 mb-4 opacity-50" />
-                                    <p>Initializing Neural Net...</p>
+                            {/* Fallback message only shown if StageVisual doesn't render */}
+                            {candidates.length === 0 && scrapedMedia.length === 0 && !currentFrame && status === 'active' &&
+                             processingStage === 'finalizing' && (
+                                <div className="col-span-full h-32 flex flex-col items-center justify-center text-slate-600 animate-pulse">
+                                    <FileCheck className="h-12 w-12 mb-4 opacity-50" />
+                                    <p>Finalizing analysis...</p>
                                 </div>
                             )}
 
@@ -1065,5 +1455,66 @@ export default function LiveAnalysis({ taskId, onComplete }) {
         </div>
     );
 }
-// Add these to tailwind config or global css if not present:
-// .bg-slate-* colors (if using standard tailwind they are there)
+
+// Custom animation styles - add to your global CSS or tailwind config
+// These animations power the stage visualizers
+const animationStyles = `
+@keyframes fly-packet {
+    0% { left: 0; opacity: 0; transform: translateY(-50%) scale(0.5); }
+    10% { opacity: 1; transform: translateY(-50%) scale(1); }
+    90% { opacity: 1; transform: translateY(-50%) scale(1); }
+    100% { left: 100%; opacity: 0; transform: translateY(-50%) scale(0.5); }
+}
+
+@keyframes scan-vertical {
+    0% { top: 0; }
+    50% { top: 100%; }
+    100% { top: 0; }
+}
+
+@keyframes scan-horizontal {
+    0% { top: 0; }
+    100% { top: 100%; }
+}
+
+@keyframes shimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+}
+
+@keyframes bounce-slow {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+}
+
+.animate-fly-packet {
+    animation: fly-packet 1.5s ease-in-out infinite;
+}
+
+.animate-scan-vertical {
+    animation: scan-vertical 2s ease-in-out infinite;
+}
+
+.animate-scan-horizontal {
+    animation: scan-horizontal 2s linear infinite;
+}
+
+.animate-shimmer {
+    animation: shimmer 2s infinite;
+}
+
+.animate-bounce-slow {
+    animation: bounce-slow 2s ease-in-out infinite;
+}
+`;
+
+// Inject animation styles into document head
+if (typeof document !== 'undefined') {
+    const styleId = 'live-analysis-animations';
+    if (!document.getElementById(styleId)) {
+        const styleSheet = document.createElement('style');
+        styleSheet.id = styleId;
+        styleSheet.textContent = animationStyles;
+        document.head.appendChild(styleSheet);
+    }
+}

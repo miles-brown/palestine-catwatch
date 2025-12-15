@@ -35,6 +35,19 @@ UK_BADGE_PATTERNS = [
     r'^[A-Z]\d{2,4}[A-Z]?$',     # Letter-numbers-optional letter: U123A
 ]
 
+# UK Police Name Label Patterns (on uniform)
+# Format: Rank prefix followed by surname, e.g., "PC WILLIAMS", "SGT JONES"
+UK_NAME_PATTERNS = [
+    r'^(PC|SGT|INSP|CI|SUPT|DC|DS|DI|SC)\s+[A-Z]+$',  # PC WILLIAMS, SGT JONES
+    r'^[A-Z]+\s+(PC|SGT|INSP|CI|SUPT)$',              # WILLIAMS PC
+    r'^(CONSTABLE|SERGEANT|INSPECTOR)\s+[A-Z]+$',     # Full rank: CONSTABLE SMITH
+    r'^[A-Z]{2,}$',                                    # Just surname (some forces)
+]
+
+# Common rank prefixes for filtering
+RANK_PREFIXES = {'PC', 'SGT', 'INSP', 'CI', 'SUPT', 'DC', 'DS', 'DI', 'SC', 'PCSO', 'PS'}
+FULL_RANKS = {'CONSTABLE', 'SERGEANT', 'INSPECTOR', 'SUPERINTENDENT'}
+
 def _get_ocr_reader():
     """Lazy initialization of EasyOCR reader to avoid blocking startup."""
     global reader, _ocr_initialized
@@ -702,6 +715,327 @@ def filter_badge_number(texts):
             seen.add(candidate)
 
     return candidates[0] if len(candidates) == 1 else (", ".join(candidates[:3]) if candidates else None)
+
+
+def detect_badge_with_confidence(img, face_box):
+    """
+    Detect badge/shoulder number with confidence score.
+
+    Args:
+        img: OpenCV image (BGR numpy array)
+        face_box: [x, y, w, h] of detected face
+
+    Returns:
+        Tuple of (badge_text, confidence) or (None, 0.0)
+    """
+    ocr_reader = _get_ocr_reader()
+    if ocr_reader is None:
+        return None, 0.0
+
+    start_time = time.time()
+    best_badge = None
+    best_confidence = 0.0
+
+    # Get all ROIs to scan
+    rois_to_scan = []
+
+    # Body ROI
+    body_crop = get_body_roi(img, face_box)
+    if body_crop is not None and body_crop.size > 0:
+        rois_to_scan.append(('body', body_crop))
+        preprocessed = preprocess_for_ocr(body_crop)
+        if preprocessed is not None:
+            rois_to_scan.append(('body_enhanced', preprocessed))
+
+    # Shoulder ROIs
+    shoulder_rois = get_shoulder_rois(img, face_box)
+    for location, roi in shoulder_rois:
+        if roi is not None and roi.size > 100:
+            rois_to_scan.append((location, roi))
+            preprocessed = preprocess_for_ocr(roi)
+            if preprocessed is not None:
+                rois_to_scan.append((f'{location}_enhanced', preprocessed))
+
+    # Run OCR on all ROIs
+    for location, roi in rois_to_scan:
+        try:
+            results = ocr_reader.readtext(roi, detail=1)
+
+            for bbox, text, conf in results:
+                clean = text.replace(" ", "").replace("-", "").upper()
+
+                # Skip invalid strings
+                if len(clean) < 2 or len(clean) > 8:
+                    continue
+
+                # Skip false positives
+                if clean in {'POLICE', 'UK', 'MET', 'OFFICER', 'TSG', 'FIT', 'PSU'}:
+                    continue
+
+                # Check badge patterns
+                for pattern in UK_BADGE_PATTERNS:
+                    if re.match(pattern, clean):
+                        # Weight confidence by pattern strength
+                        pattern_weight = 1.0
+                        if re.match(r'^[A-Z]{1,2}\d{3,4}$', clean):
+                            pattern_weight = 1.2  # Most common UK format
+
+                        weighted_conf = conf * pattern_weight
+
+                        if weighted_conf > best_confidence:
+                            best_badge = clean
+                            best_confidence = min(conf, 1.0)  # Keep original conf
+                        break
+
+        except Exception as e:
+            logger.debug(f"OCR error on {location}: {e}")
+            continue
+
+    elapsed_ms = (time.time() - start_time) * 1000
+    log_performance(
+        logger, "badge_ocr_with_confidence", elapsed_ms,
+        success=best_badge is not None,
+        details={"badge": best_badge, "confidence": best_confidence}
+    )
+
+    return best_badge, best_confidence
+
+
+def detect_officer_name(img, face_box):
+    """
+    Detect officer name from uniform label using OCR.
+    UK police often have name labels like "PC WILLIAMS" or "SGT JONES".
+
+    Args:
+        img: OpenCV image (BGR numpy array)
+        face_box: [x, y, w, h] of detected face
+
+    Returns:
+        Tuple of (name_text, confidence) or (None, 0.0)
+    """
+    ocr_reader = _get_ocr_reader()
+    if ocr_reader is None:
+        return None, 0.0
+
+    start_time = time.time()
+    best_name = None
+    best_confidence = 0.0
+
+    x, y, w, h = face_box
+    h_img, w_img = img.shape[:2]
+
+    # Name labels are typically on chest area, below shoulders
+    # Scan chest/torso region
+    chest_y_start = min(h_img, y + int(h * 1.5))  # Below shoulders
+    chest_y_end = min(h_img, y + int(h * 3.0))    # Mid-torso
+    chest_x_start = max(0, x - int(w * 0.5))
+    chest_x_end = min(w_img, x + w + int(w * 0.5))
+
+    if chest_y_end <= chest_y_start or chest_x_end <= chest_x_start:
+        return None, 0.0
+
+    chest_roi = img[chest_y_start:chest_y_end, chest_x_start:chest_x_end]
+
+    if chest_roi.size == 0:
+        return None, 0.0
+
+    rois_to_scan = [
+        ('chest', chest_roi),
+    ]
+
+    # Add enhanced version
+    preprocessed = preprocess_for_ocr(chest_roi)
+    if preprocessed is not None:
+        rois_to_scan.append(('chest_enhanced', preprocessed))
+
+    # Run OCR on ROIs
+    for location, roi in rois_to_scan:
+        try:
+            results = ocr_reader.readtext(roi, detail=1)
+
+            for bbox, text, conf in results:
+                clean = text.upper().strip()
+
+                # Skip very short or very long strings
+                if len(clean) < 3 or len(clean) > 25:
+                    continue
+
+                # Check name patterns
+                for pattern in UK_NAME_PATTERNS:
+                    if re.match(pattern, clean):
+                        if conf > best_confidence:
+                            best_name = clean
+                            best_confidence = conf
+                        break
+                else:
+                    # Check if it looks like "RANK NAME" format
+                    parts = clean.split()
+                    if len(parts) == 2:
+                        first, second = parts
+                        # Check if first is rank and second is name
+                        if first in RANK_PREFIXES and second.isalpha() and len(second) >= 3:
+                            if conf > best_confidence:
+                                best_name = clean
+                                best_confidence = conf
+                        # Or name then rank
+                        elif second in RANK_PREFIXES and first.isalpha() and len(first) >= 3:
+                            # Normalize to RANK NAME format
+                            if conf > best_confidence:
+                                best_name = f"{second} {first}"
+                                best_confidence = conf
+
+        except Exception as e:
+            logger.debug(f"Name OCR error on {location}: {e}")
+            continue
+
+    elapsed_ms = (time.time() - start_time) * 1000
+    log_performance(
+        logger, "name_ocr_detection", elapsed_ms,
+        success=best_name is not None,
+        details={"name": best_name, "confidence": best_confidence}
+    )
+
+    return best_name, best_confidence
+
+
+def get_face_embedding_bytes(image_path, face_box=None):
+    """
+    Get face embedding as bytes for database storage.
+
+    Args:
+        image_path: Path to image file
+        face_box: Optional [x, y, w, h] of face
+
+    Returns:
+        Bytes of numpy array, or None if embedding generation fails
+    """
+    embedding = generate_embedding(image_path, face_box)
+    if embedding is None:
+        return None
+
+    # Convert to numpy array and then to bytes
+    embedding_array = np.array(embedding, dtype=np.float32)
+    return embedding_array.tobytes()
+
+
+def embedding_from_bytes(embedding_bytes):
+    """
+    Convert stored embedding bytes back to numpy array.
+
+    Args:
+        embedding_bytes: Bytes from database
+
+    Returns:
+        Numpy array of shape (512,) or None
+    """
+    if embedding_bytes is None:
+        return None
+
+    try:
+        return np.frombuffer(embedding_bytes, dtype=np.float32)
+    except Exception as e:
+        logger.error(f"Failed to convert embedding bytes: {e}")
+        return None
+
+
+def calculate_embedding_similarity(emb1_bytes, emb2_bytes):
+    """
+    Calculate cosine similarity between two face embeddings.
+
+    Args:
+        emb1_bytes: First embedding as bytes
+        emb2_bytes: Second embedding as bytes
+
+    Returns:
+        Similarity score 0-1, or 0.0 if calculation fails
+    """
+    emb1 = embedding_from_bytes(emb1_bytes)
+    emb2 = embedding_from_bytes(emb2_bytes)
+
+    if emb1 is None or emb2 is None:
+        return 0.0
+
+    try:
+        # Cosine similarity
+        dot_product = np.dot(emb1, emb2)
+        norm1 = np.linalg.norm(emb1)
+        norm2 = np.linalg.norm(emb2)
+
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
+
+        similarity = dot_product / (norm1 * norm2)
+        return float(max(0.0, min(1.0, similarity)))  # Clamp to [0, 1]
+
+    except Exception as e:
+        logger.error(f"Similarity calculation failed: {e}")
+        return 0.0
+
+
+def find_merge_candidates(appearances, threshold=0.85):
+    """
+    Find officer appearances that are likely the same person based on face embeddings.
+
+    Args:
+        appearances: List of OfficerAppearance objects with face_embedding
+        threshold: Minimum similarity threshold (0.85 = 85% match)
+
+    Returns:
+        List of merge suggestions: [
+            {
+                'appearance_a_id': int,
+                'appearance_b_id': int,
+                'officer_a_id': int,
+                'officer_b_id': int,
+                'confidence': float,
+                'auto_merge': bool  # True if >= 0.95
+            }
+        ]
+    """
+    suggestions = []
+    processed_pairs = set()
+
+    # Filter appearances with valid embeddings
+    valid_appearances = [
+        a for a in appearances
+        if a.face_embedding is not None and len(a.face_embedding) > 0
+    ]
+
+    for i, app1 in enumerate(valid_appearances):
+        for app2 in valid_appearances[i+1:]:
+            # Skip if same officer already
+            if app1.officer_id == app2.officer_id:
+                continue
+
+            # Skip already processed pairs
+            pair_key = tuple(sorted([app1.officer_id, app2.officer_id]))
+            if pair_key in processed_pairs:
+                continue
+
+            # Calculate similarity
+            similarity = calculate_embedding_similarity(
+                app1.face_embedding,
+                app2.face_embedding
+            )
+
+            if similarity >= threshold:
+                suggestions.append({
+                    'appearance_a_id': app1.id,
+                    'appearance_b_id': app2.id,
+                    'officer_a_id': app1.officer_id,
+                    'officer_b_id': app2.officer_id,
+                    'confidence': similarity,
+                    'auto_merge': similarity >= 0.95,
+                    'crop_a': app1.face_crop_path or app1.image_crop_path,
+                    'crop_b': app2.face_crop_path or app2.image_crop_path,
+                })
+                processed_pairs.add(pair_key)
+
+    # Sort by confidence (highest first)
+    suggestions.sort(key=lambda x: x['confidence'], reverse=True)
+
+    return suggestions
+
 
 def calculate_blur(image):
     """

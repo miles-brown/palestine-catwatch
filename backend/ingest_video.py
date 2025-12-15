@@ -169,7 +169,16 @@ def process_video_workflow(url, answers, user_provided_protest_id=None, status_c
     # 0. Smart Routing (Heuristic)
     # If the URL is likely a news article (text/images) and NOT a dedicated video site, capture content first.
     IS_VIDEO_SITE = False
-    video_domains = ["youtube.com", "youtu.be", "vimeo.com", "dailymotion.com", "twitch.tv", "tiktok.com", "instagram.com", "facebook.com", "twitter.com", "x.com"]
+    video_domains = [
+        # Major platforms
+        "youtube.com", "youtu.be", "vimeo.com", "dailymotion.com",
+        # Social media with video
+        "twitter.com", "x.com", "instagram.com", "facebook.com", "tiktok.com",
+        # Alternative platforms
+        "rumble.com", "bitchute.com", "odysee.com",
+        # Live streaming
+        "twitch.tv"
+    ]
     
     for domain in video_domains:
         if domain in url.lower():

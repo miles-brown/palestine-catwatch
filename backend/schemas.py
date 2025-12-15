@@ -191,3 +191,201 @@ class AppearanceVerifyRequest(BaseModel):
     verified: bool
     confidence: Optional[float] = None
 
+
+# ============================================
+# Officer Merge/Unmerge Schemas
+# ============================================
+
+class MergeRequest(BaseModel):
+    """Request to merge multiple officers into one."""
+    officer_ids: List[int]  # List of officer IDs to merge (first becomes primary)
+    confidence: float = 0.0  # Merge confidence score
+    auto_merged: bool = False  # True if auto-merged by system
+
+
+class UnmergeRequest(BaseModel):
+    """Request to unmerge specific appearances back to a new officer."""
+    appearance_ids: List[int]  # Appearance IDs to split into new officer
+
+
+class MergeSuggestion(BaseModel):
+    """A suggested merge between two officers based on face embedding similarity."""
+    officer_a_id: int
+    officer_b_id: int
+    appearance_a_id: int
+    appearance_b_id: int
+    confidence: float  # Embedding similarity 0-1
+    auto_merge: bool  # True if confidence >= 0.95
+    crop_a: Optional[str] = None  # Path to officer A's crop
+    crop_b: Optional[str] = None  # Path to officer B's crop
+
+
+class MergeSuggestionsResponse(BaseModel):
+    """Response containing merge suggestions for a media item."""
+    suggestions: List[MergeSuggestion]
+
+
+class MergeResponse(BaseModel):
+    """Response after merging officers."""
+    primary_officer_id: int
+    merged_count: int
+    total_appearances: int
+
+
+class UnmergeResponse(BaseModel):
+    """Response after unmerging an officer."""
+    new_officer_id: int
+    appearances_moved: int
+    original_officer_id: int
+
+
+# ============================================
+# Officer Update/Verification Schemas
+# ============================================
+
+class OfficerUpdate(BaseModel):
+    """Update for a single officer appearance during verification."""
+    appearance_id: int
+    verified: bool = False
+    badge_override: Optional[str] = None
+    name_override: Optional[str] = None
+    force_override: Optional[str] = None
+    rank_override: Optional[str] = None
+    role_override: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class BatchOfficerUpdateRequest(BaseModel):
+    """Request to update multiple officers at once."""
+    updates: List[OfficerUpdate]
+
+
+class BatchOfficerUpdateResponse(BaseModel):
+    """Response after batch updating officers."""
+    updated: int
+
+
+# ============================================
+# Extended Officer Schemas with New Fields
+# ============================================
+
+class OfficerAppearanceDetailed(BaseModel):
+    """Detailed officer appearance with all detection and override fields."""
+    id: int
+    officer_id: int
+    media_id: int
+    timestamp_in_video: Optional[str] = None
+    frame_number: Optional[int] = None
+
+    # Crop paths
+    face_crop_path: Optional[str] = None
+    body_crop_path: Optional[str] = None
+    image_crop_path: Optional[str] = None
+
+    # Detection confidence
+    confidence: Optional[float] = None
+
+    # OCR results
+    ocr_badge_result: Optional[str] = None
+    ocr_badge_confidence: Optional[float] = None
+    ocr_name_result: Optional[str] = None
+    ocr_name_confidence: Optional[float] = None
+
+    # AI detection results
+    ai_force: Optional[str] = None
+    ai_force_confidence: Optional[float] = None
+    ai_rank: Optional[str] = None
+    ai_rank_confidence: Optional[float] = None
+    ai_name: Optional[str] = None
+    ai_name_confidence: Optional[float] = None
+
+    # Verification
+    verified: bool = False
+    verified_at: Optional[datetime] = None
+
+    # Manual overrides
+    badge_override: Optional[str] = None
+    name_override: Optional[str] = None
+    force_override: Optional[str] = None
+    rank_override: Optional[str] = None
+    role_override: Optional[str] = None
+    notes: Optional[str] = None
+
+    # Computed effective values
+    effective_badge: Optional[str] = None
+    effective_name: Optional[str] = None
+    effective_force: Optional[str] = None
+    effective_rank: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class OfficerDetailed(BaseModel):
+    """Detailed officer with all fields including merge status."""
+    id: int
+    badge_number: Optional[str] = None
+    force: Optional[str] = None
+    rank: Optional[str] = None
+    notes: Optional[str] = None
+
+    # Name fields
+    name: Optional[str] = None
+    ai_name: Optional[str] = None
+    ai_name_confidence: Optional[float] = None
+
+    # Manual overrides
+    name_override: Optional[str] = None
+    badge_override: Optional[str] = None
+    force_override: Optional[str] = None
+    rank_override: Optional[str] = None
+
+    # Best photo
+    primary_crop_path: Optional[str] = None
+
+    # Merge status
+    merged_into_id: Optional[int] = None
+    is_merged: bool = False
+    merge_confidence: Optional[float] = None
+
+    # Computed effective values
+    effective_name: Optional[str] = None
+    effective_badge: Optional[str] = None
+    effective_force: Optional[str] = None
+    effective_rank: Optional[str] = None
+
+    # Related data
+    appearances: List[OfficerAppearanceDetailed] = []
+    total_appearances: int = 0
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ============================================
+# Report Finalization Schemas
+# ============================================
+
+class FinalizeReportRequest(BaseModel):
+    """Request to finalize a report."""
+    title: Optional[str] = None
+    notes: Optional[str] = None
+    generate_pdf: bool = False
+
+
+class FinalizeReportResponse(BaseModel):
+    """Response after finalizing a report."""
+    report_id: int
+    report_uuid: str
+    pdf_url: Optional[str] = None
+
+
+class FinalizedReportSummary(BaseModel):
+    """Summary of a finalized report."""
+    id: int
+    report_uuid: str
+    media_id: int
+    title: Optional[str] = None
+    finalized_at: datetime
+    pdf_path: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
