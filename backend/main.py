@@ -3,7 +3,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from typing import List, Optional
 import models, schemas
 from database import get_db, engine
@@ -1044,6 +1044,7 @@ def delete_protest(request: Request, protest_id: int, db: Session = Depends(get_
 
 @app.post("/officers/merge")
 @limiter.limit(get_rate_limit("merge_operations"))
+@limiter.limit(get_rate_limit("merge_operations_hourly"))
 def merge_officers_legacy(
     request: Request,
     primary_id: int,
@@ -1119,6 +1120,7 @@ def merge_officers_legacy(
 
 @app.post("/media/{media_id}/officers/merge", response_model=schemas.MergeResponse)
 @limiter.limit(get_rate_limit("merge_operations"))
+@limiter.limit(get_rate_limit("merge_operations_hourly"))
 def merge_officers_for_media(
     request: Request,
     media_id: int,
@@ -1225,6 +1227,7 @@ def merge_officers_for_media(
 
 @app.post("/officers/{officer_id}/unmerge", response_model=schemas.UnmergeResponse)
 @limiter.limit(get_rate_limit("merge_operations"))
+@limiter.limit(get_rate_limit("merge_operations_hourly"))
 def unmerge_officer(
     request: Request,
     officer_id: int,
@@ -1311,7 +1314,6 @@ def get_merge_suggestions(
 
     # Get all appearances for this media with face embeddings
     # Use eager loading to prevent N+1 queries when accessing officer data
-    from sqlalchemy.orm import selectinload
     appearances = db.query(models.OfficerAppearance).filter(
         models.OfficerAppearance.media_id == media_id,
         models.OfficerAppearance.face_embedding.isnot(None)
@@ -1428,7 +1430,6 @@ def get_pending_officers(
     Used to display the review panel.
     """
     # Use eager loading to prevent N+1 queries - load officer with each appearance
-    from sqlalchemy.orm import selectinload
     appearances = db.query(models.OfficerAppearance).filter(
         models.OfficerAppearance.media_id == media_id,
         models.OfficerAppearance.verified == False

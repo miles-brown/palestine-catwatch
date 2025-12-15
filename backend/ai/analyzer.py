@@ -716,7 +716,14 @@ def filter_badge_number(texts):
                     continue
 
             # Reject UK postal code patterns (e.g., "SW1", "N12", "EC2")
+            # Note: This only runs in fallback - valid badges like "E12" or "AB12" are
+            # caught by UK_BADGE_PATTERNS first (which requires 2-5 digits: \d{2,5})
             if re.match(r'^[A-Z]{1,2}\d{1,2}$', clean) and len(clean) <= 4:
+                continue
+
+            # Reject short all-numeric strings (likely noise, not badges)
+            # Valid all-numeric badges have 4-6 digits per UK_BADGE_PATTERNS line 34
+            if alpha_count == 0 and digit_count < 4:
                 continue
 
             # Require minimum 3 digits for reasonable badge confidence
