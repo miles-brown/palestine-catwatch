@@ -8,6 +8,7 @@ from typing import List, Optional
 import models, schemas
 from database import get_db, engine
 from datetime import datetime, timezone
+from sqlalchemy import func
 import asyncio
 import os
 
@@ -1043,16 +1044,15 @@ def delete_protest(request: Request, protest_id: int, db: Session = Depends(get_
 
 @app.post("/officers/merge")
 @limiter.limit(get_rate_limit("default"))
-def merge_officers(
+def merge_officers_legacy(
     request: Request,
     primary_id: int,
     secondary_ids: List[int],
     db: Session = Depends(get_db)
 ):
     """
-    Merge multiple officers into one primary officer.
-    All appearances from secondary officers are transferred to the primary.
-    Secondary officers are deleted after merge.
+    LEGACY: Merge multiple officers into one primary officer.
+    Kept for backwards compatibility. Use POST /media/{media_id}/officers/merge for new workflow.
     """
     # Get primary officer
     primary = db.query(models.Officer).filter(models.Officer.id == primary_id).first()
@@ -1091,8 +1091,17 @@ def merge_officers(
             else:
                 primary.notes = f"[Merged from Officer #{sec_id}]: {secondary.notes}"
 
-        # Delete secondary officer
-        db.delete(secondary)
+        # Record merge in history table
+        merge_record = models.OfficerMerge(
+            primary_officer_id=primary_id,
+            merged_officer_id=sec_id,
+            auto_merged=False
+        )
+        db.add(merge_record)
+
+        # Soft delete secondary officer (mark as merged instead of hard delete)
+        secondary.merged_into_id = primary_id
+        secondary.merged_at = datetime.now(timezone.utc)
         merged_count += 1
 
     db.commit()
@@ -1102,6 +1111,362 @@ def merge_officers(
         "message": f"Merged {merged_count} officers into Officer #{primary_id}",
         "primary_id": primary_id
     }
+
+
+# ============================================
+# NEW MERGE/UNMERGE ENDPOINTS FOR REPORT WORKFLOW
+# ============================================
+
+@app.post("/media/{media_id}/officers/merge", response_model=schemas.MergeResponse)
+@limiter.limit(get_rate_limit("default"))
+def merge_officers_for_media(
+    request: Request,
+    media_id: int,
+    merge_request: schemas.MergeRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Merge multiple officers into one for a specific media item.
+    The first officer_id in the list becomes the primary.
+    Creates audit trail in OfficerMerge table for undo capability.
+    """
+    if len(merge_request.officer_ids) < 2:
+        raise HTTPException(400, "Need at least 2 officers to merge")
+
+    primary_id = merge_request.officer_ids[0]
+    to_merge_ids = merge_request.officer_ids[1:]
+
+    # Verify all officers exist and belong to this media
+    primary = db.query(models.Officer).filter(models.Officer.id == primary_id).first()
+    if not primary:
+        raise HTTPException(404, f"Primary officer {primary_id} not found")
+
+    merged_count = 0
+    for merge_id in to_merge_ids:
+        if merge_id == primary_id:
+            continue
+
+        officer = db.query(models.Officer).filter(models.Officer.id == merge_id).first()
+        if not officer:
+            logger.warning(f"Officer {merge_id} not found for merge, skipping")
+            continue
+
+        # Move all appearances to primary officer
+        db.query(models.OfficerAppearance).filter(
+            models.OfficerAppearance.officer_id == merge_id
+        ).update({"officer_id": primary_id})
+
+        # Merge data fields (primary takes precedence, fill gaps from secondary)
+        if not primary.badge_number and officer.badge_number:
+            primary.badge_number = officer.badge_number
+        if not primary.badge_override and officer.badge_override:
+            primary.badge_override = officer.badge_override
+        if not primary.name and officer.name:
+            primary.name = officer.name
+        if not primary.name_override and officer.name_override:
+            primary.name_override = officer.name_override
+        if not primary.force and officer.force:
+            primary.force = officer.force
+        if not primary.force_override and officer.force_override:
+            primary.force_override = officer.force_override
+        if not primary.rank and officer.rank:
+            primary.rank = officer.rank
+        if not primary.rank_override and officer.rank_override:
+            primary.rank_override = officer.rank_override
+
+        # Use best face embedding (from higher confidence detection)
+        if not primary.face_embedding and officer.face_embedding:
+            primary.face_embedding = officer.face_embedding
+
+        # Mark secondary as merged (soft delete)
+        officer.merged_into_id = primary_id
+        officer.merge_confidence = merge_request.confidence
+        officer.merged_at = datetime.now(timezone.utc)
+
+        # Record in merge history for audit trail
+        merge_record = models.OfficerMerge(
+            primary_officer_id=primary_id,
+            merged_officer_id=merge_id,
+            merge_confidence=merge_request.confidence,
+            auto_merged=merge_request.auto_merged
+        )
+        db.add(merge_record)
+        merged_count += 1
+
+    # Update primary officer's best crop if needed
+    if not primary.primary_crop_path:
+        best_appearance = db.query(models.OfficerAppearance).filter(
+            models.OfficerAppearance.officer_id == primary_id,
+            models.OfficerAppearance.face_crop_path.isnot(None)
+        ).order_by(models.OfficerAppearance.confidence.desc()).first()
+
+        if best_appearance:
+            primary.primary_crop_path = best_appearance.face_crop_path
+
+    db.commit()
+
+    total_appearances = db.query(models.OfficerAppearance).filter(
+        models.OfficerAppearance.officer_id == primary_id
+    ).count()
+
+    log_audit("officers_merged", {
+        "media_id": media_id,
+        "primary_officer_id": primary_id,
+        "merged_count": merged_count,
+        "auto_merged": merge_request.auto_merged
+    })
+
+    return schemas.MergeResponse(
+        primary_officer_id=primary_id,
+        merged_count=merged_count,
+        total_appearances=total_appearances
+    )
+
+
+@app.post("/officers/{officer_id}/unmerge", response_model=schemas.UnmergeResponse)
+@limiter.limit(get_rate_limit("default"))
+def unmerge_officer(
+    request: Request,
+    officer_id: int,
+    unmerge_request: schemas.UnmergeRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Unmerge specific appearances from an officer into a new separate officer.
+    Used to correct incorrect merges.
+    """
+    # Get appearances to split
+    appearances = db.query(models.OfficerAppearance).filter(
+        models.OfficerAppearance.id.in_(unmerge_request.appearance_ids),
+        models.OfficerAppearance.officer_id == officer_id
+    ).all()
+
+    if not appearances:
+        raise HTTPException(404, "No matching appearances found for this officer")
+
+    # Check that we're not removing ALL appearances
+    total_appearances = db.query(models.OfficerAppearance).filter(
+        models.OfficerAppearance.officer_id == officer_id
+    ).count()
+
+    if len(appearances) >= total_appearances:
+        raise HTTPException(400, "Cannot unmerge all appearances. At least one must remain.")
+
+    # Create new officer from split appearances
+    first_appearance = appearances[0]
+    new_officer = models.Officer(
+        badge_number=first_appearance.ocr_badge_result,
+        name=first_appearance.ocr_name_result or first_appearance.ai_name,
+        face_embedding=first_appearance.face_embedding,
+        primary_crop_path=first_appearance.face_crop_path or first_appearance.image_crop_path,
+        force=first_appearance.ai_force,
+        rank=first_appearance.ai_rank
+    )
+    db.add(new_officer)
+    db.flush()  # Get the new officer ID
+
+    # Move appearances to new officer
+    for app in appearances:
+        app.officer_id = new_officer.id
+
+    # Find and update merge history records
+    merge_records = db.query(models.OfficerMerge).filter(
+        models.OfficerMerge.primary_officer_id == officer_id,
+        models.OfficerMerge.unmerged == False
+    ).all()
+
+    for record in merge_records:
+        record.unmerged = True
+        record.unmerged_at = datetime.now(timezone.utc)
+
+    db.commit()
+
+    log_audit("officer_unmerged", {
+        "original_officer_id": officer_id,
+        "new_officer_id": new_officer.id,
+        "appearances_moved": len(appearances)
+    })
+
+    return schemas.UnmergeResponse(
+        new_officer_id=new_officer.id,
+        appearances_moved=len(appearances),
+        original_officer_id=officer_id
+    )
+
+
+@app.get("/media/{media_id}/merge-suggestions", response_model=schemas.MergeSuggestionsResponse)
+@limiter.limit(get_rate_limit("default"))
+def get_merge_suggestions(
+    request: Request,
+    media_id: int,
+    threshold: float = 0.85,
+    db: Session = Depends(get_db)
+):
+    """
+    Get suggested officer merges based on face embedding similarity.
+    Returns pairs of officers that appear to be the same person.
+    """
+    # Import the merge candidates function
+    from ai.analyzer import find_merge_candidates
+
+    # Get all appearances for this media with face embeddings
+    appearances = db.query(models.OfficerAppearance).filter(
+        models.OfficerAppearance.media_id == media_id,
+        models.OfficerAppearance.face_embedding.isnot(None)
+    ).all()
+
+    if len(appearances) < 2:
+        return schemas.MergeSuggestionsResponse(suggestions=[])
+
+    # Find merge candidates
+    suggestions = find_merge_candidates(appearances, threshold)
+
+    # Convert to schema format
+    suggestion_models = [
+        schemas.MergeSuggestion(
+            officer_a_id=s['officer_a_id'],
+            officer_b_id=s['officer_b_id'],
+            appearance_a_id=s['appearance_a_id'],
+            appearance_b_id=s['appearance_b_id'],
+            confidence=s['confidence'],
+            auto_merge=s['auto_merge'],
+            crop_a=get_web_url(s.get('crop_a')),
+            crop_b=get_web_url(s.get('crop_b'))
+        )
+        for s in suggestions
+    ]
+
+    return schemas.MergeSuggestionsResponse(suggestions=suggestion_models)
+
+
+@app.post("/media/{media_id}/officers/batch-update", response_model=schemas.BatchOfficerUpdateResponse)
+@limiter.limit(get_rate_limit("default"))
+def batch_update_officers(
+    request: Request,
+    media_id: int,
+    update_request: schemas.BatchOfficerUpdateRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Batch update multiple officer appearances with verification status and overrides.
+    Used during the officer review/editing flow before report finalization.
+    """
+    updated = 0
+
+    for update in update_request.updates:
+        appearance = db.query(models.OfficerAppearance).filter(
+            models.OfficerAppearance.id == update.appearance_id,
+            models.OfficerAppearance.media_id == media_id
+        ).first()
+
+        if not appearance:
+            logger.warning(f"Appearance {update.appearance_id} not found for media {media_id}")
+            continue
+
+        # Update verification status
+        appearance.verified = update.verified
+        if update.verified:
+            appearance.verified_at = datetime.now(timezone.utc)
+        else:
+            appearance.verified_at = None
+
+        # Apply overrides (only if provided)
+        if update.badge_override is not None:
+            appearance.badge_override = update.badge_override if update.badge_override else None
+        if update.name_override is not None:
+            appearance.name_override = update.name_override if update.name_override else None
+        if update.force_override is not None:
+            appearance.force_override = update.force_override if update.force_override else None
+        if update.rank_override is not None:
+            appearance.rank_override = update.rank_override if update.rank_override else None
+        if update.role_override is not None:
+            appearance.role_override = update.role_override if update.role_override else None
+        if update.notes is not None:
+            appearance.notes = update.notes if update.notes else None
+
+        # Also update the parent Officer record with overrides
+        officer = db.query(models.Officer).filter(
+            models.Officer.id == appearance.officer_id
+        ).first()
+
+        if officer:
+            # Copy overrides to officer (most recent takes precedence)
+            if update.badge_override:
+                officer.badge_override = update.badge_override
+            if update.name_override:
+                officer.name_override = update.name_override
+            if update.force_override:
+                officer.force_override = update.force_override
+            if update.rank_override:
+                officer.rank_override = update.rank_override
+
+        updated += 1
+
+    db.commit()
+
+    log_audit("officers_batch_updated", {
+        "media_id": media_id,
+        "updated_count": updated
+    })
+
+    return schemas.BatchOfficerUpdateResponse(updated=updated)
+
+
+@app.get("/media/{media_id}/officers/pending")
+@limiter.limit(get_rate_limit("default"))
+def get_pending_officers(
+    request: Request,
+    media_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Get all unverified officer appearances for a media item.
+    Used to display the review panel.
+    """
+    appearances = db.query(models.OfficerAppearance).filter(
+        models.OfficerAppearance.media_id == media_id,
+        models.OfficerAppearance.verified == False
+    ).all()
+
+    result = []
+    for app in appearances:
+        officer = db.query(models.Officer).filter(
+            models.Officer.id == app.officer_id
+        ).first()
+
+        result.append({
+            "appearance_id": app.id,
+            "officer_id": app.officer_id,
+            "timestamp": app.timestamp_in_video,
+            "confidence": app.confidence,
+            "face_crop_path": get_web_url(app.face_crop_path),
+            "body_crop_path": get_web_url(app.body_crop_path),
+            "image_crop_path": get_web_url(app.image_crop_path),
+            # OCR results
+            "ocr_badge_result": app.ocr_badge_result,
+            "ocr_badge_confidence": app.ocr_badge_confidence,
+            "ocr_name_result": app.ocr_name_result,
+            "ocr_name_confidence": app.ocr_name_confidence,
+            # AI detection results
+            "ai_force": app.ai_force,
+            "ai_force_confidence": app.ai_force_confidence,
+            "ai_rank": app.ai_rank,
+            "ai_rank_confidence": app.ai_rank_confidence,
+            "ai_name": app.ai_name,
+            "ai_name_confidence": app.ai_name_confidence,
+            # Current overrides
+            "badge_override": app.badge_override,
+            "name_override": app.name_override,
+            "force_override": app.force_override,
+            "rank_override": app.rank_override,
+            # Officer-level data
+            "officer_badge": officer.badge_number if officer else None,
+            "officer_name": officer.name if officer else None,
+            "officer_force": officer.force if officer else None,
+            "is_merged": officer.is_merged if officer else False,
+        })
+
+    return {"media_id": media_id, "pending_count": len(result), "officers": result}
 
 @app.patch("/officers/{officer_id}")
 @limiter.limit(get_rate_limit("default"))

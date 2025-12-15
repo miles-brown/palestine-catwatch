@@ -1,5 +1,5 @@
-from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, Boolean, Float
-from sqlalchemy.orm import relationship
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, Boolean, Float, LargeBinary
+from sqlalchemy.orm import relationship, backref
 from datetime import datetime, timezone
 from database import Base
 
@@ -114,9 +114,9 @@ class Officer(Base):
     __tablename__ = "officers"
 
     id = Column(Integer, primary_key=True, index=True)
-    badge_number = Column(String, index=True, nullable=True) # OCR findings
-    force = Column(String, nullable=True) # e.g. Met Police
-    visual_id = Column(String, index=False, nullable=True) # Face encoding hash - DO NOT INDEX (Too large for B-Tree)
+    badge_number = Column(String, index=True, nullable=True)  # OCR findings
+    force = Column(String, nullable=True)  # e.g. Met Police
+    visual_id = Column(String, index=False, nullable=True)  # Face encoding hash - DO NOT INDEX (Too large for B-Tree)
     notes = Column(Text, nullable=True)
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
@@ -125,37 +125,153 @@ class Officer(Base):
     supervisor_id = Column(Integer, ForeignKey("officers.id"), nullable=True)
     rank = Column(String, nullable=True)  # Constable, Sergeant, Inspector, Chief Inspector, etc.
 
+    # Officer name (from uniform label, e.g., "PC WILLIAMS")
+    name = Column(String, nullable=True, index=True)  # Final name (override or AI)
+    ai_name = Column(String, nullable=True)  # AI-detected name from uniform label
+    ai_name_confidence = Column(Float, nullable=True)  # Confidence 0-1
+
+    # Manual overrides (user corrections take precedence over AI)
+    name_override = Column(String, nullable=True)  # Manual name correction
+    badge_override = Column(String, nullable=True)  # Manual badge correction
+    force_override = Column(String, nullable=True)  # Manual force correction
+    rank_override = Column(String, nullable=True)  # Manual rank correction
+
+    # Face embedding for re-identification and merge detection
+    face_embedding = Column(LargeBinary, nullable=True)  # numpy array as bytes
+
+    # Best photo for display
+    primary_crop_path = Column(String, nullable=True)
+
+    # Merge tracking - officers can be merged if they're the same person
+    merged_into_id = Column(Integer, ForeignKey("officers.id"), nullable=True)
+    merge_confidence = Column(Float, nullable=True)  # Confidence that merge is correct
+    merged_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
     appearances = relationship("OfficerAppearance", back_populates="officer")
 
     # Self-referential relationships for chain of command
     supervisor = relationship("Officer", remote_side=[id], backref="subordinates", foreign_keys=[supervisor_id])
 
+    # Self-referential relationship for merges
+    merged_into = relationship("Officer", remote_side=[id], backref="merged_from", foreign_keys=[merged_into_id])
+
+    @property
+    def effective_name(self):
+        """Get the effective name (override takes precedence over AI)."""
+        return self.name_override or self.ai_name or self.name
+
+    @property
+    def effective_badge(self):
+        """Get the effective badge number (override takes precedence)."""
+        return self.badge_override or self.badge_number
+
+    @property
+    def effective_force(self):
+        """Get the effective force (override takes precedence)."""
+        return self.force_override or self.force
+
+    @property
+    def effective_rank(self):
+        """Get the effective rank (override takes precedence)."""
+        return self.rank_override or self.rank
+
+    @property
+    def is_merged(self):
+        """Check if this officer has been merged into another."""
+        return self.merged_into_id is not None
+
 class OfficerAppearance(Base):
     __tablename__ = "officer_appearances"
 
     id = Column(Integer, primary_key=True, index=True)
-    officer_id = Column(Integer, ForeignKey("officers.id"))
-    media_id = Column(Integer, ForeignKey("media.id"))
+    officer_id = Column(Integer, ForeignKey("officers.id"), index=True)
+    media_id = Column(Integer, ForeignKey("media.id"), index=True)
 
     timestamp_in_video = Column(String, nullable=True)  # e.g. "00:12:34"
+    frame_number = Column(Integer, nullable=True)  # Frame number in video
 
     # Dual crop paths for officer documentation
     face_crop_path = Column(String, nullable=True)  # Close-up face crop for Officer Card
     body_crop_path = Column(String, nullable=True)  # Full body crop (head to toe) for evidence
     image_crop_path = Column(String, nullable=True)  # Legacy: kept for backwards compatibility
 
+    # Face embedding for this specific appearance (for merge suggestions)
+    face_embedding = Column(LargeBinary, nullable=True)  # numpy array as bytes
+
     role = Column(String, nullable=True)  # e.g. "Medic", "Commander"
     action = Column(Text, nullable=True)  # AI described action: "Kettling", "Arresting"
 
     # Confidence calibration fields
-    confidence = Column(Float, nullable=True, default=None)  # 0-100 confidence score
+    confidence = Column(Float, nullable=True, default=None)  # 0-1 confidence score
     confidence_factors = Column(Text, nullable=True)  # JSON string with breakdown: face_quality, ocr_quality, etc.
+
+    # OCR results - badge number
+    ocr_badge_result = Column(String, nullable=True)  # OCR-detected badge/shoulder number
+    ocr_badge_confidence = Column(Float, nullable=True)  # OCR confidence 0-1
+
+    # OCR results - officer name (from uniform label)
+    ocr_name_result = Column(String, nullable=True)  # OCR-detected name (e.g., "PC WILLIAMS")
+    ocr_name_confidence = Column(Float, nullable=True)  # OCR confidence 0-1
+
+    # AI detection results (from Claude Vision or other AI)
+    ai_force = Column(String, nullable=True)  # AI-detected police force
+    ai_force_confidence = Column(Float, nullable=True)
+    ai_rank = Column(String, nullable=True)  # AI-detected rank
+    ai_rank_confidence = Column(Float, nullable=True)
+    ai_name = Column(String, nullable=True)  # AI-detected name from uniform label
+    ai_name_confidence = Column(Float, nullable=True)
+
+    # Verification status
     verified = Column(Boolean, default=False)  # Manual verification flag
+    verified_at = Column(DateTime(timezone=True), nullable=True)  # When verified
+    verified_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # Who verified
+
+    # Manual overrides (user corrections take precedence over AI/OCR)
+    badge_override = Column(String, nullable=True)  # Manual badge correction
+    name_override = Column(String, nullable=True)  # Manual name correction
+    force_override = Column(String, nullable=True)  # Manual force correction
+    rank_override = Column(String, nullable=True)  # Manual rank correction
+    role_override = Column(String, nullable=True)  # Manual role/unit correction (e.g., "PSU, Evidence Gatherer")
+    notes = Column(Text, nullable=True)  # Observer notes about this appearance
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
     officer = relationship("Officer", back_populates="appearances")
     media = relationship("Media", back_populates="appearances")
     equipment_detections = relationship("EquipmentDetection", back_populates="appearance", cascade="all, delete-orphan")
     uniform_analysis = relationship("UniformAnalysis", back_populates="appearance", uselist=False, cascade="all, delete-orphan")
+    verified_by_user = relationship("User", foreign_keys=[verified_by])
+
+    @property
+    def effective_badge(self):
+        """Get the effective badge (override > OCR > AI)."""
+        return self.badge_override or self.ocr_badge_result
+
+    @property
+    def effective_name(self):
+        """Get the effective name (override > OCR > AI)."""
+        return self.name_override or self.ocr_name_result or self.ai_name
+
+    @property
+    def effective_force(self):
+        """Get the effective force (override > AI)."""
+        return self.force_override or self.ai_force
+
+    @property
+    def effective_rank(self):
+        """Get the effective rank (override > AI)."""
+        return self.rank_override or self.ai_rank
+
+    @property
+    def effective_role(self):
+        """Get the effective role (override > detected)."""
+        return self.role_override or self.role
 
 
 class Equipment(Base):
@@ -219,3 +335,69 @@ class UniformAnalysis(Base):
     image_hash = Column(String, nullable=True, index=True)  # SHA256 for caching
 
     appearance = relationship("OfficerAppearance", back_populates="uniform_analysis")
+
+
+class OfficerMerge(Base):
+    """
+    Tracks merge history for officers.
+    Used for audit trail and to enable unmerge functionality.
+    """
+    __tablename__ = "officer_merges"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # The officer that remains after merge (primary)
+    primary_officer_id = Column(Integer, ForeignKey("officers.id"), index=True)
+
+    # The officer that was merged into the primary (may be soft-deleted)
+    merged_officer_id = Column(Integer, ForeignKey("officers.id"), index=True)
+
+    # Merge metadata
+    merge_confidence = Column(Float, nullable=True)  # Embedding similarity score
+    auto_merged = Column(Boolean, default=False)  # True if system auto-merged (>95% confidence)
+    merged_at = Column(DateTime(timezone=True), default=utc_now)
+    merged_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # User who approved merge
+
+    # For unmerge capability
+    unmerged = Column(Boolean, default=False)  # True if this merge was reversed
+    unmerged_at = Column(DateTime(timezone=True), nullable=True)
+    unmerged_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    # Relationships
+    primary_officer = relationship("Officer", foreign_keys=[primary_officer_id])
+    merged_officer = relationship("Officer", foreign_keys=[merged_officer_id])
+    merged_by_user = relationship("User", foreign_keys=[merged_by])
+    unmerged_by_user = relationship("User", foreign_keys=[unmerged_by])
+
+
+class FinalizedReport(Base):
+    """
+    Stores finalized reports - immutable snapshots created after user verification.
+    Once finalized, the report data is frozen and cannot be changed.
+    """
+    __tablename__ = "finalized_reports"
+
+    id = Column(Integer, primary_key=True, index=True)
+    report_uuid = Column(String, unique=True, index=True)  # Public identifier (e.g., "RPT-2024-1214-001")
+    media_id = Column(Integer, ForeignKey("media.id"), index=True)
+
+    # Snapshot of data at finalization time (JSON)
+    officers_data = Column(Text, nullable=True)  # JSON: Frozen copy of all verified officers
+    stats_data = Column(Text, nullable=True)  # JSON: Frozen statistics
+    timeline_data = Column(Text, nullable=True)  # JSON: Frozen timeline
+
+    # Report metadata
+    title = Column(String, nullable=True)  # Custom report title
+    notes = Column(Text, nullable=True)  # User notes about the report
+
+    # Finalization info
+    finalized_at = Column(DateTime(timezone=True), default=utc_now)
+    finalized_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    # Export tracking
+    pdf_path = Column(String, nullable=True)  # Path to generated PDF
+    pdf_generated_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    media = relationship("Media")
+    finalized_by_user = relationship("User", foreign_keys=[finalized_by])
