@@ -1043,7 +1043,7 @@ def delete_protest(request: Request, protest_id: int, db: Session = Depends(get_
     return {"message": "Protest deleted successfully"}
 
 @app.post("/officers/merge")
-@limiter.limit(get_rate_limit("default"))
+@limiter.limit(get_rate_limit("merge_operations"))
 def merge_officers_legacy(
     request: Request,
     primary_id: int,
@@ -1118,7 +1118,7 @@ def merge_officers_legacy(
 # ============================================
 
 @app.post("/media/{media_id}/officers/merge", response_model=schemas.MergeResponse)
-@limiter.limit(get_rate_limit("default"))
+@limiter.limit(get_rate_limit("merge_operations"))
 def merge_officers_for_media(
     request: Request,
     media_id: int,
@@ -1224,7 +1224,7 @@ def merge_officers_for_media(
 
 
 @app.post("/officers/{officer_id}/unmerge", response_model=schemas.UnmergeResponse)
-@limiter.limit(get_rate_limit("default"))
+@limiter.limit(get_rate_limit("merge_operations"))
 def unmerge_officer(
     request: Request,
     officer_id: int,
@@ -1310,9 +1310,13 @@ def get_merge_suggestions(
     from ai.analyzer import find_merge_candidates
 
     # Get all appearances for this media with face embeddings
+    # Use eager loading to prevent N+1 queries when accessing officer data
+    from sqlalchemy.orm import selectinload
     appearances = db.query(models.OfficerAppearance).filter(
         models.OfficerAppearance.media_id == media_id,
         models.OfficerAppearance.face_embedding.isnot(None)
+    ).options(
+        selectinload(models.OfficerAppearance.officer)
     ).all()
 
     if len(appearances) < 2:
@@ -1423,16 +1427,19 @@ def get_pending_officers(
     Get all unverified officer appearances for a media item.
     Used to display the review panel.
     """
+    # Use eager loading to prevent N+1 queries - load officer with each appearance
+    from sqlalchemy.orm import selectinload
     appearances = db.query(models.OfficerAppearance).filter(
         models.OfficerAppearance.media_id == media_id,
         models.OfficerAppearance.verified == False
+    ).options(
+        selectinload(models.OfficerAppearance.officer)
     ).all()
 
     result = []
     for app in appearances:
-        officer = db.query(models.Officer).filter(
-            models.Officer.id == app.officer_id
-        ).first()
+        # Officer is already loaded via eager loading
+        officer = app.officer
 
         result.append({
             "appearance_id": app.id,
@@ -1459,7 +1466,7 @@ def get_pending_officers(
             "name_override": app.name_override,
             "force_override": app.force_override,
             "rank_override": app.rank_override,
-            # Officer-level data
+            # Officer-level data (note: face_embedding intentionally excluded to avoid large payloads)
             "officer_badge": officer.badge_number if officer else None,
             "officer_name": officer.name if officer else None,
             "officer_force": officer.force if officer else None,
