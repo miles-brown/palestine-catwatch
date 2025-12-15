@@ -1015,6 +1015,7 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
 
                     # Emit event for UI
                     if status_callback:
+                        print(f"[DEBUG] Emitting scraped_image: url={web_url}, filename={filename}")
                         status_callback("scraped_image", {
                             "url": web_url,
                             "filename": filename
@@ -1048,7 +1049,9 @@ def scrape_images_from_url(url, protest_id=None, status_callback=None):
                     # Trigger analysis immediately for each image
                     if status_callback:
                         status_callback("status_update", "Analyzing")
+                    print(f"[DEBUG] Calling process_media for media_id={new_media.id}")
                     process_media(new_media.id, status_callback)
+                    print(f"[DEBUG] process_media completed for media_id={new_media.id}")
 
                     # Limit to 15 images max
                     if saved_count >= MAX_IMAGES_PER_SCRAPE:

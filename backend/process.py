@@ -648,6 +648,7 @@ def analyze_frames(media_id, media_frames_dir, status_callback=None):
             frame_rel_path = os.path.relpath(frame_path, start=os.getcwd())
             frame_url = f"/{frame_rel_path}"
 
+            print(f"[DEBUG] Emitting analyzing_frame: {frame_url}")
             status_callback("analyzing_frame", {
                 "url": frame_url,
                 "timestamp": timestamp_str,
@@ -709,9 +710,11 @@ def analyze_frames(media_id, media_frames_dir, status_callback=None):
             if status_callback:
                 # Use face crop for display, fall back to body or primary
                 display_crop = face_crop or body_crop or primary_crop
+                print(f"[DEBUG] display_crop={display_crop}, face={face_crop}, body={body_crop}, primary={primary_crop}")
                 if display_crop:
                     # Use get_file_url to return R2 URLs when R2 is enabled
                     image_url = get_file_url(normalize_for_storage(display_crop))
+                    print(f"[DEBUG] Emitting candidate_officer: image_url={image_url}")
                     status_callback("candidate_officer", {
                         "image_url": image_url,
                         "face_url": get_file_url(normalize_for_storage(face_crop)) if face_crop else None,
