@@ -172,26 +172,26 @@ const NetworkModal = ({ officerId, onClose }) => {
 
 const DashboardPage = () => {
   const [stats, setStats] = useState(null);
-  const [repeatOfficers, setRepeatOfficers] = useState([]);
+  const [officers, setOfficers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [networkOfficerId, setNetworkOfficerId] = useState(null);
-  const [minAppearances, setMinAppearances] = useState(2);
+  const [minAppearances, setMinAppearances] = useState(1);
   const [minEvents, setMinEvents] = useState(1);
 
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
       try {
-        const [statsRes, repeatRes] = await Promise.all([
+        const [statsRes, officersRes] = await Promise.all([
           fetch(`${API_BASE}/stats/overview`),
           fetch(`${API_BASE}/officers/repeat?min_appearances=${minAppearances}&min_events=${minEvents}`)
         ]);
 
         const statsData = await statsRes.json();
-        const repeatData = await repeatRes.json();
+        const officersData = await officersRes.json();
 
         setStats(statsData);
-        setRepeatOfficers(repeatData.officers || []);
+        setOfficers(officersData.officers || []);
       } catch (error) {
         console.error("Failed to fetch dashboard data:", error);
       } finally {
@@ -311,16 +311,16 @@ const DashboardPage = () => {
               />
             </div>
 
-            {/* Repeat Officers Section */}
+            {/* Officers Section */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200">
               <div className="p-6 border-b border-gray-200">
                 <div className="flex items-center justify-between flex-wrap gap-4">
                   <div>
                     <h2 className="text-xl font-semibold text-gray-900">
-                      Repeat Officers
+                      Officers Database
                     </h2>
                     <p className="text-sm text-gray-500 mt-1">
-                      Officers seen at multiple demonstrations
+                      All documented officers across events
                     </p>
                   </div>
 
@@ -333,6 +333,7 @@ const DashboardPage = () => {
                         onChange={(e) => setMinAppearances(Number(e.target.value))}
                         className="border border-gray-300 rounded px-2 py-1 text-sm"
                       >
+                        <option value={1}>All</option>
                         <option value={2}>2+</option>
                         <option value={3}>3+</option>
                         <option value={5}>5+</option>
@@ -356,7 +357,7 @@ const DashboardPage = () => {
                 </div>
               </div>
 
-              {repeatOfficers.length > 0 ? (
+              {officers.length > 0 ? (
                 <div className="overflow-x-auto">
                   <table className="w-full">
                     <thead className="bg-gray-50">
@@ -376,7 +377,7 @@ const DashboardPage = () => {
                       </tr>
                     </thead>
                     <tbody>
-                      {repeatOfficers.map((officer) => (
+                      {officers.map((officer) => (
                         <OfficerRow
                           key={officer.id}
                           officer={officer}
@@ -389,9 +390,12 @@ const DashboardPage = () => {
               ) : (
                 <div className="p-12 text-center text-gray-500">
                   <Users className="h-12 w-12 mx-auto mb-3 opacity-50" />
-                  <p className="text-lg font-medium">No repeat officers found</p>
+                  <p className="text-lg font-medium">No officers found</p>
                   <p className="text-sm mt-1">
-                    Adjust filters or process more media to identify patterns
+                    {minAppearances > 1 || minEvents > 1
+                      ? "Adjust filters or process more media to find matches"
+                      : "Process media to start documenting officers"
+                    }
                   </p>
                 </div>
               )}
