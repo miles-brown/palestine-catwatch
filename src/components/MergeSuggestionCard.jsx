@@ -2,6 +2,21 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Check, X, GitMerge, Zap, User } from 'lucide-react';
 
+// API base URL
+let API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+if (!API_BASE.startsWith("http")) {
+    API_BASE = `https://${API_BASE}`;
+}
+
+// Helper to handle both absolute R2 URLs and relative API paths
+const getImageUrl = (url) => {
+    if (!url) return '';
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+        return url;
+    }
+    return `${API_BASE}${url.startsWith('/') ? '' : '/'}${url}`;
+};
+
 /**
  * MergeSuggestionCard - Shows a suggested merge between two officers
  *
@@ -27,11 +42,15 @@ export default function MergeSuggestionCard({
     const confidence = suggestion.confidence || 0;
     const isAutoMerge = suggestion.auto_merge || confidence >= 0.95;
 
-    // Get crop URL with fallbacks
+    // Get crop URL with fallbacks and proper URL handling
     const getCropUrl = (officer, suggestionCrop) => {
-        if (suggestionCrop) return suggestionCrop;
-        if (!officer) return null;
-        return officer.face_crop_path || officer.body_crop_path || officer.image_crop_path;
+        let path = null;
+        if (suggestionCrop) {
+            path = suggestionCrop;
+        } else if (officer) {
+            path = officer.face_crop_path || officer.body_crop_path || officer.image_crop_path;
+        }
+        return path ? getImageUrl(path) : null;
     };
 
     const cropA = getCropUrl(officerA, suggestion.crop_a);

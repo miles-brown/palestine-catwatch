@@ -16,6 +16,15 @@ if (!API_BASE.startsWith("http")) {
     API_BASE = `${isLocal ? "http" : "https"}://${API_BASE}`;
 }
 
+// Helper to handle both absolute R2 URLs and relative API paths
+const getImageUrl = (url) => {
+    if (!url) return '';
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+        return url;
+    }
+    return `${API_BASE}${url.startsWith('/') ? '' : '/'}${url}`;
+};
+
 // Helper to format error messages consistently
 const formatErrorMessage = (error) => {
     return typeof error === 'object' ? JSON.stringify(error) : String(error);
@@ -450,7 +459,7 @@ const UploadPage = () => {
                                     <div className="aspect-square bg-slate-700">
                                         {(officer.face_crop_path || officer.body_crop_path) ? (
                                             <img
-                                                src={officer.face_crop_path || officer.body_crop_path}
+                                                src={getImageUrl(officer.face_crop_path || officer.body_crop_path)}
                                                 alt={`Officer ${idx + 1}`}
                                                 className="w-full h-full object-cover"
                                             />
