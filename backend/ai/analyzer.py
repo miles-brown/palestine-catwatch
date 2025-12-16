@@ -267,8 +267,10 @@ MIN_FACE_CROP_SIZE = 100  # Minimum face crop dimension
 MIN_BODY_CROP_SIZE = 150  # Minimum body crop dimension
 
 # Detection thresholds from environment variables
-FACE_CONFIDENCE_THRESHOLD = float(os.environ.get('FACE_DETECTION_CONFIDENCE', '0.6'))
-PERSON_CONFIDENCE_THRESHOLD = float(os.environ.get('PERSON_DETECTION_CONFIDENCE', '0.4'))
+# Face detection: High threshold (0.9) ensures only clear, high-quality face detections are processed
+# Person detection: Lower threshold (0.5) to catch people, then filter on face confidence
+FACE_CONFIDENCE_THRESHOLD = float(os.environ.get('FACE_DETECTION_CONFIDENCE', '0.9'))
+PERSON_CONFIDENCE_THRESHOLD = float(os.environ.get('PERSON_DETECTION_CONFIDENCE', '0.5'))
 
 
 def generate_face_crop(img, face_box, output_path, expand_ratio=0.3):
@@ -1078,6 +1080,61 @@ def calculate_blur(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     return cv2.Laplacian(gray, cv2.CV_64F).var()
 
+
+# Quality thresholds for reliable officer detection
+MIN_BLUR_SCORE = float(os.environ.get('MIN_BLUR_SCORE', '100'))  # Minimum sharpness (Laplacian variance)
+MIN_FACE_SIZE = int(os.environ.get('MIN_FACE_SIZE', '60'))  # Minimum face dimension in pixels
+REQUIRE_FRONTAL_FACE = os.environ.get('REQUIRE_FRONTAL_FACE', 'true').lower() == 'true'
+
+
+def is_face_frontal_or_profile(face_img):
+    """
+    Check if face is frontal or profile (not back-of-head).
+    Uses eye detection - if at least one eye is visible, face is usable.
+
+    Returns:
+        Tuple of (is_valid, pose_type, confidence)
+        - is_valid: True if face is frontal or profile
+        - pose_type: 'frontal', 'profile', or 'back'
+        - confidence: 0-1 confidence in the pose detection
+    """
+    if face_img is None or face_img.size == 0:
+        return False, 'unknown', 0.0
+
+    gray = cv2.cvtColor(face_img, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape[:2]
+
+    # Use OpenCV's pre-trained eye cascade classifiers
+    eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
+    profile_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_profileface.xml')
+
+    # Detect eyes - indicates frontal face
+    eyes = eye_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=3, minSize=(int(w*0.1), int(h*0.1)))
+
+    if len(eyes) >= 2:
+        # Two eyes visible = clear frontal view
+        return True, 'frontal', 0.95
+    elif len(eyes) == 1:
+        # One eye visible = could be frontal or profile
+        return True, 'profile', 0.75
+
+    # No eyes detected - check if it's a profile face
+    # Profile faces won't have visible eyes but have distinctive shape
+    profiles = profile_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=3)
+
+    if len(profiles) > 0:
+        return True, 'profile', 0.70
+
+    # Check aspect ratio - very narrow faces might be extreme profiles
+    aspect_ratio = w / h if h > 0 else 0
+    if 0.6 <= aspect_ratio <= 1.4:
+        # Face proportions are reasonable, might just be poor lighting
+        # Give it a lower confidence pass
+        return True, 'uncertain', 0.50
+
+    # Likely back of head or non-face
+    return False, 'back', 0.0
+
 def process_image_ai(image_path, output_dir):
     """
     Runs full analysis pipeline on an image.
@@ -1123,7 +1180,26 @@ def process_image_ai(image_path, output_dir):
         if w <= 0 or h <= 0:
             continue
 
+        # === QUALITY FILTER 1: Minimum face size ===
+        if w < MIN_FACE_SIZE or h < MIN_FACE_SIZE:
+            logger.info(f"Skipping detection {i} - face too small ({w}x{h} < {MIN_FACE_SIZE})")
+            continue
+
         face_box = [x, y, w, h]
+        face_img = img[y:y+h, x:x+w]
+
+        # === QUALITY FILTER 2: Blur detection ===
+        blur_score = calculate_blur(face_img)
+        is_blurry = blur_score < MIN_BLUR_SCORE
+        if is_blurry:
+            logger.info(f"Skipping detection {i} - image too blurry (score={blur_score:.1f} < {MIN_BLUR_SCORE})")
+            continue
+
+        # === QUALITY FILTER 3: Face pose (frontal/profile only) ===
+        pose_valid, pose_type, pose_confidence = is_face_frontal_or_profile(face_img)
+        if REQUIRE_FRONTAL_FACE and not pose_valid:
+            logger.info(f"Skipping detection {i} - face not visible (pose={pose_type})")
+            continue
 
         # Find matching person detection for body crop
         person_box = find_person_for_face(face_box, person_detections)
@@ -1136,11 +1212,6 @@ def process_image_ai(image_path, output_dir):
         if not crop_paths['face_crop_path'] and not crop_paths['body_crop_path']:
             logger.warning(f"Skipping detection {i} - no valid crops generated")
             continue
-
-        # Quality assessment
-        face_img = img[y:y+h, x:x+w]
-        blur_score = calculate_blur(face_img)
-        is_blurry = blur_score < 100
 
         # Badge/Shoulder Number OCR
         badge_text = extract_badge_number(img, face_box)
@@ -1159,7 +1230,9 @@ def process_image_ai(image_path, output_dir):
             "encoding": None,
             "quality": {
                 "blur_score": float(blur_score),
-                "is_blurry": is_blurry,
+                "is_blurry": False,  # We already filtered blurry images
+                "pose_type": pose_type,
+                "pose_confidence": pose_confidence,
                 "resolution": f"{w}x{h}",
                 "face_visible": True
             }

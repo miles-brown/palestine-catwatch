@@ -63,6 +63,7 @@ print(f"Face matching mode: {MATCH_MODE} (euclidean<{FACE_MATCH_THRESHOLD_EUCLID
 # Frame extraction settings
 DEFAULT_FRAME_INTERVAL_SECONDS = 1
 DEFAULT_VIDEO_FPS = 30
+FRAME_JPEG_QUALITY = 95  # High quality for AI analysis (0-100, higher = better)
 
 # Processing limits
 MAX_FRAMES_PER_VIDEO = 500
@@ -512,7 +513,7 @@ def _extract_frames_from_url(media_url: str, media_frames_dir: str, interval_sec
 
             if count % frame_interval == 0:
                 frame_path = os.path.join(media_frames_dir, f"frame_{frame_count:04d}.jpg")
-                cv2.imwrite(frame_path, frame)
+                cv2.imwrite(frame_path, frame, [cv2.IMWRITE_JPEG_QUALITY, FRAME_JPEG_QUALITY])
                 print(f"Saved {frame_path}")
                 frame_count += 1
 
@@ -561,7 +562,7 @@ def extract_frames(media_item, media_frames_dir, interval_seconds=None):
 
             if count % frame_interval == 0:
                 frame_path = os.path.join(media_frames_dir, f"frame_{frame_count:04d}.jpg")
-                cv2.imwrite(frame_path, frame)
+                cv2.imwrite(frame_path, frame, [cv2.IMWRITE_JPEG_QUALITY, FRAME_JPEG_QUALITY])
                 print(f"Saved {frame_path}")
                 frame_count += 1
 
