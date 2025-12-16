@@ -267,8 +267,10 @@ MIN_FACE_CROP_SIZE = 100  # Minimum face crop dimension
 MIN_BODY_CROP_SIZE = 150  # Minimum body crop dimension
 
 # Detection thresholds from environment variables
-FACE_CONFIDENCE_THRESHOLD = float(os.environ.get('FACE_DETECTION_CONFIDENCE', '0.6'))
-PERSON_CONFIDENCE_THRESHOLD = float(os.environ.get('PERSON_DETECTION_CONFIDENCE', '0.4'))
+# Face detection: High threshold (0.9) ensures only clear, high-quality face detections are processed
+# Person detection: Lower threshold (0.5) to catch people, then filter on face confidence
+FACE_CONFIDENCE_THRESHOLD = float(os.environ.get('FACE_DETECTION_CONFIDENCE', '0.9'))
+PERSON_CONFIDENCE_THRESHOLD = float(os.environ.get('PERSON_DETECTION_CONFIDENCE', '0.5'))
 
 
 def generate_face_crop(img, face_box, output_path, expand_ratio=0.3):
