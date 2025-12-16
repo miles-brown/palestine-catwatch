@@ -708,16 +708,22 @@ def filter_badge_number(texts):
             # Reject if letters appear AFTER digits (e.g., "12AB", "AB12CD")
             # UK badges have letters at START only: U1234, not 1234U or AB12CD
             if alpha_count > 0:
-                # Find position of last letter and first digit
+                # Compare position of last letter vs first digit:
+                # - "AB123": last_letter=1, first_digit=2 → 1 > 2 = False (OK - letters before digits)
+                # - "12AB":  last_letter=3, first_digit=0 → 3 > 0 = True (REJECT - letters after digits)
+                # - "AB12CD": last_letter=5, first_digit=2 → 5 > 2 = True (REJECT - letters after digits)
+                # Note: alpha_count > 0 check above prevents ValueError from max() on empty sequence
                 last_letter_pos = max(i for i, c in enumerate(clean) if c.isalpha())
                 first_digit_pos = next((i for i, c in enumerate(clean) if c.isdigit()), len(clean))
-                # Reject if any letter appears after any digit
                 if last_letter_pos > first_digit_pos:
                     continue
 
-            # Reject UK postal code patterns (e.g., "SW1", "N12", "EC2")
-            # Note: This only runs in fallback - valid badges like "E12" or "AB12" are
-            # caught by UK_BADGE_PATTERNS first (which requires 2-5 digits: \d{2,5})
+            # Reject UK postal code patterns (e.g., "SW1", "N12", "EC2", "E1")
+            # This intentionally rejects very short patterns like "E1" or "N2" which are
+            # ambiguous - they could be postal codes or truncated badges. Real UK badges
+            # with letter prefixes have 2+ digits (UK_BADGE_PATTERNS requires \d{2,5}).
+            # Patterns like "E12" or "AB12" are caught by UK_BADGE_PATTERNS BEFORE this
+            # fallback runs, so only truly ambiguous short strings reach here.
             if re.match(r'^[A-Z]{1,2}\d{1,2}$', clean) and len(clean) <= 4:
                 continue
 
