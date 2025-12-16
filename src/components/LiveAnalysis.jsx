@@ -405,8 +405,15 @@ export default function LiveAnalysis({ taskId, onComplete }) {
         });
 
         socket.on('candidate_officer', (data) => {
-            addLog('AI', `Candidate detected with ${(data.confidence * 100).toFixed(1)}% confidence.`);
-            setCandidates(prev => [...prev, { ...data, id: Date.now(), reviewed: false }]);
+            addLog('AI', `Candidate detected with ${(data.confidence * 100).toFixed(1)}% confidence (ID: ${data.appearance_id || 'pending'})`);
+            console.log('[LiveAnalysis] candidate_officer received:', data);
+            setCandidates(prev => [...prev, {
+                ...data,
+                id: data.appearance_id || Date.now(), // Use DB ID if available
+                appearance_id: data.appearance_id,
+                officer_id: data.officer_id,
+                reviewed: false
+            }]);
             setStats(s => ({ ...s, faces: s.faces + 1, confidence_avg: (s.confidence_avg + data.confidence) / 2 }));
         });
 

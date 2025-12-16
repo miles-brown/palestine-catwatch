@@ -708,29 +708,25 @@ def analyze_frames(media_id, media_frames_dir, status_callback=None):
                     if crop_path and os.path.exists(crop_path):
                         save_file(crop_path, normalize_for_storage(crop_path))
 
-            if status_callback:
-                # Use face crop for display, fall back to body or primary
-                display_crop = face_crop or body_crop or primary_crop
-                print(f"[DEBUG] display_crop={display_crop}, face={face_crop}, body={body_crop}, primary={primary_crop}")
-                if display_crop:
-                    # Use get_file_url to return R2 URLs when R2 is enabled
-                    image_url = get_file_url(normalize_for_storage(display_crop))
-                    print(f"[DEBUG] Emitting candidate_officer: image_url={image_url}")
-                    status_callback("candidate_officer", {
-                        "image_url": image_url,
-                        "face_url": get_file_url(normalize_for_storage(face_crop)) if face_crop else None,
-                        "body_url": get_file_url(normalize_for_storage(body_crop)) if body_crop else None,
-                        "timestamp": timestamp_str,
-                        "confidence": res.get('confidence', 0.9),
-                        "badge": badge_text,
-                        "quality": res.get('quality'),
-                        "force": detected_force,
-                        "rank": detected_rank,
-                        "meta": {
-                            "uniform_guess": detected_force,
-                            "rank_guess": detected_rank,
-                        }
-                    })
+            # Prepare display URLs for later emission (after DB save)
+            display_crop = face_crop or body_crop or primary_crop
+            candidate_data = None
+            if display_crop:
+                candidate_data = {
+                    "image_url": get_file_url(normalize_for_storage(display_crop)),
+                    "face_url": get_file_url(normalize_for_storage(face_crop)) if face_crop else None,
+                    "body_url": get_file_url(normalize_for_storage(body_crop)) if body_crop else None,
+                    "timestamp": timestamp_str,
+                    "confidence": res.get('confidence', 0.9),
+                    "badge": badge_text,
+                    "quality": res.get('quality'),
+                    "force": detected_force,
+                    "rank": detected_rank,
+                    "meta": {
+                        "uniform_guess": detected_force,
+                        "rank_guess": detected_rank,
+                    }
+                }
 
             # Generate embedding from face crop (CPU intensive, no DB)
             crop_for_embedding = face_crop or primary_crop
@@ -807,6 +803,13 @@ def analyze_frames(media_id, media_frames_dir, status_callback=None):
                 db.commit()
                 db.refresh(appearance)
                 appearance_id = appearance.id
+
+                # Emit candidate_officer event AFTER DB save so we have the IDs
+                if status_callback and candidate_data:
+                    candidate_data["appearance_id"] = appearance_id
+                    candidate_data["officer_id"] = officer_id
+                    print(f"[DEBUG] Emitting candidate_officer with appearance_id={appearance_id}, officer_id={officer_id}")
+                    status_callback("candidate_officer", candidate_data)
 
             except Exception as e:
                 print(f"Error saving detection to database: {e}")

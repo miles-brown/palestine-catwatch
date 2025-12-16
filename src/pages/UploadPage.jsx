@@ -106,24 +106,68 @@ const UploadPage = () => {
     }, []);
 
     // Handle stage transitions
-    const handleAnalysisComplete = useCallback((id, approvedCandidates = null) => {
+    const handleAnalysisComplete = useCallback(async (id, approvedCandidates = null) => {
         if (id) {
             setMediaId(id);
             setLiveTaskId(null);
-            // Store approved candidates from live analysis for use in review stage
+
+            console.log(`[handleAnalysisComplete] Media ID: ${id}, Candidates: ${approvedCandidates?.length || 0}`);
+
+            // Store approved candidates from live analysis
             if (approvedCandidates && approvedCandidates.length > 0) {
-                console.log(`Received ${approvedCandidates.length} pre-approved candidates from live analysis`);
-                // These will be used to pre-populate the officers list if database fetch fails
-                // or to enhance the review with user's initial decisions
+                console.log(`[handleAnalysisComplete] Storing ${approvedCandidates.length} pre-approved candidates`);
+
+                // Transform candidates to officer format for consistency
+                const transformedOfficers = approvedCandidates.map((c, idx) => ({
+                    appearance_id: c.appearance_id || `temp-${idx}`,
+                    officer_id: c.officer_id,
+                    timestamp: c.timestamp,
+                    confidence: c.confidence,
+                    face_crop_path: c.face_url || c.image_url,
+                    body_crop_path: c.body_url,
+                    image_crop_path: c.image_url,
+                    badge_override: c.badge || null,
+                    name_override: c.officer_name || null,
+                    force_override: c.force || null,
+                    rank_override: c.rank || null,
+                    decision: c.decision,
+                    reviewed: c.reviewed
+                }));
+
+                // Store these as the current officers - they'll be used if DB fetch fails
+                setOfficers(transformedOfficers);
+
+                // Also store approved ones for the final submit
+                const approved = transformedOfficers.filter(o => o.decision === 'yes' || !o.reviewed);
+                setApprovedOfficers(approved);
+                console.log(`[handleAnalysisComplete] ${approved.length} officers approved/pending review`);
             }
-            fetchOfficers(id);
+
+            // Try to fetch from database as well (may have more complete data)
+            try {
+                const response = await fetch(`${API_BASE}/media/${id}/officers/pending`);
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.officers && data.officers.length > 0) {
+                        console.log(`[handleAnalysisComplete] Fetched ${data.officers.length} officers from database`);
+                        // Merge database data with local candidates
+                        setOfficers(data.officers);
+                    } else {
+                        console.log(`[handleAnalysisComplete] Database returned empty, using local candidates`);
+                    }
+                }
+            } catch (error) {
+                console.error('[handleAnalysisComplete] Failed to fetch from database:', error);
+                // Keep using the local candidates set above
+            }
+
             setCurrentStage('review');
         } else {
-            console.error("No media ID returned from analysis");
+            console.error("[handleAnalysisComplete] No media ID returned from analysis");
             setLiveTaskId(null);
             setCurrentStage('upload');
         }
-    }, [fetchOfficers]);
+    }, []);
 
     const handleReviewComplete = useCallback((reviewResult) => {
         // reviewResult contains { decisions, mergedGroups, verifiedOfficers }
@@ -139,37 +183,59 @@ const UploadPage = () => {
     }, []);
 
     const handleFinalSubmit = useCallback(async () => {
+        console.log(`[handleFinalSubmit] Starting with mediaId=${mediaId}, approvedOfficers=${approvedOfficers.length}`);
+
         // Save approved officers to database before navigating to report
         if (mediaId && approvedOfficers.length > 0) {
             try {
-                // Build batch update request
-                const updates = approvedOfficers.map(officer => ({
-                    appearance_id: officer.appearance_id || officer.id,
-                    verified: true,
-                    badge_override: officer.badge_override || officer.badge || null,
-                    name_override: officer.name_override || officer.officer_name || null,
-                    force_override: officer.force_override || officer.force || null,
-                    rank_override: officer.rank_override || officer.rank || null,
-                    role_override: officer.role_override || officer.role || null,
-                    notes: officer.notes || null
-                }));
+                // Build batch update request - filter out temporary IDs
+                const updates = approvedOfficers
+                    .filter(officer => {
+                        const appId = officer.appearance_id || officer.id;
+                        // Skip temporary IDs that aren't in the database
+                        if (typeof appId === 'string' && appId.startsWith('temp-')) {
+                            console.log(`[handleFinalSubmit] Skipping temporary appearance: ${appId}`);
+                            return false;
+                        }
+                        return true;
+                    })
+                    .map(officer => ({
+                        appearance_id: officer.appearance_id || officer.id,
+                        verified: true,
+                        badge_override: officer.badge_override || officer.badge || null,
+                        name_override: officer.name_override || officer.officer_name || null,
+                        force_override: officer.force_override || officer.force || null,
+                        rank_override: officer.rank_override || officer.rank || null,
+                        role_override: officer.role_override || officer.role || null,
+                        notes: officer.notes || null
+                    }));
 
-                const response = await fetch(`${API_BASE}/media/${mediaId}/officers/batch-update`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ updates })
-                });
+                console.log(`[handleFinalSubmit] Sending ${updates.length} updates to database:`, updates);
 
-                if (!response.ok) {
-                    console.error('Failed to save officer updates:', await response.text());
+                if (updates.length > 0) {
+                    const response = await fetch(`${API_BASE}/media/${mediaId}/officers/batch-update`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ updates })
+                    });
+
+                    if (!response.ok) {
+                        const errorText = await response.text();
+                        console.error('[handleFinalSubmit] Failed to save officer updates:', errorText);
+                    } else {
+                        const result = await response.json();
+                        console.log(`[handleFinalSubmit] Successfully saved ${result.updated?.length || 0} officer updates`);
+                    }
                 } else {
-                    console.log(`Saved ${updates.length} officer updates`);
+                    console.log('[handleFinalSubmit] No valid updates to save');
                 }
             } catch (error) {
-                console.error('Error saving officer updates:', error);
+                console.error('[handleFinalSubmit] Error saving officer updates:', error);
             }
+        } else {
+            console.log(`[handleFinalSubmit] Nothing to save - mediaId: ${mediaId}, officers: ${approvedOfficers.length}`);
         }
 
         // Navigate to the final report page
