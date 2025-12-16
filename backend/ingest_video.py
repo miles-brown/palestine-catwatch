@@ -66,8 +66,12 @@ def download_video(url, protest_id=None, status_callback=None):
     cookie_file = os.path.join(os.path.dirname(__file__), 'cookies.txt')
 
     ydl_opts = {
-        # More robust format selection - fallback chain for compatibility
-        'format': 'best[ext=mp4]/best[ext=webm]/best',
+        # Download highest quality video for frame extraction
+        # Priority: best video+audio merged > best video-only > fallback to any best
+        # bestvideo*+bestaudio/best gets highest res (1440p/4K) when available
+        # The * allows VP9/AV1 codecs. Merges with best audio into mp4/mkv.
+        'format': 'bestvideo*+bestaudio/best[ext=mp4]/best',
+        'merge_output_format': 'mp4',  # Ensure output is mp4 for cv2 compatibility
         'outtmpl': f'{DOWNLOAD_DIR}/%(id)s.%(ext)s',
         'quiet': True,
         'no_warnings': True,
