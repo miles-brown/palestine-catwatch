@@ -12,6 +12,15 @@ if (!API_BASE.startsWith("http")) {
     API_BASE = `https://${API_BASE}`;
 }
 
+// Helper to handle both absolute R2 URLs and relative API paths
+const getImageUrl = (url) => {
+    if (!url) return '';
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+        return url;
+    }
+    return `${API_BASE}${url.startsWith('/') ? '' : '/'}${url}`;
+};
+
 /**
  * OfficerReviewPanel - Grid of officers for approval/rejection with merge functionality
  *
@@ -330,7 +339,7 @@ export default function OfficerReviewPanel({ mediaId, officers, onComplete, onBa
                     <div className="aspect-square bg-slate-700 rounded-lg overflow-hidden mb-3">
                         {primaryOfficer && (primaryOfficer.face_crop_path || primaryOfficer.image_crop_path) ? (
                             <img
-                                src={primaryOfficer.face_crop_path || primaryOfficer.image_crop_path}
+                                src={getImageUrl(primaryOfficer.face_crop_path || primaryOfficer.image_crop_path)}
                                 alt="Primary officer"
                                 className="w-full h-full object-cover"
                             />
@@ -350,7 +359,7 @@ export default function OfficerReviewPanel({ mediaId, officers, onComplete, onBa
                             >
                                 {(o.face_crop_path || o.image_crop_path) ? (
                                     <img
-                                        src={o.face_crop_path || o.image_crop_path}
+                                        src={getImageUrl(o.face_crop_path || o.image_crop_path)}
                                         alt={`Officer ${idx + 1}`}
                                         className="w-full h-full object-cover"
                                     />

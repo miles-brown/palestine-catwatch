@@ -3,6 +3,21 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { X, AlertTriangle, GitBranch, User, Check, Clock } from 'lucide-react';
 
+// API base URL
+let API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+if (!API_BASE.startsWith("http")) {
+    API_BASE = `https://${API_BASE}`;
+}
+
+// Helper to handle both absolute R2 URLs and relative API paths
+const getImageUrl = (url) => {
+    if (!url) return '';
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+        return url;
+    }
+    return `${API_BASE}${url.startsWith('/') ? '' : '/'}${url}`;
+};
+
 /**
  * UnmergeModal - Split incorrectly merged officers
  *
@@ -53,9 +68,10 @@ export default function UnmergeModal({
         return appearance.badge_override || appearance.ocr_badge_result || appearance.badge || 'Unknown';
     };
 
-    // Get crop URL
+    // Get crop URL with proper URL handling
     const getCropUrl = (appearance) => {
-        return appearance.face_crop_path || appearance.body_crop_path || appearance.image_crop_path;
+        const path = appearance.face_crop_path || appearance.body_crop_path || appearance.image_crop_path;
+        return path ? getImageUrl(path) : null;
     };
 
     return (
@@ -102,7 +118,7 @@ export default function UnmergeModal({
                         <div className="h-16 w-16 rounded-lg overflow-hidden bg-slate-700">
                             {officer.primary_crop_path ? (
                                 <img
-                                    src={officer.primary_crop_path}
+                                    src={getImageUrl(officer.primary_crop_path)}
                                     alt="Officer"
                                     className="w-full h-full object-cover"
                                 />

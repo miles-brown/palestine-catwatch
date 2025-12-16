@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { io } from 'socket.io-client';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Terminal, Cpu, Shield, AlertTriangle, Check, X, Activity, ZoomIn, RefreshCw, WifiOff, Clock, CheckCircle, User, MapPin, Calendar, Image as ImageIcon, FileCheck, Globe, Video, FileText, Download, Search, ScanLine, MonitorPlay, Server, HardDrive } from 'lucide-react';
+import { Terminal, Cpu, Shield, AlertTriangle, Check, X, Activity, ZoomIn, RefreshCw, WifiOff, Clock, CheckCircle, User, MapPin, Calendar, Image as ImageIcon, FileCheck, Globe, Video, FileText, Download, Search, ScanLine, MonitorPlay, Server, HardDrive, Undo2, StopCircle } from 'lucide-react';
 
 let API_URL = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 if (!API_URL.startsWith("http")) {
@@ -148,6 +148,7 @@ export default function LiveAnalysis({ taskId, onComplete }) {
     const [reconData, setReconData] = useState(null);
     const [articleMetadata, setArticleMetadata] = useState(null);
     const [mediaId, setMediaId] = useState(null);
+    const [finishedEarly, setFinishedEarly] = useState(false);
     const frameTimeoutRef = useRef(null);
     const connectionTimeoutRef = useRef(null);
     const staleCheckRef = useRef(null);
@@ -477,9 +478,28 @@ export default function LiveAnalysis({ taskId, onComplete }) {
     }, []);
 
     const handleDecision = (id, decision) => {
-        // In a real app, send API call to update DB
+        // Update local state with decision
         console.log(`User decision for ${id}: ${decision}`);
         setCandidates(prev => prev.map(c => c.id === id ? { ...c, reviewed: true, decision } : c));
+    };
+
+    const handleUndoDecision = (id) => {
+        // Undo a previous decision (particularly useful for undoing declines)
+        console.log(`Undoing decision for ${id}`);
+        setCandidates(prev => prev.map(c => c.id === id ? { ...c, reviewed: false, decision: null } : c));
+    };
+
+    const handleFinishEarly = () => {
+        // Stop processing and proceed with what we have
+        setFinishedEarly(true);
+        setStatus('complete');
+        setCurrentFrame(null);
+        addLog('System', 'Processing stopped early by user. Proceeding with collected results.');
+
+        // Disconnect socket to stop receiving more candidates
+        if (socketRef.current) {
+            socketRef.current.disconnect();
+        }
     };
 
     // Get status display properties
@@ -1014,6 +1034,20 @@ export default function LiveAnalysis({ taskId, onComplete }) {
                 </Card>
             </div>
 
+            {/* Finish Early Button - shown when processing is active and we have some candidates */}
+            {status === 'active' && candidates.length > 0 && (
+                <div className="mb-4 flex justify-center">
+                    <Button
+                        onClick={handleFinishEarly}
+                        variant="outline"
+                        className="border-yellow-500/50 text-yellow-400 hover:bg-yellow-500/20 hover:text-yellow-300"
+                    >
+                        <StopCircle className="h-4 w-4 mr-2" />
+                        Finish Early ({candidates.length} officers detected)
+                    </Button>
+                </div>
+            )}
+
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 h-[500px] lg:h-[700px]">
                 {/* Terminal Log */}
                 <Card className="bg-slate-900 border-slate-800 col-span-1 flex flex-col h-full overflow-hidden shadow-2xl shadow-blue-900/5">
@@ -1183,6 +1217,25 @@ export default function LiveAnalysis({ taskId, onComplete }) {
                                             />
                                         </div>
 
+                                        {/* Officer Name (surname from uniform) */}
+                                        <div>
+                                            <label className="text-[10px] uppercase text-slate-500 font-bold block mb-1">
+                                                Officer Name
+                                                <span className="ml-1 text-slate-600 font-normal">(surname on uniform)</span>
+                                            </label>
+                                            <input
+                                                type="text"
+                                                defaultValue={c.officer_name || ""}
+                                                placeholder="e.g. SMITH"
+                                                className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 outline-none uppercase"
+                                                onChange={(e) => {
+                                                    setCandidates(prev => prev.map(cand =>
+                                                        cand.id === c.id ? { ...cand, officer_name: e.target.value.toUpperCase() } : cand
+                                                    ));
+                                                }}
+                                            />
+                                        </div>
+
                                         {/* Force Selection */}
                                         <div>
                                             <label className="text-[10px] uppercase text-slate-500 font-bold block mb-1">
@@ -1255,20 +1308,32 @@ export default function LiveAnalysis({ taskId, onComplete }) {
                                                 </Button>
                                             </div>
                                         ) : (
-                                            <div className={`text-center py-2 text-sm font-bold uppercase rounded ${
-                                                c.decision === 'yes'
-                                                    ? 'bg-green-500/20 text-green-400 border border-green-500/30'
-                                                    : 'bg-red-500/20 text-red-400 border border-red-500/30'
-                                            }`}>
-                                                {c.decision === 'yes' ? (
-                                                    <span className="flex items-center justify-center gap-1">
-                                                        <CheckCircle className="h-4 w-4" /> Approved
-                                                    </span>
-                                                ) : (
-                                                    <span className="flex items-center justify-center gap-1">
-                                                        <X className="h-4 w-4" /> Deleted
-                                                    </span>
-                                                )}
+                                            <div className="space-y-2">
+                                                <div className={`text-center py-2 text-sm font-bold uppercase rounded ${
+                                                    c.decision === 'yes'
+                                                        ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                                                        : 'bg-red-500/20 text-red-400 border border-red-500/30'
+                                                }`}>
+                                                    {c.decision === 'yes' ? (
+                                                        <span className="flex items-center justify-center gap-1">
+                                                            <CheckCircle className="h-4 w-4" /> Approved
+                                                        </span>
+                                                    ) : (
+                                                        <span className="flex items-center justify-center gap-1">
+                                                            <X className="h-4 w-4" /> Deleted
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                {/* Undo button */}
+                                                <Button
+                                                    size="sm"
+                                                    variant="ghost"
+                                                    onClick={() => handleUndoDecision(c.id)}
+                                                    className="w-full text-slate-400 hover:text-slate-200 hover:bg-slate-800 h-8"
+                                                >
+                                                    <Undo2 className="h-3 w-3 mr-1" />
+                                                    Undo
+                                                </Button>
                                             </div>
                                         )}
                                     </div>
@@ -1453,7 +1518,11 @@ export default function LiveAnalysis({ taskId, onComplete }) {
 
                         {/* Action Button */}
                         <Button
-                            onClick={() => onComplete(mediaId)}
+                            onClick={() => {
+                                // Pass approved candidates along with media ID
+                                const approvedCandidates = candidates.filter(c => c.decision === 'yes' || !c.reviewed);
+                                onComplete(mediaId, approvedCandidates);
+                            }}
                             className="w-full bg-green-600 hover:bg-green-500 text-white py-6 text-lg font-semibold"
                             size="lg"
                         >

@@ -60,6 +60,21 @@ const ROLE_OPTIONS = [
     { value: "Commander", label: "Commander" },
 ];
 
+// API base URL
+let API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+if (!API_BASE.startsWith("http")) {
+    API_BASE = `https://${API_BASE}`;
+}
+
+// Helper to handle both absolute R2 URLs and relative API paths
+const getImageUrl = (url) => {
+    if (!url) return '';
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+        return url;
+    }
+    return `${API_BASE}${url.startsWith('/') ? '' : '/'}${url}`;
+};
+
 /**
  * OfficerDetailEditor - Deep editing modal for individual officers
  *
@@ -132,10 +147,11 @@ export default function OfficerDetailEditor({ officers, onComplete, onBack }) {
         return '';
     };
 
-    // Get crop URL
+    // Get crop URL with proper URL handling
     const getCropUrl = (officer) => {
         if (!officer) return null;
-        return officer.face_crop_path || officer.body_crop_path || officer.image_crop_path;
+        const path = officer.face_crop_path || officer.body_crop_path || officer.image_crop_path;
+        return path ? getImageUrl(path) : null;
     };
 
     // Progress percentage
@@ -224,7 +240,7 @@ export default function OfficerDetailEditor({ officers, onComplete, onBack }) {
                                                 className="flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden border border-slate-700 relative"
                                             >
                                                 <img
-                                                    src={crop.path}
+                                                    src={getImageUrl(crop.path)}
                                                     className="w-full h-full object-cover"
                                                     alt={`Appearance ${idx + 1}`}
                                                 />

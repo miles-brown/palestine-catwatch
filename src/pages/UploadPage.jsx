@@ -16,6 +16,15 @@ if (!API_BASE.startsWith("http")) {
     API_BASE = `${isLocal ? "http" : "https"}://${API_BASE}`;
 }
 
+// Helper to handle both absolute R2 URLs and relative API paths
+const getImageUrl = (url) => {
+    if (!url) return '';
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+        return url;
+    }
+    return `${API_BASE}${url.startsWith('/') ? '' : '/'}${url}`;
+};
+
 // Helper to format error messages consistently
 const formatErrorMessage = (error) => {
     return typeof error === 'object' ? JSON.stringify(error) : String(error);
@@ -97,10 +106,16 @@ const UploadPage = () => {
     }, []);
 
     // Handle stage transitions
-    const handleAnalysisComplete = useCallback((id) => {
+    const handleAnalysisComplete = useCallback((id, approvedCandidates = null) => {
         if (id) {
             setMediaId(id);
             setLiveTaskId(null);
+            // Store approved candidates from live analysis for use in review stage
+            if (approvedCandidates && approvedCandidates.length > 0) {
+                console.log(`Received ${approvedCandidates.length} pre-approved candidates from live analysis`);
+                // These will be used to pre-populate the officers list if database fetch fails
+                // or to enhance the review with user's initial decisions
+            }
             fetchOfficers(id);
             setCurrentStage('review');
         } else {
@@ -110,8 +125,10 @@ const UploadPage = () => {
         }
     }, [fetchOfficers]);
 
-    const handleReviewComplete = useCallback((approved) => {
-        setApprovedOfficers(approved);
+    const handleReviewComplete = useCallback((reviewResult) => {
+        // reviewResult contains { decisions, mergedGroups, verifiedOfficers }
+        const verified = reviewResult.verifiedOfficers || reviewResult;
+        setApprovedOfficers(Array.isArray(verified) ? verified : []);
         setCurrentStage('details');
     }, []);
 
@@ -121,10 +138,43 @@ const UploadPage = () => {
         setCurrentStage('preview');
     }, []);
 
-    const handleFinalSubmit = useCallback(() => {
+    const handleFinalSubmit = useCallback(async () => {
+        // Save approved officers to database before navigating to report
+        if (mediaId && approvedOfficers.length > 0) {
+            try {
+                // Build batch update request
+                const updates = approvedOfficers.map(officer => ({
+                    appearance_id: officer.appearance_id || officer.id,
+                    verified: true,
+                    badge_override: officer.badge_override || officer.badge || null,
+                    name_override: officer.name_override || officer.officer_name || null,
+                    force_override: officer.force_override || officer.force || null,
+                    rank_override: officer.rank_override || officer.rank || null,
+                    role_override: officer.role_override || officer.role || null,
+                    notes: officer.notes || null
+                }));
+
+                const response = await fetch(`${API_BASE}/media/${mediaId}/officers/batch-update`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ updates })
+                });
+
+                if (!response.ok) {
+                    console.error('Failed to save officer updates:', await response.text());
+                } else {
+                    console.log(`Saved ${updates.length} officer updates`);
+                }
+            } catch (error) {
+                console.error('Error saving officer updates:', error);
+            }
+        }
+
         // Navigate to the final report page
         navigate(`/report/${mediaId}`);
-    }, [navigate, mediaId]);
+    }, [navigate, mediaId, approvedOfficers]);
 
     const handleBackToReview = useCallback(() => {
         setCurrentStage('review');
@@ -450,7 +500,7 @@ const UploadPage = () => {
                                     <div className="aspect-square bg-slate-700">
                                         {(officer.face_crop_path || officer.body_crop_path) ? (
                                             <img
-                                                src={officer.face_crop_path || officer.body_crop_path}
+                                                src={getImageUrl(officer.face_crop_path || officer.body_crop_path)}
                                                 alt={`Officer ${idx + 1}`}
                                                 className="w-full h-full object-cover"
                                             />
