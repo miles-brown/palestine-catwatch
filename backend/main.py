@@ -390,7 +390,7 @@ def get_repeat_officers(
             "notes": officer.notes,
             "total_appearances": app_count,
             "distinct_events": evt_count,
-            "crop_path": first_app.image_crop_path if first_app else None
+            "crop_path": get_web_url(first_app.image_crop_path) if first_app and first_app.image_crop_path else None
         })
 
     return {
@@ -458,7 +458,7 @@ def get_officer_network(
                 "badge_number": co_officer.badge_number,
                 "force": co_officer.force,
                 "shared_appearances": shared_count,
-                "crop_path": first_app.image_crop_path if first_app else None
+                "crop_path": get_web_url(first_app.image_crop_path) if first_app and first_app.image_crop_path else None
             })
 
     return {
@@ -588,7 +588,7 @@ def get_media_report(request: Request, media_id: int, db: Session = Depends(get_
                 if app.timestamp_in_video:
                     timestamp_data = {
                         "timestamp": app.timestamp_in_video,
-                        "crop_path": app.image_crop_path,
+                        "crop_path": get_web_url(app.image_crop_path) if app.image_crop_path else None,
                         "action": app.action,
                         "role": app.role
                     }
@@ -599,7 +599,7 @@ def get_media_report(request: Request, media_id: int, db: Session = Depends(get_
                         "badge": officer.badge_number,
                         "timestamp": app.timestamp_in_video,
                         "action": app.action,
-                        "crop_path": app.image_crop_path
+                        "crop_path": get_web_url(app.image_crop_path) if app.image_crop_path else None
                     })
 
             officers.append({
@@ -607,7 +607,7 @@ def get_media_report(request: Request, media_id: int, db: Session = Depends(get_
                 "badge": officer.badge_number,
                 "force": officer.force,
                 "role": first_app.role if first_app else None,
-                "crop_path": first_app.image_crop_path if first_app else None,
+                "crop_path": get_web_url(first_app.image_crop_path) if first_app and first_app.image_crop_path else None,
                 "total_appearances_in_video": len(officer_appearances),
                 "timestamps": officer_timestamps  # All timestamps for this officer
             })
@@ -1617,7 +1617,7 @@ def get_unverified_appearances(
             "badge_number": officer.badge_number if officer else None,
             "force": officer.force if officer else None,
             "timestamp_in_video": app.timestamp_in_video,
-            "image_crop_path": app.image_crop_path,
+            "image_crop_path": get_web_url(app.image_crop_path) if app.image_crop_path else None,
             "role": app.role,
             "action": app.action,
             "confidence": app.confidence,
@@ -1890,7 +1890,7 @@ async def search_by_face(
                         "force": officer.force,
                         "confidence": round(confidence * 100, 1),
                         "is_strong_match": is_match,
-                        "crop_path": first_app.image_crop_path if first_app else None
+                        "crop_path": get_web_url(first_app.image_crop_path) if first_app and first_app.image_crop_path else None
                     })
             except (json.JSONDecodeError, Exception) as e:
                 continue
@@ -2062,7 +2062,7 @@ def get_equipment_detections(
             "officer_id": officer.id if officer else None,
             "badge_number": officer.badge_number if officer else None,
             "force": officer.force if officer else None,
-            "crop_path": appearance.image_crop_path if appearance else None,
+            "crop_path": get_web_url(appearance.image_crop_path) if appearance and appearance.image_crop_path else None,
             "timestamp": appearance.timestamp_in_video if appearance else None
         })
 
@@ -2125,7 +2125,7 @@ def get_officer_uniform_analysis(
             analyses.append({
                 "appearance_id": app.id,
                 "timestamp_in_video": app.timestamp_in_video,
-                "crop_path": app.image_crop_path,
+                "crop_path": get_web_url(app.image_crop_path) if app.image_crop_path else None,
                 "analysis": {
                     "detected_force": analysis.detected_force,
                     "force_confidence": analysis.force_confidence,
