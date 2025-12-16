@@ -682,8 +682,11 @@ def filter_badge_number(texts):
         if len(clean) < 2 or len(clean) > 8:
             continue
 
-        # Skip common false positives
-        false_positives = {'POLICE', 'UK', 'MET', 'OFFICER', 'TSG', 'FIT', 'PSU'}
+        # Skip common false positives (words, postal codes, house numbers)
+        false_positives = {
+            'POLICE', 'UK', 'MET', 'OFFICER', 'TSG', 'FIT', 'PSU',
+            'UNIT', 'TEAM', 'SQUAD', 'FORCE', 'CITY', 'LEVEL',
+        }
         if clean in false_positives:
             continue
 
@@ -698,13 +701,42 @@ def filter_badge_number(texts):
                 scored_candidates.append((clean, score))
                 break
         else:
-            # Fallback: check if it looks like a badge number (alphanumeric with digits)
+            # Strict fallback: only accept badge-like patterns not caught above
             digit_count = sum(c.isdigit() for c in clean)
             alpha_count = sum(c.isalpha() for c in clean)
 
-            if digit_count >= 2 and alpha_count <= 2 and len(clean) <= 6:
-                # Basic score for partial matches
-                scored_candidates.append((clean, digit_count * 10))
+            # Reject if letters appear AFTER digits (e.g., "12AB", "AB12CD")
+            # UK badges have letters at START only: U1234, not 1234U or AB12CD
+            if alpha_count > 0:
+                # Compare position of last letter vs first digit:
+                # - "AB123": last_letter=1, first_digit=2 → 1 > 2 = False (OK - letters before digits)
+                # - "12AB":  last_letter=3, first_digit=0 → 3 > 0 = True (REJECT - letters after digits)
+                # - "AB12CD": last_letter=5, first_digit=2 → 5 > 2 = True (REJECT - letters after digits)
+                # Note: alpha_count > 0 check above prevents ValueError from max() on empty sequence
+                last_letter_pos = max(i for i, c in enumerate(clean) if c.isalpha())
+                first_digit_pos = next((i for i, c in enumerate(clean) if c.isdigit()), len(clean))
+                if last_letter_pos > first_digit_pos:
+                    continue
+
+            # Reject UK postal code patterns (e.g., "SW1", "N12", "EC2", "E1")
+            # This intentionally rejects very short patterns like "E1" or "N2" which are
+            # ambiguous - they could be postal codes or truncated badges. Real UK badges
+            # with letter prefixes have 2+ digits (UK_BADGE_PATTERNS requires \d{2,5}).
+            # Patterns like "E12" or "AB12" are caught by UK_BADGE_PATTERNS BEFORE this
+            # fallback runs, so only truly ambiguous short strings reach here.
+            if re.match(r'^[A-Z]{1,2}\d{1,2}$', clean) and len(clean) <= 4:
+                continue
+
+            # Reject short all-numeric strings (likely noise, not badges)
+            # Valid all-numeric badges have 4-6 digits per UK_BADGE_PATTERNS line 34
+            if alpha_count == 0 and digit_count < 4:
+                continue
+
+            # Require minimum 3 digits for reasonable badge confidence
+            # and letters must be prefix only (1-2 chars max)
+            if digit_count >= 3 and alpha_count <= 2 and len(clean) <= 6:
+                # Lower score than pattern matches (max 50 vs 100+)
+                scored_candidates.append((clean, min(digit_count * 10, 50)))
 
     # Sort by score (highest first) and deduplicate
     scored_candidates.sort(key=lambda x: x[1], reverse=True)

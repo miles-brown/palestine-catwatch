@@ -60,6 +60,10 @@ RATE_LIMITS = {
 
     # Static data
     "protests": "60/minute",
+
+    # Merge/unmerge operations - moderate limits to prevent abuse
+    "merge_operations": "20/minute",
+    "merge_operations_hourly": "100/hour",
 }
 
 
