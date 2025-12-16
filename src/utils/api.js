@@ -86,6 +86,13 @@ export const sanitizeMediaPath = (path) => {
  * @returns {string|null} - Full URL or null if invalid
  */
 export const getMediaUrl = (path) => {
+  if (!path || typeof path !== 'string') return null;
+
+  // If path is already an absolute URL (from R2 or elsewhere), return it directly
+  if (path.startsWith('http://') || path.startsWith('https://')) {
+    return path;
+  }
+
   const sanitized = sanitizeMediaPath(path);
   if (!sanitized) return null;
 
@@ -105,6 +112,13 @@ export const getMediaUrl = (path) => {
  * @returns {Promise<string|null>} - Full URL or null if invalid
  */
 export const getMediaUrlAsync = async (path) => {
+  if (!path || typeof path !== 'string') return null;
+
+  // If path is already an absolute URL (from R2 or elsewhere), return it directly
+  if (path.startsWith('http://') || path.startsWith('https://')) {
+    return path;
+  }
+
   const sanitized = sanitizeMediaPath(path);
   if (!sanitized) return null;
 

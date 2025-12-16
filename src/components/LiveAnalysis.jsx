@@ -9,6 +9,17 @@ if (!API_URL.startsWith("http")) {
     API_URL = `https://${API_URL}`;
 }
 
+// Helper to handle both absolute R2 URLs and relative API paths
+const getImageUrl = (url) => {
+    if (!url) return '';
+    // If URL is already absolute (starts with http), use it directly
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+        return url;
+    }
+    // Otherwise, prepend API_URL for relative paths
+    return `${API_URL}${url}`;
+};
+
 // UK Police Forces for dropdown
 const UK_POLICE_FORCES = [
     { value: "", label: "Select Force..." },
@@ -1057,7 +1068,7 @@ export default function LiveAnalysis({ taskId, onComplete }) {
                         {status === 'active' && currentFrame && (
                             <div className="mb-6 relative w-full h-64 bg-black rounded-lg overflow-hidden border border-green-500/30 shadow-[0_0_15px_rgba(34,197,94,0.2)]">
                                 <img
-                                    src={`${API_URL}${currentFrame.url}`}
+                                    src={getImageUrl(currentFrame.url)}
                                     className="w-full h-full object-contain opacity-80"
                                     alt="Analyzing Frame"
                                 />
@@ -1077,7 +1088,7 @@ export default function LiveAnalysis({ taskId, onComplete }) {
                                 <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-slate-700">
                                     {scrapedMedia.map((media, i) => (
                                         <div key={i} className="flex-shrink-0 w-32 h-24 bg-slate-950 border border-slate-800 rounded overflow-hidden relative group">
-                                            <img src={`${API_URL}${media.url}`} className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity" alt="Scraped" />
+                                            <img src={getImageUrl(media.url)} className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity" alt="Scraped" />
                                             <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent flex items-end p-1">
                                                 <span className="text-[10px] text-slate-300 truncate w-full">{media.filename}</span>
                                             </div>
@@ -1108,11 +1119,11 @@ export default function LiveAnalysis({ taskId, onComplete }) {
                                             {/* Face Crop (Primary) */}
                                             <div className="flex-1 aspect-square bg-slate-800 relative">
                                                 <img
-                                                    src={`${API_URL}${c.face_url || c.image_url}`}
+                                                    src={getImageUrl(c.face_url || c.image_url)}
                                                     className="w-full h-full object-cover"
                                                     alt="Face"
                                                     onError={(e) => {
-                                                        e.target.src = `${API_URL}${c.image_url}`;
+                                                        e.target.src = getImageUrl(c.image_url);
                                                     }}
                                                 />
                                                 <div className="absolute bottom-1 left-1 bg-black/80 px-1.5 py-0.5 rounded text-[10px] text-slate-300">
@@ -1123,7 +1134,7 @@ export default function LiveAnalysis({ taskId, onComplete }) {
                                             {c.body_url && (
                                                 <div className="w-1/3 bg-slate-800 relative border-l border-slate-700">
                                                     <img
-                                                        src={`${API_URL}${c.body_url}`}
+                                                        src={getImageUrl(c.body_url)}
                                                         className="w-full h-full object-cover object-top"
                                                         alt="Body"
                                                     />
