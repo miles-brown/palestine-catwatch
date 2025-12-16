@@ -4,6 +4,15 @@ import { Button } from '@/components/ui/button';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
+// Helper to handle both absolute R2 URLs and relative API paths
+const getImageUrl = (url) => {
+    if (!url) return '';
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+        return url;
+    }
+    return `${API_BASE}${url}`;
+};
+
 // Category icons and colors
 const CATEGORY_CONFIG = {
   defensive: {
@@ -159,7 +168,7 @@ const DetectionModal = ({ equipment, onClose }) => {
                 >
                   {det.crop_path ? (
                     <img
-                      src={`${API_BASE}${det.crop_path}`}
+                      src={getImageUrl(det.crop_path)}
                       alt="Officer"
                       className="w-16 h-16 object-cover rounded"
                     />
