@@ -24,10 +24,18 @@ from ratelimit import limiter, setup_rate_limiting, get_rate_limit
 
 # Path utilities for consistent path handling
 from utils.paths import get_web_url, get_file_url, get_absolute_path, normalize_for_storage
+from utils.r2_storage import get_r2_status
 
 try:
     logger.info("Attempting to connect to database and create tables...")
     models.Base.metadata.create_all(bind=engine)
+
+    # Log R2 storage configuration status on startup
+    r2_status = get_r2_status()
+    if r2_status["enabled"]:
+        logger.info(f"R2 Storage: ENABLED (bucket: {r2_status['bucket']}, public_url: {r2_status['public_url']})")
+    else:
+        logger.info("R2 Storage: DISABLED (using local file storage)")
 
     # --- LEGACY SCHEMA MIGRATIONS ---
     # NOTE: New migrations should use Alembic. Run: alembic upgrade head
