@@ -23,7 +23,7 @@ logger = get_logger("main")
 from ratelimit import limiter, setup_rate_limiting, get_rate_limit
 
 # Path utilities for consistent path handling
-from utils.paths import get_web_url, get_file_url, get_absolute_path, normalize_for_storage
+from utils.paths import get_file_url, get_absolute_path, normalize_for_storage
 from utils.r2_storage import get_r2_status
 
 try:
