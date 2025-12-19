@@ -387,6 +387,12 @@ def get_repeat_officers(
     # officer_ids are extracted from DB query results (validated integers, safe for IN clause)
     officer_ids = [officer.id for officer, _, _ in results]
 
+    # Safety guard: prevent memory issues with extremely large batches
+    # This shouldn't happen due to pagination (default limit=50), but adds protection
+    MAX_BATCH_SIZE = 1000
+    if len(officer_ids) > MAX_BATCH_SIZE:
+        officer_ids = officer_ids[:MAX_BATCH_SIZE]
+
     # Get first appearance with any crop for each officer in ONE query
     first_appearances = {}
     if officer_ids:

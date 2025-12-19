@@ -131,6 +131,49 @@ export const getMediaUrlAsync = async (path) => {
 };
 
 /**
+ * Get the best available crop URL from an officer appearance object.
+ *
+ * Priority order:
+ *   1. face_crop_path - Close-up face (preferred for officer cards)
+ *   2. body_crop_path - Full body shot (good for uniform/equipment evidence)
+ *   3. image_crop_path - Legacy field (backwards compatibility only)
+ *
+ * @param {Object} appearance - Officer appearance object with crop paths
+ * @returns {string|null} - URL string for the best available crop, or null
+ */
+export const getBestCropUrl = (appearance) => {
+  if (!appearance) return null;
+
+  const cropPath = appearance.face_crop_path
+    || appearance.body_crop_path
+    || appearance.image_crop_path;
+
+  return cropPath ? getMediaUrl(cropPath) : null;
+};
+
+/**
+ * Get all crop URLs from an officer appearance object.
+ *
+ * @param {Object} appearance - Officer appearance object with crop paths
+ * @returns {Object} - Object with face_crop_url, body_crop_url, and best_crop_url
+ */
+export const getAllCropUrls = (appearance) => {
+  if (!appearance) {
+    return { face_crop_url: null, body_crop_url: null, best_crop_url: null };
+  }
+
+  const face_crop_url = appearance.face_crop_path ? getMediaUrl(appearance.face_crop_path) : null;
+  const body_crop_url = appearance.body_crop_path ? getMediaUrl(appearance.body_crop_path) : null;
+  const legacy_crop_url = appearance.image_crop_path ? getMediaUrl(appearance.image_crop_path) : null;
+
+  return {
+    face_crop_url,
+    body_crop_url,
+    best_crop_url: face_crop_url || body_crop_url || legacy_crop_url
+  };
+};
+
+/**
  * Generic user-friendly error messages by HTTP status code.
  * Used in production to avoid exposing internal details.
  */
