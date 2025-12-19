@@ -1,57 +1,59 @@
-import yt_dlp
 import os
 import re
+import time
 from datetime import datetime, timezone
+from typing import Optional, Callable, Tuple, Dict, Any
+
+import yt_dlp
+from tqdm import tqdm
+
 from database import SessionLocal
 import models
 from process import process_media
-from ingest import ingest_media # Reuse logic if possible, or replicate for flexibility
+from ingest import ingest_media  # Reuse logic if possible, or replicate for flexibility
 
 # Directory to store downloads
 DOWNLOAD_DIR = "data/downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-def download_video(url, protest_id=None, status_callback=None):
+# Retry configuration
+BASE_BACKOFF_SECONDS = 2
+GEO_BYPASS_COUNTRY = os.environ.get("GEO_BYPASS_COUNTRY", "GB")
+
+def _is_retriable_error(error: Exception) -> bool:
+    """Check if error is worth retrying."""
+    error_msg = str(error).lower()
+    return any(x in error_msg for x in ['403', 'forbidden', 'blocked', 'unavailable', 'sign in'])
+
+
+def _create_progress_hook(status_callback: Optional[Callable] = None) -> Tuple[Callable, Dict[str, Any]]:
     """
-    Downloads video using yt-dlp with retry mechanism.
-    Tries multiple configurations if initial download fails.
-    Returns: file_path, info_dict
+    Create a progress hook function with its own state.
+    Returns the hook function and a state dict for cleanup.
     """
-    from tqdm import tqdm
-    import time
+    state = {'pbar': None, 'last_socket_percent': -1}
 
-    # Progress bar state
-    pbar = None
-    last_socket_percent = -1
-
-    def progress_hook(d):
-        nonlocal pbar, last_socket_percent
-
+    def progress_hook(d: Dict[str, Any]) -> None:
         if d['status'] == 'downloading':
-            # 1. Initialize TQDM if needed
             total_bytes = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
             downloaded = d.get('downloaded_bytes', 0)
 
-            if pbar is None and total_bytes > 0:
-                pbar = tqdm(total=total_bytes, unit='B', unit_scale=True, unit_divisor=1024, desc="Downloading")
+            if state['pbar'] is None and total_bytes > 0:
+                state['pbar'] = tqdm(total=total_bytes, unit='B', unit_scale=True, unit_divisor=1024, desc="Downloading")
 
-            # 2. Update TQDM (Terminal)
-            if pbar:
-                pbar.n = downloaded
-                pbar.refresh()
+            if state['pbar']:
+                state['pbar'].n = downloaded
+                state['pbar'].refresh()
 
-            # 3. Update Frontend (Throttle to ~10%)
             if status_callback:
-                # Parse percent string " 45.3%" -> 45.3
                 try:
-                    percent_str = d.get('_percent_str', '0%').strip().replace('%','')
+                    percent_str = d.get('_percent_str', '0%').strip().replace('%', '')
                     current_percent = float(percent_str)
 
-                    # Update only if we crossed a 10% threshold or it's 100%
-                    if current_percent >= 100 or (current_percent - last_socket_percent >= 10):
+                    if current_percent >= 100 or (current_percent - state['last_socket_percent'] >= 10):
                         size_mb = total_bytes / (1024 * 1024)
                         status_callback("log", f"Downloading: {current_percent:.1f}% of {size_mb:.1f}MB")
-                        last_socket_percent = current_percent
+                        state['last_socket_percent'] = current_percent
 
                         if current_percent >= 100:
                             status_callback("status_update", "Extracting")
@@ -59,10 +61,35 @@ def download_video(url, protest_id=None, status_callback=None):
                     pass
 
         elif d['status'] == 'finished':
-            if pbar:
-                pbar.close()
+            if state['pbar']:
+                state['pbar'].close()
+                state['pbar'] = None
             if status_callback:
                 status_callback("log", "Download complete.")
+
+    return progress_hook, state
+
+
+def download_video(
+    url: str,
+    protest_id: Optional[int] = None,
+    status_callback: Optional[Callable] = None
+) -> Tuple[str, Dict[str, Any]]:
+    """
+    Downloads video using yt-dlp with retry mechanism.
+    Tries multiple configurations if initial download fails.
+
+    Args:
+        url: Video URL to download
+        protest_id: Optional protest ID for context
+        status_callback: Optional callback for progress updates
+
+    Returns:
+        Tuple of (file_path, info_dict)
+
+    Raises:
+        Exception: If all download attempts fail
+    """
 
     # Cookie file path (optional - export from browser for best results)
     cookie_file = os.path.join(os.path.dirname(__file__), 'cookies.txt')
@@ -73,17 +100,18 @@ def download_video(url, protest_id=None, status_callback=None):
         'outtmpl': f'{DOWNLOAD_DIR}/%(id)s.%(ext)s',
         'quiet': True,
         'no_warnings': True,
-        'progress_hooks': [progress_hook],
         'retries': 3,
         'fragment_retries': 3,
         'file_access_retries': 3,
         'socket_timeout': 30,
         'geo_bypass': True,
-        'geo_bypass_country': 'GB',
+        'geo_bypass_country': GEO_BYPASS_COUNTRY,
         'age_limit': None,
         'source_address': '0.0.0.0',
-        **(({'cookiefile': cookie_file} if has_cookies else {})),
     }
+
+    if has_cookies:
+        base_opts['cookiefile'] = cookie_file
 
     # Different configurations to try in order
     retry_configs = [
@@ -148,20 +176,19 @@ def download_video(url, protest_id=None, status_callback=None):
         },
     ]
 
-    last_error = None
+    last_error: Optional[Exception] = None
 
     for attempt, config in enumerate(retry_configs, 1):
+        # Create fresh progress hook for each attempt
+        progress_hook, hook_state = _create_progress_hook(status_callback)
+
         try:
             if status_callback:
                 status_callback("log", f"Download attempt {attempt}/{len(retry_configs)}: {config['name']}")
 
-            # Reset progress bar state for each attempt
-            nonlocal_reset = {'pbar': None, 'last_socket_percent': -1}
-            pbar = None
-            last_socket_percent = -1
-
             # Merge base options with attempt-specific options
             ydl_opts = {**base_opts, **{k: v for k, v in config.items() if k != 'name'}}
+            ydl_opts['progress_hooks'] = [progress_hook]
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
@@ -176,25 +203,31 @@ def download_video(url, protest_id=None, status_callback=None):
             last_error = e
             error_msg = str(e)
 
-            # Check if it's a 403 or similar error worth retrying
-            is_retriable = any(x in error_msg.lower() for x in ['403', 'forbidden', 'blocked', 'unavailable', 'sign in'])
-
             if status_callback:
-                status_callback("log", f"Attempt {attempt} failed: {error_msg[:100]}...")
+                # Show more of the error message (200 chars) for debugging
+                status_callback("log", f"Attempt {attempt} failed: {error_msg[:200]}...")
 
-            if not is_retriable:
+            if not _is_retriable_error(e):
                 # Non-retriable error (e.g., video doesn't exist)
                 raise
 
             # Wait before retry (exponential backoff)
             if attempt < len(retry_configs):
-                wait_time = 2 ** attempt  # 2, 4, 8, 16 seconds
+                wait_time = BASE_BACKOFF_SECONDS ** attempt
                 if status_callback:
                     status_callback("log", f"Waiting {wait_time}s before retry...")
                 time.sleep(wait_time)
 
+        finally:
+            # Clean up progress bar if still open
+            if hook_state.get('pbar'):
+                hook_state['pbar'].close()
+
     # All attempts failed
-    raise Exception(f"Video download failed after {len(retry_configs)} attempts. Last error: {last_error}")
+    if last_error:
+        raise Exception(f"Video download failed after {len(retry_configs)} attempts. Last error: {last_error}")
+    else:
+        raise Exception(f"Video download failed after {len(retry_configs)} attempts")
 
 def extract_metadata(info):
     """
