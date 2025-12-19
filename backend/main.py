@@ -391,6 +391,7 @@ def get_repeat_officers(
     # This shouldn't happen due to pagination (default limit=50), but adds protection
     MAX_BATCH_SIZE = 1000
     if len(officer_ids) > MAX_BATCH_SIZE:
+        logger.warning(f"Officer batch size {len(officer_ids)} exceeds max {MAX_BATCH_SIZE}, truncating results")
         officer_ids = officer_ids[:MAX_BATCH_SIZE]
 
     # Get first appearance with any crop for each officer in ONE query

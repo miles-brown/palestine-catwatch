@@ -33,7 +33,8 @@ const getStorageConfig = async () => {
       _storageConfig = config || { r2_enabled: false, r2_public_url: null };
       return _storageConfig;
     })
-    .catch(() => {
+    .catch((err) => {
+      console.warn('Failed to fetch storage config, falling back to local:', err?.message || err);
       _storageConfig = { r2_enabled: false, r2_public_url: null };
       return _storageConfig;
     });
