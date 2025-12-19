@@ -1077,16 +1077,16 @@ export default function LiveAnalysis({ taskId, onComplete }) {
                         )}
                         {logs.slice(-50).map((log, i) => (
                             <div key={i} className="flex gap-2 py-0.5">
-                                <span className="text-slate-600 flex-shrink-0">[{log.time}]</span>
+                                <span className="text-slate-400 flex-shrink-0">[{log.time}]</span>
                                 <span className={`flex-shrink-0 ${
                                     log.source === 'Error' ? 'text-red-400' :
                                     log.source === 'AI' ? 'text-green-400' :
                                     log.source === 'Warning' ? 'text-yellow-400' :
-                                    'text-blue-400'
+                                    'text-cyan-400'
                                 } font-bold`}>
                                     {log.source}:
                                 </span>
-                                <span className="text-slate-300 break-words">{log.message}</span>
+                                <span className="text-slate-100 break-words">{log.message}</span>
                             </div>
                         ))}
                         <div ref={logEndRef} />

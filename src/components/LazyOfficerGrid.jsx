@@ -362,12 +362,20 @@ export function useInfiniteOfficers(apiBase, filters = {}) {
         const mappedOfficers = data.map(off => {
           const mainAppearance = off.appearances?.[0];
           const media = mainAppearance?.media;
-          const cropPath = mainAppearance?.image_crop_path;
+          // Priority: face_crop_path > body_crop_path > image_crop_path (legacy)
+          const cropPath = mainAppearance?.face_crop_path
+            || mainAppearance?.body_crop_path
+            || mainAppearance?.image_crop_path;
 
           let photoUrl = "https://via.placeholder.com/400?text=No+Image";
           if (cropPath) {
-            const relativePath = cropPath.replace('../data/', '').replace(/^\/+/, '');
-            photoUrl = `${apiBase}/data/${relativePath}`;
+            // Handle both absolute URLs (from R2) and relative paths
+            if (cropPath.startsWith('http://') || cropPath.startsWith('https://')) {
+              photoUrl = cropPath;
+            } else {
+              const relativePath = cropPath.replace('../data/', '').replace(/^\/+/, '');
+              photoUrl = `${apiBase}/data/${relativePath}`;
+            }
           }
 
           return {

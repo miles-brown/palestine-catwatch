@@ -75,7 +75,9 @@ class MediaWithProtest(Media):
 
 class OfficerAppearanceBase(BaseModel):
     timestamp_in_video: Optional[str] = None
-    image_crop_path: Optional[str] = None
+    face_crop_path: Optional[str] = None  # Close-up face crop for Officer Card
+    body_crop_path: Optional[str] = None  # Full body crop (head to toe) for evidence
+    image_crop_path: Optional[str] = None  # Legacy: kept for backwards compatibility
     role: Optional[str] = None
     action: Optional[str] = None
     confidence: Optional[float] = None

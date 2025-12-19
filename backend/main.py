@@ -8,7 +8,7 @@ from typing import List, Optional
 import models, schemas
 from database import get_db, engine
 from datetime import datetime, timezone
-from sqlalchemy import func
+from sqlalchemy import func, or_
 import asyncio
 import os
 
@@ -385,11 +385,26 @@ def get_repeat_officers(
 
     repeat_officers = []
     for officer, app_count, evt_count in results:
-        # Get first appearance image for display
+        # Get first appearance with any crop image for display
+        # Priority: face_crop_path > body_crop_path > image_crop_path
         first_app = db.query(models.OfficerAppearance).filter(
             models.OfficerAppearance.officer_id == officer.id,
-            models.OfficerAppearance.image_crop_path.isnot(None)
+            or_(
+                models.OfficerAppearance.face_crop_path.isnot(None),
+                models.OfficerAppearance.body_crop_path.isnot(None),
+                models.OfficerAppearance.image_crop_path.isnot(None)
+            )
         ).first()
+
+        # Build crop path with fallback priority: face > body > legacy image
+        crop_path = None
+        face_crop = None
+        body_crop = None
+        if first_app:
+            face_crop = get_file_url(first_app.face_crop_path) if first_app.face_crop_path else None
+            body_crop = get_file_url(first_app.body_crop_path) if first_app.body_crop_path else None
+            legacy_crop = get_file_url(first_app.image_crop_path) if first_app.image_crop_path else None
+            crop_path = face_crop or body_crop or legacy_crop
 
         repeat_officers.append({
             "id": officer.id,
@@ -398,7 +413,9 @@ def get_repeat_officers(
             "notes": officer.notes,
             "total_appearances": app_count,
             "distinct_events": evt_count,
-            "crop_path": get_file_url(first_app.image_crop_path) if first_app and first_app.image_crop_path else None
+            "crop_path": crop_path,  # Best available crop (for backwards compat)
+            "face_crop_path": face_crop,  # Face close-up
+            "body_crop_path": body_crop,  # Full body shot
         })
 
     return {

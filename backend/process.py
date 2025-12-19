@@ -452,6 +452,7 @@ def process_media(media_id: int, status_callback=None):
             shutil.copy2(source_path, target_path)
             print(f"Copied image to {target_path}")
             if status_callback:
+                status_callback("log", f"Processing image (Media #{media_id})...")
                 status_callback("log", "Analyzing image for police officers...")
         except Exception as e:
             print(f"Error copying image: {e}")

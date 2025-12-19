@@ -563,20 +563,23 @@ const AdminPage = () => {
                       >
                         {/* Image */}
                         <div className="aspect-square bg-gray-100 relative">
-                          {appearance.image_crop_path ? (
-                            <img
-                              src={getCropUrl(appearance.image_crop_path)}
-                              alt="Detection"
-                              className="w-full h-full object-cover"
-                              onError={(e) => {
-                                e.target.style.display = 'none';
-                              }}
-                            />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center">
-                              <Users className="h-16 w-16 text-gray-300" />
-                            </div>
-                          )}
+                          {(() => {
+                            const adminCropPath = appearance.face_crop_path || appearance.body_crop_path || appearance.image_crop_path;
+                            return adminCropPath ? (
+                              <img
+                                src={getCropUrl(adminCropPath)}
+                                alt="Detection"
+                                className="w-full h-full object-cover"
+                                onError={(e) => {
+                                  e.target.style.display = 'none';
+                                }}
+                              />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center">
+                                <Users className="h-16 w-16 text-gray-300" />
+                              </div>
+                            );
+                          })()}
 
                           {/* Confidence Badge */}
                           <div className={`absolute top-2 right-2 px-2 py-1 rounded text-xs font-bold ${getConfidenceBg(appearance.confidence)} ${getConfidenceColor(appearance.confidence)}`}>

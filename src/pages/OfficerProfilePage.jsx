@@ -19,9 +19,11 @@ const getCropUrl = getMediaUrl;
 // Profile Header Component
 const ProfileHeader = ({ officer, network, onDownloadDossier, downloading, downloadError, mediaCount, verifiedCount }) => {
   const primaryAppearance = officer.appearances?.[0];
-  const cropUrl = primaryAppearance?.image_crop_path
-    ? getCropUrl(primaryAppearance.image_crop_path)
-    : null;
+  // Priority: face_crop_path > body_crop_path > image_crop_path (legacy)
+  const bestCropPath = primaryAppearance?.face_crop_path
+    || primaryAppearance?.body_crop_path
+    || primaryAppearance?.image_crop_path;
+  const cropUrl = bestCropPath ? getCropUrl(bestCropPath) : null;
 
   return (
     <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white rounded-xl overflow-hidden">
@@ -385,17 +387,21 @@ const AppearancesTimeline = ({ appearances }) => {
                       expandedAppearance === appearance.id ? null : appearance.id
                     )}
                   >
-                    {appearance.image_crop_path && getCropUrl(appearance.image_crop_path) ? (
-                      <img
-                        src={getCropUrl(appearance.image_crop_path)}
-                        alt="Appearance"
-                        className="w-16 h-16 rounded-lg object-cover border"
-                      />
-                    ) : (
-                      <div className="w-16 h-16 rounded-lg bg-gray-100 flex items-center justify-center">
-                        <User className="h-8 w-8 text-gray-400" />
-                      </div>
-                    )}
+                    {(() => {
+                      const appearanceCrop = appearance.face_crop_path || appearance.body_crop_path || appearance.image_crop_path;
+                      const appearanceCropUrl = appearanceCrop ? getCropUrl(appearanceCrop) : null;
+                      return appearanceCropUrl ? (
+                        <img
+                          src={appearanceCropUrl}
+                          alt="Appearance"
+                          className="w-16 h-16 rounded-lg object-cover border"
+                        />
+                      ) : (
+                        <div className="w-16 h-16 rounded-lg bg-gray-100 flex items-center justify-center">
+                          <User className="h-8 w-8 text-gray-400" />
+                        </div>
+                      );
+                    })()}
 
                     <div className="flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -440,7 +446,7 @@ const AppearancesTimeline = ({ appearances }) => {
                       <UniformAnalysisCard
                         officerId={appearance.officer_id}
                         appearanceId={appearance.id}
-                        cropPath={appearance.image_crop_path}
+                        cropPath={appearance.face_crop_path || appearance.body_crop_path || appearance.image_crop_path}
                         compact={false}
                       />
                     </div>
