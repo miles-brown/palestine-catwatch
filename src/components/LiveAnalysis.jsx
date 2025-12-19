@@ -3,22 +3,10 @@ import { io } from 'socket.io-client';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Terminal, Cpu, Shield, AlertTriangle, Check, X, Activity, ZoomIn, RefreshCw, WifiOff, Clock, CheckCircle, User, MapPin, Calendar, Image as ImageIcon, FileCheck, Globe, Video, FileText, Download, Search, ScanLine, MonitorPlay, Server, HardDrive, Undo2, StopCircle } from 'lucide-react';
+import { API_BASE, getMediaUrl } from '../utils/api';
 
-let API_URL = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
-if (!API_URL.startsWith("http")) {
-    API_URL = `https://${API_URL}`;
-}
-
-// Helper to handle both absolute R2 URLs and relative API paths
-const getImageUrl = (url) => {
-    if (!url) return '';
-    // If URL is already absolute (starts with http), use it directly
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-        return url;
-    }
-    // Otherwise, prepend API_URL for relative paths
-    return `${API_URL}${url}`;
-};
+// Use shared getMediaUrl for image URLs (handles R2 and local paths)
+const getImageUrl = (url) => getMediaUrl(url) || '';
 
 // UK Police Forces for dropdown
 const UK_POLICE_FORCES = [
@@ -274,7 +262,7 @@ export default function LiveAnalysis({ taskId, onComplete }) {
         }, CONNECTION_TIMEOUT);
 
         // Connect to WebSocket
-        const socket = io(API_URL, {
+        const socket = io(API_BASE, {
             path: '/socket.io',
             transports: ['websocket', 'polling'], // Allow fallback to polling
             timeout: CONNECTION_TIMEOUT,
@@ -985,57 +973,105 @@ export default function LiveAnalysis({ taskId, onComplete }) {
 
             {/* Header / HUD */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-4 mb-4 sm:mb-6">
-                <Card className="bg-slate-900 border-slate-800 p-3 sm:p-4 flex items-center gap-2 sm:gap-4">
-                    <div className={`p-3 ${statusDisplay.bgColor} rounded-full ${statusDisplay.color}`}>
+                {/* Status Card */}
+                <Card className={`bg-gradient-to-br ${statusDisplay.bgColor} border-2 ${
+                    status === 'error' ? 'border-red-500/50' :
+                    status === 'active' ? 'border-green-500/50' :
+                    status === 'complete' ? 'border-blue-500/50' :
+                    'border-yellow-500/50'
+                } p-3 sm:p-4 flex items-center gap-2 sm:gap-4 transition-all duration-300 hover:scale-105 cursor-pointer shadow-lg`}>
+                    <div className={`p-3 ${statusDisplay.bgColor} rounded-lg ${statusDisplay.color} shadow-inner`}>
                         {status === 'error' ? (
-                            <AlertTriangle className="h-6 w-6" />
+                            <AlertTriangle className="h-6 w-6 animate-pulse" />
+                        ) : status === 'complete' ? (
+                            <CheckCircle className="h-6 w-6" />
                         ) : (
                             <Activity className={`h-6 w-6 ${status === 'active' || status === 'connecting' ? 'animate-pulse' : ''}`} />
                         )}
                     </div>
-                    <div className="min-w-0">
-                        <p className="text-[10px] sm:text-xs text-slate-500 uppercase tracking-wider">Status</p>
-                        <p className={`font-bold text-sm sm:text-lg ${statusDisplay.color} truncate`}>
+                    <div className="min-w-0 flex-1">
+                        <p className="text-[10px] sm:text-xs text-slate-400 uppercase tracking-wider font-semibold">Status</p>
+                        <p className={`font-black text-base sm:text-xl ${statusDisplay.color} truncate tracking-tight`}>
                             {statusDisplay.text}
                         </p>
                     </div>
                 </Card>
 
-                <Card className="bg-slate-900 border-slate-800 p-3 sm:p-4 flex items-center gap-2 sm:gap-4">
-                    <div className="p-2 sm:p-3 bg-green-500/10 rounded-full text-green-400">
-                        <Shield className="h-4 w-4 sm:h-6 sm:w-6" />
+                {/* Officers Card */}
+                <Card className={`bg-gradient-to-br from-slate-900 to-slate-800 border-2 ${
+                    stats.faces > 0 ? 'border-green-500/50' : 'border-slate-700'
+                } p-3 sm:p-4 flex items-center gap-2 sm:gap-4 transition-all duration-300 hover:scale-105 cursor-pointer shadow-lg`}>
+                    <div className="p-3 bg-green-500/20 rounded-lg text-green-400 shadow-inner">
+                        <Shield className={`h-6 w-6 ${stats.faces > 0 ? 'animate-pulse' : ''}`} />
                     </div>
-                    <div className="min-w-0">
-                        <p className="text-[10px] sm:text-xs text-slate-500 uppercase tracking-wider">Officers</p>
-                        <p className="font-bold text-sm sm:text-lg text-slate-100">{stats.faces}</p>
+                    <div className="min-w-0 flex-1">
+                        <p className="text-[10px] sm:text-xs text-slate-400 uppercase tracking-wider font-semibold">Officers</p>
+                        <p className="font-black text-2xl sm:text-3xl text-white tracking-tight">
+                            {stats.faces}
+                        </p>
+                        {stats.faces > 0 && (
+                            <p className="text-[9px] text-green-400 font-medium">
+                                {candidates.filter(c => c.reviewed && c.decision === 'yes').length} approved
+                            </p>
+                        )}
                     </div>
                 </Card>
 
-                <Card className="bg-slate-900 border-slate-800 p-3 sm:p-4 flex items-center gap-2 sm:gap-4">
-                    <div className="p-2 sm:p-3 bg-purple-500/10 rounded-full text-purple-400">
-                        <Cpu className="h-4 w-4 sm:h-6 sm:w-6" />
+                {/* Confidence Card */}
+                <Card className={`bg-gradient-to-br from-slate-900 to-slate-800 border-2 ${
+                    stats.confidence_avg > 0.8 ? 'border-green-500/50' :
+                    stats.confidence_avg > 0.6 ? 'border-yellow-500/50' :
+                    stats.confidence_avg > 0 ? 'border-red-500/50' :
+                    'border-slate-700'
+                } p-3 sm:p-4 flex items-center gap-2 sm:gap-4 transition-all duration-300 hover:scale-105 cursor-pointer shadow-lg`}>
+                    <div className={`p-3 rounded-lg shadow-inner ${
+                        stats.confidence_avg > 0.8 ? 'bg-green-500/20 text-green-400' :
+                        stats.confidence_avg > 0.6 ? 'bg-yellow-500/20 text-yellow-400' :
+                        stats.confidence_avg > 0 ? 'bg-red-500/20 text-red-400' :
+                        'bg-purple-500/20 text-purple-400'
+                    }`}>
+                        <Cpu className={`h-6 w-6 ${stats.confidence_avg > 0 ? 'animate-pulse' : ''}`} />
                     </div>
-                    <div className="min-w-0">
-                        <p className="text-[10px] sm:text-xs text-slate-500 uppercase tracking-wider">Confidence</p>
-                        <p className="font-bold text-sm sm:text-lg text-slate-100">{(stats.confidence_avg * 100).toFixed(1)}%</p>
+                    <div className="min-w-0 flex-1">
+                        <p className="text-[10px] sm:text-xs text-slate-400 uppercase tracking-wider font-semibold">Confidence</p>
+                        <p className={`font-black text-2xl sm:text-3xl tracking-tight ${
+                            stats.confidence_avg > 0.8 ? 'text-green-400' :
+                            stats.confidence_avg > 0.6 ? 'text-yellow-400' :
+                            stats.confidence_avg > 0 ? 'text-red-400' :
+                            'text-white'
+                        }`}>
+                            {stats.confidence_avg > 0 ? (stats.confidence_avg * 100).toFixed(0) : '0'}%
+                        </p>
+                        {stats.confidence_avg > 0 && (
+                            <p className="text-[9px] text-slate-400 font-medium">
+                                {stats.confidence_avg > 0.8 ? 'High' : stats.confidence_avg > 0.6 ? 'Medium' : 'Low'}
+                            </p>
+                        )}
                     </div>
                 </Card>
 
-                <Card className="bg-slate-900 border-slate-800 p-3 sm:p-4 flex items-center gap-2 sm:gap-4">
-                    <div className="p-2 sm:p-3 bg-indigo-500/10 rounded-full text-indigo-400">
-                        <ZoomIn className="h-4 w-4 sm:h-6 sm:w-6" />
+                {/* AI Recon Card */}
+                <Card className={`bg-gradient-to-br from-slate-900 to-slate-800 border-2 ${
+                    reconData ? 'border-indigo-500/50' : 'border-slate-700'
+                } p-3 sm:p-4 flex items-center gap-2 sm:gap-4 transition-all duration-300 hover:scale-105 cursor-pointer shadow-lg`}>
+                    <div className="p-3 bg-indigo-500/20 rounded-lg text-indigo-400 shadow-inner">
+                        <ZoomIn className={`h-6 w-6 ${reconData ? 'animate-pulse' : ''}`} />
                     </div>
-                    <div className="min-w-0">
-                        <p className="text-[10px] sm:text-xs text-slate-500 uppercase tracking-wider">AI Recon</p>
+                    <div className="min-w-0 flex-1">
+                        <p className="text-[10px] sm:text-xs text-slate-400 uppercase tracking-wider font-semibold">AI Recon</p>
                         {reconData ? (
                             <div className="flex flex-col">
-                                <span className={`font-bold text-lg ${reconData.score > 50 ? 'text-green-400' : 'text-yellow-400'}`}>
-                                    {reconData.score}/100
+                                <span className={`font-black text-2xl sm:text-3xl tracking-tight ${
+                                    reconData.score > 70 ? 'text-green-400' :
+                                    reconData.score > 40 ? 'text-yellow-400' :
+                                    'text-red-400'
+                                }`}>
+                                    {reconData.score}
                                 </span>
-                                <span className="text-[10px] text-slate-400">{reconData.category}</span>
+                                <span className="text-[9px] text-indigo-300 font-medium uppercase">{reconData.category}</span>
                             </div>
                         ) : (
-                            <p className="font-bold text-sm text-slate-500 italic">Waiting...</p>
+                            <p className="font-black text-xl text-slate-600 italic">Pending...</p>
                         )}
                     </div>
                 </Card>
@@ -1077,16 +1113,16 @@ export default function LiveAnalysis({ taskId, onComplete }) {
                         )}
                         {logs.slice(-50).map((log, i) => (
                             <div key={i} className="flex gap-2 py-0.5">
-                                <span className="text-slate-600 flex-shrink-0">[{log.time}]</span>
+                                <span className="text-slate-500 flex-shrink-0 font-medium">[{log.time}]</span>
                                 <span className={`flex-shrink-0 ${
-                                    log.source === 'Error' ? 'text-red-400' :
-                                    log.source === 'AI' ? 'text-green-400' :
-                                    log.source === 'Warning' ? 'text-yellow-400' :
-                                    'text-blue-400'
+                                    log.source === 'Error' ? 'text-red-500' :
+                                    log.source === 'AI' ? 'text-green-500' :
+                                    log.source === 'Warning' ? 'text-red-500' :
+                                    'text-blue-500'
                                 } font-bold`}>
                                     {log.source}:
                                 </span>
-                                <span className="text-slate-300 break-words">{log.message}</span>
+                                <span className="text-slate-900 break-words font-sans font-medium">{log.message}</span>
                             </div>
                         ))}
                         <div ref={logEndRef} />

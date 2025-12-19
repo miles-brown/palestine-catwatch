@@ -1,17 +1,10 @@
 import { useState, useEffect } from 'react';
 import { Shield, ShieldAlert, Radio, Camera, Link2, Loader2, ChevronRight, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { API_BASE, getMediaUrl } from '../utils/api';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-
-// Helper to handle both absolute R2 URLs and relative API paths
-const getImageUrl = (url) => {
-    if (!url) return '';
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-        return url;
-    }
-    return `${API_BASE}${url}`;
-};
+// Use shared getMediaUrl for image URLs (handles R2 and local paths)
+const getImageUrl = (url) => getMediaUrl(url) || '';
 
 // Category icons and colors
 const CATEGORY_CONFIG = {

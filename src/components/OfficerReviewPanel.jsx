@@ -6,20 +6,10 @@ import {
     Zap, User, CheckCircle, XCircle, Filter, Eye
 } from 'lucide-react';
 import MergeSuggestionCard from './MergeSuggestionCard';
+import { API_BASE, getMediaUrl } from '../utils/api';
 
-let API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
-if (!API_BASE.startsWith("http")) {
-    API_BASE = `https://${API_BASE}`;
-}
-
-// Helper to handle both absolute R2 URLs and relative API paths
-const getImageUrl = (url) => {
-    if (!url) return '';
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-        return url;
-    }
-    return `${API_BASE}${url.startsWith('/') ? '' : '/'}${url}`;
-};
+// Use shared getMediaUrl for image URLs (handles R2 and local paths)
+const getImageUrl = (url) => getMediaUrl(url) || '';
 
 /**
  * OfficerReviewPanel - Grid of officers for approval/rejection with merge functionality

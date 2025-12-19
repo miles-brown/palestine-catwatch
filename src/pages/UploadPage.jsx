@@ -9,21 +9,10 @@ import OfficerDetailEditor from '@/components/OfficerDetailEditor';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import Turnstile from '@/components/Turnstile';
+import { API_BASE, getMediaUrl } from '../utils/api';
 
-let API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
-if (!API_BASE.startsWith("http")) {
-    const isLocal = API_BASE.includes("localhost") || API_BASE.includes("127.0.0.1");
-    API_BASE = `${isLocal ? "http" : "https"}://${API_BASE}`;
-}
-
-// Helper to handle both absolute R2 URLs and relative API paths
-const getImageUrl = (url) => {
-    if (!url) return '';
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-        return url;
-    }
-    return `${API_BASE}${url.startsWith('/') ? '' : '/'}${url}`;
-};
+// Use shared getMediaUrl for image URLs (handles R2 and local paths)
+const getImageUrl = (url) => getMediaUrl(url) || '';
 
 // Helper to format error messages consistently
 const formatErrorMessage = (error) => {

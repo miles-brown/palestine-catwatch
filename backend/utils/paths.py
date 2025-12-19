@@ -267,3 +267,77 @@ def file_exists_in_storage(storage_key: str) -> bool:
     # Check local
     local_path = get_absolute_path(storage_key)
     return os.path.exists(local_path)
+
+
+# ============================================================================
+# Officer appearance crop URL helpers
+# ============================================================================
+
+def get_best_crop_url(appearance) -> str:
+    """
+    Get the best available crop URL from an officer appearance.
+
+    Priority order:
+        1. face_crop_path - Close-up face (preferred for officer cards)
+        2. body_crop_path - Full body shot (good for uniform/equipment evidence)
+        3. image_crop_path - Legacy field (backwards compatibility only)
+
+    Args:
+        appearance: OfficerAppearance model instance or dict with crop paths
+
+    Returns:
+        URL string for the best available crop, or None if no crops exist
+    """
+    if appearance is None:
+        return None
+
+    # Handle both model instances and dicts
+    if hasattr(appearance, 'face_crop_path'):
+        face = appearance.face_crop_path
+        body = appearance.body_crop_path
+        legacy = appearance.image_crop_path
+    else:
+        face = appearance.get('face_crop_path')
+        body = appearance.get('body_crop_path')
+        legacy = appearance.get('image_crop_path')
+
+    # Return first available with priority
+    for path in [face, body, legacy]:
+        if path:
+            return get_file_url(path)
+
+    return None
+
+
+def get_all_crop_urls(appearance) -> dict:
+    """
+    Get all crop URLs from an officer appearance.
+
+    Args:
+        appearance: OfficerAppearance model instance or dict with crop paths
+
+    Returns:
+        Dict with face_crop_url, body_crop_url, and best_crop_url
+    """
+    if appearance is None:
+        return {"face_crop_url": None, "body_crop_url": None, "best_crop_url": None}
+
+    # Handle both model instances and dicts
+    if hasattr(appearance, 'face_crop_path'):
+        face_path = appearance.face_crop_path
+        body_path = appearance.body_crop_path
+        legacy_path = appearance.image_crop_path
+    else:
+        face_path = appearance.get('face_crop_path')
+        body_path = appearance.get('body_crop_path')
+        legacy_path = appearance.get('image_crop_path')
+
+    face_url = get_file_url(face_path) if face_path else None
+    body_url = get_file_url(body_path) if body_path else None
+    legacy_url = get_file_url(legacy_path) if legacy_path else None
+
+    return {
+        "face_crop_url": face_url,
+        "body_crop_url": body_url,
+        "best_crop_url": face_url or body_url or legacy_url
+    }

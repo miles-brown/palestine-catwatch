@@ -8,7 +8,7 @@ from typing import List, Optional
 import models, schemas
 from database import get_db, engine
 from datetime import datetime, timezone
-from sqlalchemy import func
+from sqlalchemy import func, or_
 import asyncio
 import os
 
@@ -23,7 +23,7 @@ logger = get_logger("main")
 from ratelimit import limiter, setup_rate_limiting, get_rate_limit
 
 # Path utilities for consistent path handling
-from utils.paths import get_file_url, get_absolute_path, normalize_for_storage
+from utils.paths import get_file_url, get_absolute_path, normalize_for_storage, get_all_crop_urls
 from utils.r2_storage import get_r2_status
 
 try:
@@ -383,13 +383,55 @@ def get_repeat_officers(
         .all()
     )
 
+    # Batch fetch first appearances for all officers (fixes N+1 query)
+    # officer_ids are extracted from DB query results (validated integers, safe for IN clause)
+    officer_ids = [officer.id for officer, _, _ in results]
+
+    # Safety guard: prevent memory issues with extremely large batches
+    # This shouldn't happen due to pagination (default limit=50), but adds protection
+    MAX_BATCH_SIZE = 1000
+    if len(officer_ids) > MAX_BATCH_SIZE:
+        logger.warning(f"Officer batch size {len(officer_ids)} exceeds max {MAX_BATCH_SIZE}, truncating results")
+        officer_ids = officer_ids[:MAX_BATCH_SIZE]
+
+    # Get first appearance with any crop for each officer in ONE query
+    first_appearances = {}
+    if officer_ids:
+        # Subquery to get the FIRST appearance with a crop for each officer.
+        # We use MIN(id) to get the earliest appearance, then join back to get
+        # the full record. This avoids fetching ALL appearances (which could be
+        # thousands) when we only need one per officer for the dashboard card.
+        first_app_subq = (
+            db.query(
+                models.OfficerAppearance.officer_id,
+                func.min(models.OfficerAppearance.id).label('first_app_id')
+            )
+            .filter(
+                models.OfficerAppearance.officer_id.in_(officer_ids),
+                or_(
+                    models.OfficerAppearance.face_crop_path.isnot(None),
+                    models.OfficerAppearance.body_crop_path.isnot(None),
+                    models.OfficerAppearance.image_crop_path.isnot(None)
+                )
+            )
+            .group_by(models.OfficerAppearance.officer_id)
+            .subquery()
+        )
+
+        # Fetch actual appearance records
+        appearances = (
+            db.query(models.OfficerAppearance)
+            .join(first_app_subq, models.OfficerAppearance.id == first_app_subq.c.first_app_id)
+            .all()
+        )
+        first_appearances = {app.officer_id: app for app in appearances}
+
     repeat_officers = []
     for officer, app_count, evt_count in results:
-        # Get first appearance image for display
-        first_app = db.query(models.OfficerAppearance).filter(
-            models.OfficerAppearance.officer_id == officer.id,
-            models.OfficerAppearance.image_crop_path.isnot(None)
-        ).first()
+        first_app = first_appearances.get(officer.id)
+
+        # Get all crop URLs using helper function (ensures consistent priority fallback)
+        crop_urls = get_all_crop_urls(first_app)
 
         repeat_officers.append({
             "id": officer.id,
@@ -398,7 +440,9 @@ def get_repeat_officers(
             "notes": officer.notes,
             "total_appearances": app_count,
             "distinct_events": evt_count,
-            "crop_path": get_file_url(first_app.image_crop_path) if first_app and first_app.image_crop_path else None
+            "crop_path": crop_urls["best_crop_url"],  # Best available crop (for backwards compat)
+            "face_crop_path": crop_urls["face_crop_url"],  # Face close-up
+            "body_crop_path": crop_urls["body_crop_url"],  # Full body shot
         })
 
     return {

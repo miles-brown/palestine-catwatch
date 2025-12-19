@@ -1,6 +1,6 @@
 # Palestine Catwatch - TODO List
 
-**Last Updated:** 2024-12-09
+**Last Updated:** 2024-12-19
 
 ---
 
@@ -21,6 +21,13 @@
 | - | PDF dossier generation | DONE | /officers/{id}/dossier endpoint |
 | - | WebSocket live analysis | DONE | Socket.IO with room management |
 | - | Officer network analysis | DONE | /officers/{id}/network endpoint |
+| 31 | Lazy loading for officer grid | DONE | LazyOfficerGrid.jsx with intersection observer |
+| 32 | Skeleton loaders | DONE | OfficerGridSkeleton component |
+| 39 | CDN/cloud storage for images | DONE | Cloudflare R2 integration with public URLs |
+| - | YouTube 403 bypass | DONE | PR #41 - Multi-config yt-dlp retry mechanism |
+| - | Dashboard officer display fix | DONE | PR #42 - face_crop_path/body_crop_path fallback |
+| - | Live analysis log visibility | DONE | PR #42 - Fixed faint grey text in upload logs |
+| 11 | Image path handling | DONE | Standardized with utils/paths.py and get_file_url() |
 
 ### Bug Fixes Completed
 | # | Task | Status | Notes |
@@ -32,6 +39,19 @@
 | - | Pydantic v2 ConfigDict | DONE | All schemas updated |
 | - | HTTPS protocol for localhost | DONE | Check for localhost/127.0.0.1 first |
 | - | Error message formatting | DONE | Extracted to helper function |
+| - | Video download 403 errors | DONE | PR #41 - yt-dlp retry with iOS/Android/TV clients |
+| - | Officers not on dashboard | DONE | PR #42 - Added face/body crop path support |
+| - | Upload log text visibility | DONE | PR #42 - Changed slate-600 to slate-400 |
+
+### Infrastructure Completed
+| Task | Status | Notes |
+|------|--------|-------|
+| Vercel frontend deployment | DONE | https://palestine-catwatch.vercel.app/ |
+| Railway backend deployment | DONE | https://palestine-catwatch-production.up.railway.app |
+| Neon PostgreSQL setup | DONE | Cloud database with SSL |
+| Cloudflare R2 storage | DONE | Image storage with public URLs |
+| Path utility standardization | DONE | utils/paths.py with get_file_url(), normalize_for_storage() |
+| URL generation tests | DONE | tests/test_paths.py - 19 test cases |
 
 ---
 
@@ -39,11 +59,9 @@
 
 | # | Task | Size | Status | Description |
 |---|------|------|--------|-------------|
-| 1 | Fix `ingest_images.py` syntax errors | M | TODO | File has duplicate code blocks, broken indentation, and unclosed try blocks. Scraping is completely broken. |
-| 2 | Fix `UploadPage.jsx` setStatus typos | S | TODO | Lines 121 & 137 call `setStatus()` but should call `setSubmitStatus()`. Error handling broken. |
-| 3 | Fix `process.py` object comparison bug | S | TODO | Line 238 compares dicts to strings. Object context detection completely broken. |
-| 4 | Fix `UploadPage.jsx` undefined variable | S | TODO | Line 77 calls `setSelectedProtestId('')` but variable never declared. Upload success crashes. |
-| 5 | Fix `reports.py` non-existent attribute | S | TODO | Line 32 accesses `officer.role` but Officer model has no role field. PDF generation fails. |
+| 1 | ~~Fix `ingest_images.py` syntax errors~~ | M | DONE | Fixed in earlier PRs |
+| 2 | ~~Fix `UploadPage.jsx` setStatus typos~~ | S | DONE | Fixed setSubmitStatus calls |
+| 54 | **Railway DB connection issue** | M | **BLOCKED** | Railway returns 500 on all DB endpoints. Need to verify DATABASE_URL in Railway env vars. |
 
 ---
 
@@ -52,12 +70,12 @@
 | # | Task | Size | Status | Description |
 |---|------|------|--------|-------------|
 | 6 | Enable EasyOCR for badge detection | M | TODO | OCR is imported but disabled (`reader = None`). Badge number detection non-functional. |
-| 7 | Fix analyzer.py duplicate exception | S | TODO | Lines 60-61 have duplicate `except` blocks. Remove unreachable code. |
-| 8 | Add proper error handling in LiveAnalysis | M | PARTIAL | Has basic WebSocket error handling but needs more granular states. |
+| 7 | ~~Fix analyzer.py duplicate exception~~ | S | DONE | Removed unreachable code. |
+| 8 | ~~Add proper error handling in LiveAnalysis~~ | M | DONE | Granular error states, retry mechanism, stale detection |
 | 9 | Fix face embedding matching | M | TODO | Current threshold (0.8) may be too loose. Test and calibrate with real data. |
-| 11 | Fix image path handling inconsistency | M | TODO | Paths use mix of relative (`../data/`), absolute, and various formats. Standardize. |
-| 12 | Add database migration system | M | TODO | Schema changes require manual intervention. Add Alembic for migrations. |
-| 13 | Fix Socket.IO room memory leak | S | PARTIAL | Rooms cleaned up with 5-min delay but could optimize further. |
+| 12 | Add database migration system | M | PARTIAL | Alembic exists but not always used for schema changes. |
+| 13 | ~~Fix Socket.IO room memory leak~~ | S | DONE | Rooms cleaned up with delay, mark_room_complete() implemented |
+| 55 | **Configure R2 in Railway** | M | **TODO** | R2_ENABLED, R2_PUBLIC_URL not set in Railway. Images may not load in production. |
 
 ---
 
@@ -65,12 +83,12 @@
 
 | # | Task | Size | Status | Description |
 |---|------|------|--------|-------------|
-| 14 | Add authentication system | L | TODO | No auth currently. Anyone can access/modify data. Add JWT-based auth. |
-| 15 | Implement rate limiting | M | PARTIAL | Framework exists (ratelimit.py) but not applied to all endpoints. |
+| 14 | Add authentication system | L | DONE | JWT-based auth with refresh tokens implemented |
+| 15 | Implement rate limiting | M | DONE | ratelimit.py applied to endpoints |
 | 16 | Add file cleanup job | M | TODO | Downloaded files accumulate forever. Implement scheduled cleanup or retention policy. |
 | 17 | Add React Error Boundaries | S | TODO | Component errors crash entire app. Wrap routes in error boundaries. |
 | 18 | Improve mobile responsiveness | M | TODO | Current UI breaks on small screens. Need responsive design pass. |
-| 19 | Add pagination to /officers endpoint | S | DONE | AdminPage has pagination (20 per page). |
+| 19 | ~~Add pagination to /officers endpoint~~ | S | DONE | AdminPage has pagination (20 per page). |
 | 23 | Add search by date range | M | TODO | Can only search by text. Add date range filter. |
 | 25 | Add video timestamp scrubber | M | TODO | ReportPage shows timestamps but can't seek. Add video player integration. |
 | 40 | Add audit logging | M | TODO | Log all data modifications for compliance. |
@@ -82,17 +100,14 @@
 | # | Task | Size | Status | Description |
 |---|------|------|--------|-------------|
 | 26 | Add TypeScript to frontend | XL | TODO | No type safety. Gradual migration to TypeScript. |
-| 27 | Create unit tests for AI functions | L | TODO | No tests. Add pytest tests for analyzer.py functions. |
+| 27 | Create unit tests for AI functions | L | PARTIAL | tests/test_paths.py exists. Need more coverage for analyzer.py |
 | 28 | Add integration tests for API | L | TODO | No API tests. Add pytest + httpx tests for endpoints. |
 | 29 | Create E2E tests with Playwright | L | TODO | No E2E tests. Add critical path tests. |
 | 30 | Add dark mode toggle | M | TODO | LiveAnalysis is dark, rest is light. Add consistent theme toggle. |
-| 31 | Implement lazy loading for officer grid | M | TODO | All officers load at once. Add intersection observer lazy loading. |
-| 32 | Add skeleton loaders | S | TODO | Show skeleton UI while loading instead of spinners. |
-| 33 | Create API documentation | M | TODO | No docs. Add Swagger/OpenAPI documentation. |
+| 33 | Create API documentation | M | DONE | Auto-generated at /docs (Swagger) and /redoc |
 | 35 | Implement behavior classification | XL | TODO | Train model to classify officer actions automatically. |
 | 37 | Create collaborative annotation system | XL | TODO | Allow multiple users to annotate and validate. |
 | 38 | Add offline/PWA support | L | TODO | Support offline queuing and sync. |
-| 39 | Implement CDN for images | M | TODO | Serve face crops from CDN for performance. |
 
 ---
 
@@ -116,53 +131,69 @@
 |---|------|------|----------|-------------|
 | 48 | Role-based access control | L | HIGH | Admin vs contributor vs viewer distinction |
 | 49 | Audit trail | M | MEDIUM | Track who uploaded/modified what and when |
-| 50 | DoS protection | M | HIGH | Rate limiting on expensive AI endpoints |
+| 50 | ~~DoS protection~~ | M | DONE | Rate limiting implemented on expensive AI endpoints |
 
 ### Data Quality
 
 | # | Task | Size | Priority | Description |
 |---|------|------|----------|-------------|
 | 51 | Confidence calibration UI | M | MEDIUM | Let users rate AI accuracy to improve thresholds |
-| 52 | Duplicate detection | M | MEDIUM | Warn when uploading same video/image twice |
+| 52 | Duplicate detection | M | DONE | Hash-based duplicate detection in ingest pipeline |
 | 53 | Data retention policy | S | LOW | Auto-cleanup of old temporary files |
+
+---
+
+## NEW TASKS (Added 2024-12-19)
+
+### Infrastructure & DevOps
+
+| # | Task | Size | Priority | Description |
+|---|------|------|----------|-------------|
+| 54 | Fix Railway DATABASE_URL | S | **CRITICAL** | All DB endpoints return 500. Verify env var is set correctly in Railway dashboard. |
+| 55 | Configure R2 in Railway | M | HIGH | Set R2_ENABLED, R2_PUBLIC_URL, credentials in Railway for image serving |
+| 56 | Add health check endpoint | S | MEDIUM | `/health` endpoint that verifies DB connection for Railway monitoring |
+| 57 | Environment variable documentation | S | LOW | Document all required Railway/Vercel env vars in README |
+
+### Code Quality
+
+| # | Task | Size | Priority | Description |
+|---|------|------|----------|-------------|
+| 58 | Add tests for ingest_video.py | M | MEDIUM | Test retry mechanism, error handling, progress callbacks |
+| 59 | Add tests for crop path fallback | S | LOW | Verify face > body > image priority in all components |
 
 ---
 
 ## Quick Reference by Status
 
 ### Ready to Start (No Dependencies)
-- #1, #2, #3, #4, #5, #6, #7, #17, #32
+- #6, #17, #56, #57, #58
 
-### Needs Investigation First
-- #9 (face matching calibration needs test data)
-- #11 (path handling needs audit of all usages)
+### Needs User Action
+- **#54** - Railway DATABASE_URL configuration (CRITICAL)
+- **#55** - Railway R2 configuration
 
 ### Blocked by Other Work
-- #14 must complete before #48, #49
-- #25 needs video player component first
+- #48 Role-based access depends on auth being stable
+- #25 Video seeking needs video player component first
 
 ---
 
 ## Suggested Next Sprint
 
-### Sprint: Stability & Critical Fixes
-1. **Fix `ingest_images.py`** - Image scraping completely broken
-2. **Fix `UploadPage.jsx` bugs** - setStatus typos and undefined variable
-3. **Fix `process.py` object comparison** - AI context detection broken
-4. **Fix `reports.py` attribute error** - PDF generation fails
-5. **Enable EasyOCR** - Badge detection non-functional
-6. **Add React Error Boundaries** - Prevent full-app crashes
+### Sprint 1: Production Stability (URGENT)
+1. **#54 - Fix Railway DATABASE_URL** - All API calls failing with 500
+2. **#55 - Configure R2 in Railway** - Images won't load without this
+3. **#56 - Add health check endpoint** - For monitoring
 
-### Sprint: Evidence Features
-7. **Cross-event tracking (#43)** - Critical for pattern analysis
-8. **Video timestamp seeking (#47)** - Essential for reviewing incidents
-9. **Date range filtering (#23)** - Essential for protest-specific searches
-10. **Chain of command linking (#45)** - Understand unit structure
+### Sprint 2: Core Features
+4. **#6 - Enable EasyOCR** - Badge detection non-functional
+5. **#43 - Cross-event tracking** - Critical for pattern analysis
+6. **#47 - Video timestamp seeking** - Essential for reviewing incidents
 
-### Sprint: Security
-11. **Authentication (#14)** - Protect data access
-12. **Role-based access (#48)** - Admin vs user
-13. **Rate limiting (#50)** - Protect expensive endpoints
+### Sprint 3: Quality & Polish
+7. **#17 - React Error Boundaries** - Prevent full-app crashes
+8. **#23 - Date range filtering** - Essential for protest-specific searches
+9. **#58 - Add video ingest tests** - Ensure retry mechanism works
 
 ---
 
@@ -170,12 +201,23 @@
 
 | Category | Done | In Progress | TODO |
 |----------|------|-------------|------|
-| Critical Bugs | 0 | 0 | 5 |
-| High Priority | 1 | 2 | 4 |
-| Medium Priority | 2 | 1 | 6 |
-| Features | 12 | 0 | 15+ |
-| **Total** | **15** | **3** | **30+** |
+| Critical Bugs | 4 | 0 | 1 |
+| High Priority | 6 | 0 | 3 |
+| Medium Priority | 6 | 0 | 5 |
+| Low Priority | 3 | 1 | 6 |
+| Features | 18 | 0 | 12 |
+| Infrastructure | 6 | 0 | 2 |
+| **Total** | **43** | **1** | **29** |
 
 ---
 
-*Last reviewed: 2024-12-09*
+## Recent PRs
+
+| PR | Title | Status |
+|----|-------|--------|
+| #42 | fix: Display detected officers on dashboard with proper crop paths | Open |
+| #41 | feat: Add retry mechanism for video downloads with multiple yt-dlp configs | Merged |
+
+---
+
+*Last reviewed: 2024-12-19*

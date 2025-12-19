@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { sanitizeMediaPath, getMediaUrl, fetchWithErrorHandling } from './api';
+import { sanitizeMediaPath, getMediaUrl, fetchWithErrorHandling, getBestCropUrl, getAllCropUrls } from './api';
 
 describe('sanitizeMediaPath', () => {
   describe('path traversal prevention', () => {
@@ -182,5 +182,313 @@ describe('fetchWithErrorHandling', () => {
     await expect(fetchWithErrorHandling('http://api.test/data'))
       .rejects
       .toThrow('Network error');
+  });
+});
+
+describe('getBestCropUrl', () => {
+  describe('priority fallback', () => {
+    it('should prioritize face_crop_path when available', () => {
+      const appearance = {
+        face_crop_path: 'frames/1/face_0.jpg',
+        body_crop_path: 'frames/1/body_0.jpg',
+        image_crop_path: 'frames/1/crop_0.jpg'
+      };
+
+      const result = getBestCropUrl(appearance);
+
+      expect(result).toContain('/data/frames/1/face_0.jpg');
+    });
+
+    it('should fall back to body_crop_path when face_crop_path is null', () => {
+      const appearance = {
+        face_crop_path: null,
+        body_crop_path: 'frames/1/body_0.jpg',
+        image_crop_path: 'frames/1/crop_0.jpg'
+      };
+
+      const result = getBestCropUrl(appearance);
+
+      expect(result).toContain('/data/frames/1/body_0.jpg');
+    });
+
+    it('should fall back to image_crop_path when face and body are null', () => {
+      const appearance = {
+        face_crop_path: null,
+        body_crop_path: null,
+        image_crop_path: 'frames/1/crop_0.jpg'
+      };
+
+      const result = getBestCropUrl(appearance);
+
+      expect(result).toContain('/data/frames/1/crop_0.jpg');
+    });
+
+    it('should fall back to body_crop_path when face_crop_path is undefined', () => {
+      const appearance = {
+        body_crop_path: 'frames/1/body_0.jpg',
+        image_crop_path: 'frames/1/crop_0.jpg'
+      };
+
+      const result = getBestCropUrl(appearance);
+
+      expect(result).toContain('/data/frames/1/body_0.jpg');
+    });
+  });
+
+  describe('edge cases', () => {
+    it('should return null for null appearance', () => {
+      expect(getBestCropUrl(null)).toBeNull();
+    });
+
+    it('should return null for undefined appearance', () => {
+      expect(getBestCropUrl(undefined)).toBeNull();
+    });
+
+    it('should return null when all crop paths are null', () => {
+      const appearance = {
+        face_crop_path: null,
+        body_crop_path: null,
+        image_crop_path: null
+      };
+
+      expect(getBestCropUrl(appearance)).toBeNull();
+    });
+
+    it('should return null when all crop paths are undefined', () => {
+      const appearance = {};
+
+      expect(getBestCropUrl(appearance)).toBeNull();
+    });
+
+    it('should return null when all crop paths are empty strings', () => {
+      const appearance = {
+        face_crop_path: '',
+        body_crop_path: '',
+        image_crop_path: ''
+      };
+
+      expect(getBestCropUrl(appearance)).toBeNull();
+    });
+  });
+
+  describe('security', () => {
+    it('should sanitize path traversal attempts in face_crop_path', () => {
+      const appearance = {
+        face_crop_path: '../../../etc/passwd'
+      };
+
+      const result = getBestCropUrl(appearance);
+
+      expect(result).not.toContain('..');
+      expect(result).toContain('/data/etc/passwd');
+    });
+
+    it('should sanitize path traversal attempts in body_crop_path', () => {
+      const appearance = {
+        face_crop_path: null,
+        body_crop_path: '../../../etc/passwd'
+      };
+
+      const result = getBestCropUrl(appearance);
+
+      expect(result).not.toContain('..');
+      expect(result).toContain('/data/etc/passwd');
+    });
+  });
+
+  describe('URL handling', () => {
+    it('should handle absolute HTTP URLs directly', () => {
+      const appearance = {
+        face_crop_path: 'http://cdn.example.com/image.jpg'
+      };
+
+      const result = getBestCropUrl(appearance);
+
+      expect(result).toBe('http://cdn.example.com/image.jpg');
+    });
+
+    it('should handle absolute HTTPS URLs directly', () => {
+      const appearance = {
+        face_crop_path: 'https://cdn.example.com/image.jpg'
+      };
+
+      const result = getBestCropUrl(appearance);
+
+      expect(result).toBe('https://cdn.example.com/image.jpg');
+    });
+
+    it('should handle R2 public URLs', () => {
+      const appearance = {
+        face_crop_path: 'https://pub-xxx.r2.dev/data/frames/1/face_0.jpg'
+      };
+
+      const result = getBestCropUrl(appearance);
+
+      expect(result).toBe('https://pub-xxx.r2.dev/data/frames/1/face_0.jpg');
+    });
+  });
+});
+
+describe('getAllCropUrls', () => {
+  describe('all crop types present', () => {
+    it('should return all three crop URLs when all paths are present', () => {
+      const appearance = {
+        face_crop_path: 'frames/1/face_0.jpg',
+        body_crop_path: 'frames/1/body_0.jpg',
+        image_crop_path: 'frames/1/crop_0.jpg'
+      };
+
+      const result = getAllCropUrls(appearance);
+
+      expect(result.face_crop_url).toContain('/data/frames/1/face_0.jpg');
+      expect(result.body_crop_url).toContain('/data/frames/1/body_0.jpg');
+      expect(result.best_crop_url).toContain('/data/frames/1/face_0.jpg');
+    });
+
+    it('should prioritize face in best_crop_url', () => {
+      const appearance = {
+        face_crop_path: 'frames/1/face_0.jpg',
+        body_crop_path: 'frames/1/body_0.jpg',
+        image_crop_path: 'frames/1/crop_0.jpg'
+      };
+
+      const result = getAllCropUrls(appearance);
+
+      expect(result.best_crop_url).toContain('face_0.jpg');
+    });
+  });
+
+  describe('partial crop paths', () => {
+    it('should handle only body_crop_path present', () => {
+      const appearance = {
+        face_crop_path: null,
+        body_crop_path: 'frames/1/body_0.jpg',
+        image_crop_path: null
+      };
+
+      const result = getAllCropUrls(appearance);
+
+      expect(result.face_crop_url).toBeNull();
+      expect(result.body_crop_url).toContain('/data/frames/1/body_0.jpg');
+      expect(result.best_crop_url).toContain('/data/frames/1/body_0.jpg');
+    });
+
+    it('should handle only legacy image_crop_path present', () => {
+      const appearance = {
+        face_crop_path: null,
+        body_crop_path: null,
+        image_crop_path: 'frames/1/crop_0.jpg'
+      };
+
+      const result = getAllCropUrls(appearance);
+
+      expect(result.face_crop_url).toBeNull();
+      expect(result.body_crop_url).toBeNull();
+      expect(result.best_crop_url).toContain('/data/frames/1/crop_0.jpg');
+    });
+
+    it('should handle face and body present, legacy missing', () => {
+      const appearance = {
+        face_crop_path: 'frames/1/face_0.jpg',
+        body_crop_path: 'frames/1/body_0.jpg',
+        image_crop_path: null
+      };
+
+      const result = getAllCropUrls(appearance);
+
+      expect(result.face_crop_url).toContain('/data/frames/1/face_0.jpg');
+      expect(result.body_crop_url).toContain('/data/frames/1/body_0.jpg');
+      expect(result.best_crop_url).toContain('/data/frames/1/face_0.jpg');
+    });
+  });
+
+  describe('edge cases', () => {
+    it('should handle null appearance', () => {
+      const result = getAllCropUrls(null);
+
+      expect(result).toEqual({
+        face_crop_url: null,
+        body_crop_url: null,
+        best_crop_url: null
+      });
+    });
+
+    it('should handle undefined appearance', () => {
+      const result = getAllCropUrls(undefined);
+
+      expect(result).toEqual({
+        face_crop_url: null,
+        body_crop_url: null,
+        best_crop_url: null
+      });
+    });
+
+    it('should handle appearance with no crop paths', () => {
+      const appearance = {
+        face_crop_path: null,
+        body_crop_path: null,
+        image_crop_path: null
+      };
+
+      const result = getAllCropUrls(appearance);
+
+      expect(result.face_crop_url).toBeNull();
+      expect(result.body_crop_url).toBeNull();
+      expect(result.best_crop_url).toBeNull();
+    });
+  });
+
+  describe('URL types', () => {
+    it('should handle absolute URLs in all crop paths', () => {
+      const appearance = {
+        face_crop_path: 'https://r2.dev/face.jpg',
+        body_crop_path: 'https://r2.dev/body.jpg',
+        image_crop_path: 'https://r2.dev/crop.jpg'
+      };
+
+      const result = getAllCropUrls(appearance);
+
+      expect(result.face_crop_url).toBe('https://r2.dev/face.jpg');
+      expect(result.body_crop_url).toBe('https://r2.dev/body.jpg');
+      expect(result.best_crop_url).toBe('https://r2.dev/face.jpg');
+    });
+
+    it('should handle mix of absolute and relative URLs', () => {
+      const appearance = {
+        face_crop_path: 'https://r2.dev/face.jpg',
+        body_crop_path: 'frames/1/body_0.jpg',
+        image_crop_path: null
+      };
+
+      const result = getAllCropUrls(appearance);
+
+      expect(result.face_crop_url).toBe('https://r2.dev/face.jpg');
+      expect(result.body_crop_url).toContain('/data/frames/1/body_0.jpg');
+      expect(result.best_crop_url).toBe('https://r2.dev/face.jpg');
+    });
+  });
+
+  describe('fallback priority', () => {
+    it('should prioritize face > body > legacy in best_crop_url', () => {
+      const testCases = [
+        {
+          input: { face_crop_path: 'face.jpg', body_crop_path: 'body.jpg', image_crop_path: 'crop.jpg' },
+          expected: 'face.jpg'
+        },
+        {
+          input: { face_crop_path: null, body_crop_path: 'body.jpg', image_crop_path: 'crop.jpg' },
+          expected: 'body.jpg'
+        },
+        {
+          input: { face_crop_path: null, body_crop_path: null, image_crop_path: 'crop.jpg' },
+          expected: 'crop.jpg'
+        }
+      ];
+
+      testCases.forEach(({ input, expected }) => {
+        const result = getAllCropUrls(input);
+        expect(result.best_crop_url).toContain(expected);
+      });
+    });
   });
 });
