@@ -23,7 +23,7 @@ logger = get_logger("main")
 from ratelimit import limiter, setup_rate_limiting, get_rate_limit
 
 # Path utilities for consistent path handling
-from utils.paths import get_file_url, get_absolute_path, normalize_for_storage
+from utils.paths import get_file_url, get_absolute_path, normalize_for_storage, get_all_crop_urls
 from utils.r2_storage import get_r2_status
 
 try:
@@ -430,15 +430,8 @@ def get_repeat_officers(
     for officer, app_count, evt_count in results:
         first_app = first_appearances.get(officer.id)
 
-        # Build crop path with fallback priority: face > body > legacy image
-        crop_path = None
-        face_crop = None
-        body_crop = None
-        if first_app:
-            face_crop = get_file_url(first_app.face_crop_path) if first_app.face_crop_path else None
-            body_crop = get_file_url(first_app.body_crop_path) if first_app.body_crop_path else None
-            legacy_crop = get_file_url(first_app.image_crop_path) if first_app.image_crop_path else None
-            crop_path = face_crop or body_crop or legacy_crop
+        # Get all crop URLs using helper function (ensures consistent priority fallback)
+        crop_urls = get_all_crop_urls(first_app)
 
         repeat_officers.append({
             "id": officer.id,
@@ -447,9 +440,9 @@ def get_repeat_officers(
             "notes": officer.notes,
             "total_appearances": app_count,
             "distinct_events": evt_count,
-            "crop_path": crop_path,  # Best available crop (for backwards compat)
-            "face_crop_path": face_crop,  # Face close-up
-            "body_crop_path": body_crop,  # Full body shot
+            "crop_path": crop_urls["best_crop_url"],  # Best available crop (for backwards compat)
+            "face_crop_path": crop_urls["face_crop_url"],  # Face close-up
+            "body_crop_path": crop_urls["body_crop_url"],  # Full body shot
         })
 
     return {

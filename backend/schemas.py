@@ -77,7 +77,8 @@ class OfficerAppearanceBase(BaseModel):
     """
     Base schema for officer appearance data.
 
-    Crop Path Priority: When displaying officer images, use this fallback order:
+    Crop Path Priority:
+        When displaying officer images, use this fallback order:
         1. face_crop_path - Close-up face (preferred for officer cards)
         2. body_crop_path - Full body shot (good for uniform/equipment evidence)
         3. image_crop_path - Legacy field (backwards compatibility only)
