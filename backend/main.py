@@ -384,6 +384,7 @@ def get_repeat_officers(
     )
 
     # Batch fetch first appearances for all officers (fixes N+1 query)
+    # officer_ids are extracted from DB query results (validated integers, safe for IN clause)
     officer_ids = [officer.id for officer, _, _ in results]
 
     # Get first appearance with any crop for each officer in ONE query

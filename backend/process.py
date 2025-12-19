@@ -435,7 +435,7 @@ def process_media(media_id: int, status_callback=None):
     os.makedirs(media_frames_dir, exist_ok=True)
 
     if media_type == "video":
-        if status_callback: status_callback("log", "Extracting frames...")
+        if status_callback: status_callback("log", f"Extracting frames (Media #{media_id})...")
         # Need to pass url directly since we closed the session
         _extract_frames_from_url(media_url, media_frames_dir)
     else:
@@ -447,7 +447,7 @@ def process_media(media_id: int, status_callback=None):
             if not os.path.exists(source_path):
                 print(f"Source image not found: {source_path}")
                 if status_callback:
-                    status_callback("log", f"Error: Image file not found")
+                    status_callback("log", f"Error: Image file not found (Media #{media_id})")
                 return
             shutil.copy2(source_path, target_path)
             print(f"Copied image to {target_path}")
@@ -456,7 +456,7 @@ def process_media(media_id: int, status_callback=None):
         except Exception as e:
             print(f"Error copying image: {e}")
             if status_callback:
-                status_callback("log", f"Error processing image: {e}")
+                status_callback("log", f"Error processing image (Media #{media_id}): {e}")
             return
 
     # Phase 3: AI analysis (uses its own sessions internally)
