@@ -383,18 +383,41 @@ def get_repeat_officers(
         .all()
     )
 
+    # Batch fetch first appearances for all officers (fixes N+1 query)
+    officer_ids = [officer.id for officer, _, _ in results]
+
+    # Get first appearance with any crop for each officer in ONE query
+    first_appearances = {}
+    if officer_ids:
+        # Subquery to get min appearance ID per officer (first appearance)
+        first_app_subq = (
+            db.query(
+                models.OfficerAppearance.officer_id,
+                func.min(models.OfficerAppearance.id).label('first_app_id')
+            )
+            .filter(
+                models.OfficerAppearance.officer_id.in_(officer_ids),
+                or_(
+                    models.OfficerAppearance.face_crop_path.isnot(None),
+                    models.OfficerAppearance.body_crop_path.isnot(None),
+                    models.OfficerAppearance.image_crop_path.isnot(None)
+                )
+            )
+            .group_by(models.OfficerAppearance.officer_id)
+            .subquery()
+        )
+
+        # Fetch actual appearance records
+        appearances = (
+            db.query(models.OfficerAppearance)
+            .join(first_app_subq, models.OfficerAppearance.id == first_app_subq.c.first_app_id)
+            .all()
+        )
+        first_appearances = {app.officer_id: app for app in appearances}
+
     repeat_officers = []
     for officer, app_count, evt_count in results:
-        # Get first appearance with any crop image for display
-        # Priority: face_crop_path > body_crop_path > image_crop_path
-        first_app = db.query(models.OfficerAppearance).filter(
-            models.OfficerAppearance.officer_id == officer.id,
-            or_(
-                models.OfficerAppearance.face_crop_path.isnot(None),
-                models.OfficerAppearance.body_crop_path.isnot(None),
-                models.OfficerAppearance.image_crop_path.isnot(None)
-            )
-        ).first()
+        first_app = first_appearances.get(officer.id)
 
         # Build crop path with fallback priority: face > body > legacy image
         crop_path = None

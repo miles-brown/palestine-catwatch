@@ -3,22 +3,10 @@ import { io } from 'socket.io-client';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Terminal, Cpu, Shield, AlertTriangle, Check, X, Activity, ZoomIn, RefreshCw, WifiOff, Clock, CheckCircle, User, MapPin, Calendar, Image as ImageIcon, FileCheck, Globe, Video, FileText, Download, Search, ScanLine, MonitorPlay, Server, HardDrive, Undo2, StopCircle } from 'lucide-react';
+import { API_BASE, getMediaUrl } from '../utils/api';
 
-let API_URL = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
-if (!API_URL.startsWith("http")) {
-    API_URL = `https://${API_URL}`;
-}
-
-// Helper to handle both absolute R2 URLs and relative API paths
-const getImageUrl = (url) => {
-    if (!url) return '';
-    // If URL is already absolute (starts with http), use it directly
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-        return url;
-    }
-    // Otherwise, prepend API_URL for relative paths
-    return `${API_URL}${url}`;
-};
+// Use shared getMediaUrl for image URLs (handles R2 and local paths)
+const getImageUrl = (url) => getMediaUrl(url) || '';
 
 // UK Police Forces for dropdown
 const UK_POLICE_FORCES = [
@@ -274,7 +262,7 @@ export default function LiveAnalysis({ taskId, onComplete }) {
         }, CONNECTION_TIMEOUT);
 
         // Connect to WebSocket
-        const socket = io(API_URL, {
+        const socket = io(API_BASE, {
             path: '/socket.io',
             transports: ['websocket', 'polling'], // Allow fallback to polling
             timeout: CONNECTION_TIMEOUT,

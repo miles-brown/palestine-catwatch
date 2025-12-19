@@ -6,6 +6,7 @@ import {
     Camera, Clock, Shield, Award, FileText, Save
 } from 'lucide-react';
 import EditableNameField from './EditableNameField';
+import { API_BASE, getMediaUrl } from '../utils/api';
 
 // UK Police Forces
 const UK_POLICE_FORCES = [
@@ -60,20 +61,8 @@ const ROLE_OPTIONS = [
     { value: "Commander", label: "Commander" },
 ];
 
-// API base URL
-let API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
-if (!API_BASE.startsWith("http")) {
-    API_BASE = `https://${API_BASE}`;
-}
-
-// Helper to handle both absolute R2 URLs and relative API paths
-const getImageUrl = (url) => {
-    if (!url) return '';
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-        return url;
-    }
-    return `${API_BASE}${url.startsWith('/') ? '' : '/'}${url}`;
-};
+// Use shared getMediaUrl for image URLs (handles R2 and local paths)
+const getImageUrl = (url) => getMediaUrl(url) || '';
 
 /**
  * OfficerDetailEditor - Deep editing modal for individual officers
