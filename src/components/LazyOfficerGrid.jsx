@@ -357,6 +357,9 @@ export function useInfiniteOfficers(apiBase, filters = {}) {
         if (validatedDateTo) params.append('date_to', validatedDateTo);
 
         const response = await fetch(`${apiBase}/officers?${params}`);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch officers: ${response.status} ${response.statusText}`);
+        }
         const data = await response.json();
 
         const mappedOfficers = data.map(off => {

@@ -390,7 +390,10 @@ def get_repeat_officers(
     # Get first appearance with any crop for each officer in ONE query
     first_appearances = {}
     if officer_ids:
-        # Subquery to get min appearance ID per officer (first appearance)
+        # Subquery to get the FIRST appearance with a crop for each officer.
+        # We use MIN(id) to get the earliest appearance, then join back to get
+        # the full record. This avoids fetching ALL appearances (which could be
+        # thousands) when we only need one per officer for the dashboard card.
         first_app_subq = (
             db.query(
                 models.OfficerAppearance.officer_id,

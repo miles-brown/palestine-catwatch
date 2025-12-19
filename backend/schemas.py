@@ -74,6 +74,17 @@ class MediaWithProtest(Media):
     protest: Protest
 
 class OfficerAppearanceBase(BaseModel):
+    """
+    Base schema for officer appearance data.
+
+    Crop Path Priority: When displaying officer images, use this fallback order:
+        1. face_crop_path - Close-up face (preferred for officer cards)
+        2. body_crop_path - Full body shot (good for uniform/equipment evidence)
+        3. image_crop_path - Legacy field (backwards compatibility only)
+
+    Example:
+        crop_url = appearance.face_crop_path or appearance.body_crop_path or appearance.image_crop_path
+    """
     timestamp_in_video: Optional[str] = None
     face_crop_path: Optional[str] = None  # Close-up face crop for Officer Card
     body_crop_path: Optional[str] = None  # Full body crop (head to toe) for evidence
