@@ -268,9 +268,13 @@ MIN_BODY_CROP_SIZE = 150  # Minimum body crop dimension
 
 # Detection thresholds from environment variables
 # Face detection: High threshold (0.9) ensures only clear, high-quality face detections are processed
-# Person detection: Lower threshold (0.5) to catch people, then filter on face confidence
+# Person detection: Higher threshold (0.7) to reduce false positives from civilians
 FACE_CONFIDENCE_THRESHOLD = float(os.environ.get('FACE_DETECTION_CONFIDENCE', '0.9'))
-PERSON_CONFIDENCE_THRESHOLD = float(os.environ.get('PERSON_DETECTION_CONFIDENCE', '0.5'))
+PERSON_CONFIDENCE_THRESHOLD = float(os.environ.get('PERSON_DETECTION_CONFIDENCE', '0.7'))
+
+# Police verification: Use AI to verify person is actually a police officer (not civilian/protestor)
+ENABLE_POLICE_VERIFICATION = os.environ.get('ENABLE_POLICE_VERIFICATION', 'true').lower() == 'true'
+POLICE_VERIFICATION_CONFIDENCE = float(os.environ.get('POLICE_VERIFICATION_CONFIDENCE', '0.6'))
 
 
 def generate_face_crop(img, face_box, output_path, expand_ratio=0.3):
@@ -1212,6 +1216,32 @@ def process_image_ai(image_path, output_dir):
         if not crop_paths['face_crop_path'] and not crop_paths['body_crop_path']:
             logger.warning(f"Skipping detection {i} - no valid crops generated")
             continue
+
+        # === QUALITY FILTER 4: Police uniform verification ===
+        # Use body crop if available (shows uniform better), otherwise face crop
+        if ENABLE_POLICE_VERIFICATION:
+            verification_crop = crop_paths['body_crop_path'] or crop_paths['face_crop_path']
+
+            if verification_crop:
+                try:
+                    from ai.uniform_analyzer import verify_is_police_officer
+                    verification = verify_is_police_officer(verification_crop)
+
+                    # Strict filter: Only accept if AI confirms they're police with reasonable confidence
+                    if not verification['is_police'] or verification['confidence'] < POLICE_VERIFICATION_CONFIDENCE:
+                        logger.info(
+                            f"Skipping detection {i} - not police officer "
+                            f"(confidence={verification['confidence']:.2f}, "
+                            f"reason: {verification['reasoning']})"
+                        )
+                        continue
+
+                    logger.info(
+                        f"Verified police officer (confidence={verification['confidence']:.2f}): "
+                        f"{verification['reasoning']}"
+                    )
+                except Exception as e:
+                    logger.warning(f"Police verification failed: {e}, allowing detection")
 
         # Badge/Shoulder Number OCR
         badge_text = extract_badge_number(img, face_box)

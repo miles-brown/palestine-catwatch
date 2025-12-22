@@ -76,6 +76,38 @@ RANKS = [
 ]
 
 
+POLICE_VERIFICATION_PROMPT = """You are analyzing protest footage. Determine if this person is a POLICE OFFICER or a CIVILIAN/PROTESTOR.
+
+POLICE OFFICERS typically have:
+- High-visibility (fluorescent yellow/green) jackets or vests
+- Black tactical vests or body armor
+- White shirt underneath dark vest/jacket
+- Police markings: "POLICE" text, checkered patterns, shoulder numbers
+- Epaulettes with badges or insignia
+- Police equipment: radios, batons, handcuffs, body cameras
+- Dark uniform trousers
+- Police boots or formal shoes
+- Riot helmets or police caps
+
+CIVILIANS/PROTESTORS typically have:
+- Colorful clothing (bright colors, patterns, casual wear)
+- Casual jackets, hoodies, t-shirts
+- No police markings or equipment
+- Protest signs, banners, flags
+- Casual footwear (sneakers, casual shoes)
+- Backpacks, casual bags
+
+Respond with ONLY a valid JSON object:
+{
+  "is_police_officer": true or false,
+  "confidence": 0.0-1.0,
+  "reasoning": "Brief explanation of why you determined they are/aren't police",
+  "visible_police_indicators": ["list of police uniform elements seen, or empty array"],
+  "visible_civilian_indicators": ["list of civilian/protestor elements seen, or empty array"]
+}
+
+Be STRICT: Only return is_police_officer=true if you can clearly see police uniform elements. When in doubt, return false."""
+
 ANALYSIS_PROMPT = """You are an expert in UK police uniforms, equipment, and organizational structure. Analyze this image of a police officer and provide detailed identification information.
 
 Look for the following visual indicators:
@@ -141,6 +173,88 @@ Respond with ONLY a valid JSON object in this exact format:
 }
 
 Be conservative with confidence scores. Only report what you can clearly see. If an element is not visible or unclear, use null or low confidence values."""
+
+
+def verify_is_police_officer(image_path: str) -> Dict[str, Any]:
+    """
+    Quick check to verify if detected person is actually a police officer.
+
+    This is a pre-filter to avoid saving civilians/protestors to the database.
+    Uses Claude Vision API with a strict prompt focused on police uniform indicators.
+
+    Args:
+        image_path: Path to the person crop image
+
+    Returns:
+        dict with 'is_police': bool, 'confidence': float, 'reasoning': str
+    """
+    api_key = os.getenv('ANTHROPIC_API_KEY')
+    if not api_key:
+        # If no API key, default to allowing (backwards compatibility)
+        return {'is_police': True, 'confidence': 0.5, 'reasoning': 'No API key - allowing by default'}
+
+    try:
+        # Read and encode image
+        with open(image_path, 'rb') as f:
+            image_data = base64.standard_b64encode(f.read()).decode('utf-8')
+
+        # Determine media type
+        ext = Path(image_path).suffix.lower()
+        media_type = 'image/jpeg' if ext in ['.jpg', '.jpeg'] else 'image/png'
+
+        # Call Claude Vision API
+        client = anthropic.Anthropic(api_key=api_key)
+
+        message = client.messages.create(
+            model="claude-3-5-sonnet-20241022",
+            max_tokens=500,
+            temperature=0,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": media_type,
+                            "data": image_data
+                        }
+                    },
+                    {
+                        "type": "text",
+                        "text": POLICE_VERIFICATION_PROMPT
+                    }
+                ]
+            }]
+        )
+
+        # Parse response
+        response_text = message.content[0].text
+
+        # Extract JSON from response (handle markdown code blocks)
+        if '```json' in response_text:
+            json_start = response_text.index('```json') + 7
+            json_end = response_text.index('```', json_start)
+            response_text = response_text[json_start:json_end].strip()
+        elif '```' in response_text:
+            json_start = response_text.index('```') + 3
+            json_end = response_text.index('```', json_start)
+            response_text = response_text[json_start:json_end].strip()
+
+        result = json.loads(response_text)
+
+        return {
+            'is_police': result.get('is_police_officer', False),
+            'confidence': result.get('confidence', 0.0),
+            'reasoning': result.get('reasoning', ''),
+            'police_indicators': result.get('visible_police_indicators', []),
+            'civilian_indicators': result.get('visible_civilian_indicators', [])
+        }
+
+    except Exception as e:
+        # On error, default to allowing (to avoid breaking the pipeline)
+        print(f"Police verification error: {e}")
+        return {'is_police': True, 'confidence': 0.5, 'reasoning': f'Verification error: {e}'}
 
 
 class UniformAnalyzer:
