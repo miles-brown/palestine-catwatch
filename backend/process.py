@@ -687,6 +687,15 @@ def analyze_frames(media_id, media_frames_dir, status_callback=None):
             primary_crop = res.get('crop_path')
             badge_text = res.get('badge')
 
+            # Validate we have at least one crop path
+            if not face_crop and not body_crop and not primary_crop:
+                print(f"ERROR: No crop paths available for detection {i}, skipping")
+                if status_callback:
+                    status_callback("log", "Error: Detection has no crop paths, skipping")
+                continue
+
+            print(f"Crop paths - Face: {face_crop}, Body: {body_crop}, Primary: {primary_crop}")
+
             # Run quick force detection from badge for immediate feedback
             detected_force = None
             detected_rank = None
@@ -706,7 +715,24 @@ def analyze_frames(media_id, media_frames_dir, status_callback=None):
             if R2_ENABLED:
                 for crop_path in [face_crop, body_crop, primary_crop]:
                     if crop_path and os.path.exists(crop_path):
-                        save_file(crop_path, normalize_for_storage(crop_path))
+                        try:
+                            storage_key = save_file(crop_path, normalize_for_storage(crop_path))
+                            if storage_key:
+                                print(f"✅ Uploaded to R2: {storage_key}")
+                                if status_callback:
+                                    status_callback("log", f"Uploaded crop to R2: {os.path.basename(crop_path)}")
+                            else:
+                                print(f"⚠️  Failed to upload {crop_path} to R2")
+                                if status_callback:
+                                    status_callback("log", f"Warning: Failed to upload {os.path.basename(crop_path)} to R2")
+                        except Exception as e:
+                            print(f"❌ Error uploading {crop_path} to R2: {e}")
+                            if status_callback:
+                                status_callback("log", f"Error uploading crop to R2: {e}")
+            else:
+                print("⚠️  R2 is not enabled - crops will only be stored locally")
+                if status_callback:
+                    status_callback("log", "Warning: R2 not enabled, images stored locally only")
 
             # Prepare display URLs for later emission (after DB save)
             display_crop = face_crop or body_crop or primary_crop

@@ -208,8 +208,12 @@ def get_file_url(storage_key: str) -> str:
         storage_key: Storage key (e.g., "data/frames/1/face_0.jpg")
 
     Returns:
-        URL to access the file
+        URL to access the file, or None if storage_key is None/empty
     """
+    # Handle None or empty storage keys
+    if not storage_key or storage_key == 'None':
+        return None
+
     from utils.r2_storage import R2_ENABLED, R2_PUBLIC_URL, get_public_url
 
     if R2_ENABLED and R2_PUBLIC_URL:
